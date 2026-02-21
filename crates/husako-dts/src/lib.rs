@@ -1,5 +1,6 @@
 mod emitter;
 mod schema;
+pub mod validation;
 
 use std::collections::{HashMap, HashSet};
 
@@ -104,6 +105,12 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         let path = format!("k8s/{group}/{version}.d.ts");
         files.insert(path, content);
     }
+
+    // Generate _validation.json
+    let validation_map = validation::generate_validation_map(&options.specs);
+    let validation_json = serde_json::to_string_pretty(&validation_map)
+        .map_err(|e| DtsError::Schema(format!("serialize _validation.json: {e}")))?;
+    files.insert("k8s/_validation.json".to_string(), validation_json);
 
     Ok(GenerateResult { files })
 }

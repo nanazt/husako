@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+pub mod quantity;
+
+use std::path::{Path, PathBuf};
 
 use husako_runtime_qjs::ExecuteOptions;
 
@@ -14,6 +16,8 @@ pub enum HusakoError {
     OpenApi(#[from] husako_openapi::OpenApiError),
     #[error(transparent)]
     Dts(#[from] husako_dts::DtsError),
+    #[error("{0}")]
+    Validation(String),
     #[error("init I/O error: {0}")]
     InitIo(String),
 }
@@ -21,6 +25,7 @@ pub enum HusakoError {
 pub struct RenderOptions {
     pub project_root: PathBuf,
     pub allow_outside_root: bool,
+    pub validation_map: Option<quantity::ValidationMap>,
 }
 
 pub fn render(
@@ -41,8 +46,26 @@ pub fn render(
     };
 
     let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+
+    if let Err(errors) = quantity::validate_quantities(&value, options.validation_map.as_ref()) {
+        let msg = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(HusakoError::Validation(msg));
+    }
+
     let yaml = husako_yaml::emit_yaml(&value)?;
     Ok(yaml)
+}
+
+/// Load a `ValidationMap` from `.husako/types/k8s/_validation.json` if it exists.
+pub fn load_validation_map(project_root: &Path) -> Option<quantity::ValidationMap> {
+    let path = project_root.join(".husako/types/k8s/_validation.json");
+    let content = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    quantity::ValidationMap::from_json(&value)
 }
 
 pub struct InitOptions {
@@ -213,6 +236,7 @@ mod tests {
         RenderOptions {
             project_root: PathBuf::from("/tmp"),
             allow_outside_root: false,
+            validation_map: None,
         }
     }
 

@@ -373,6 +373,95 @@ fn index_inference() {
         .stdout(predicates::str::contains("v: 99"));
 }
 
+// --- Milestone 6: Schema-aware Quantity Validation ---
+
+#[test]
+fn invalid_quantity_fallback_exit_7() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        template: {
+            spec: {
+                containers: [{
+                    resources: {
+                        requests: { cpu: "2gb" }
+                    }
+                }]
+            }
+        }
+    }
+}]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(predicates::str::contains("invalid quantity"))
+        .stderr(predicates::str::contains("2gb"));
+}
+
+#[test]
+fn valid_quantities_exit_0() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        template: {
+            spec: {
+                containers: [{
+                    resources: {
+                        requests: { cpu: "500m", memory: "1Gi" },
+                        limits: { cpu: "1", memory: "2Gi" }
+                    }
+                }]
+            }
+        }
+    }
+}]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn numbers_at_quantity_positions_exit_0() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        template: {
+            spec: {
+                containers: [{
+                    resources: {
+                        requests: { cpu: 1, memory: 2 }
+                    }
+                }]
+            }
+        }
+    }
+}]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success();
+}
+
 // --- Milestone 5: Type Generation + husako init ---
 
 #[test]

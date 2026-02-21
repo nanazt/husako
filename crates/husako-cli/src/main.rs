@@ -67,10 +67,13 @@ fn main() -> ExitCode {
             let project_root = std::env::current_dir()
                 .unwrap_or_else(|_| abs_file.parent().unwrap_or(&abs_file).to_path_buf());
 
+            let validation_map = husako_core::load_validation_map(&project_root);
+
             let filename = abs_file.to_string_lossy();
             let options = RenderOptions {
                 project_root,
                 allow_outside_root,
+                validation_map,
             };
 
             match husako_core::render(&source, &filename, &options) {
@@ -137,6 +140,7 @@ fn exit_code(err: &HusakoError) -> u8 {
             | RuntimeError::StrictJson { .. },
         ) => 7,
         HusakoError::Emit(_) => 7,
+        HusakoError::Validation(_) => 7,
         HusakoError::Dts(_) => 5,
         HusakoError::OpenApi(_) => 6,
         HusakoError::InitIo(_) => 1,
