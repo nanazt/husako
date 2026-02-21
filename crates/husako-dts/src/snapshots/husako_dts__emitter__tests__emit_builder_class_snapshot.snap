@@ -1,0 +1,9 @@
+---
+source: crates/husako-dts/src/emitter.rs
+assertion_line: 281
+expression: output
+---
+/** Deployment enables declarative updates for Pods and ReplicaSets. */
+export class Deployment extends _ResourceBuilder {
+  constructor();
+}

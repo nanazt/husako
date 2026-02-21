@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 husako-core = { path = "../husako-core" }
+husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 clap.workspace = true
 
@@ -14,4 +15,5 @@ clap.workspace = true
 assert_cmd.workspace = true
 predicates = "3"
 insta.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true

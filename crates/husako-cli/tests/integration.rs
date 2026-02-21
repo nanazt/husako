@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::Path;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::NamedTempFile;
@@ -370,4 +371,142 @@ fn index_inference() {
         .assert()
         .success()
         .stdout(predicates::str::contains("v: 99"));
+}
+
+// --- Milestone 5: Type Generation + husako init ---
+
+#[test]
+fn init_skip_k8s() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    husako_at(root)
+        .args(["init", "--skip-k8s"])
+        .assert()
+        .success();
+
+    // Static .d.ts files should exist
+    assert!(root.join(".husako/types/husako.d.ts").exists());
+    assert!(root.join(".husako/types/husako/_base.d.ts").exists());
+
+    // tsconfig.json should exist with husako paths
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+    assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
+    assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
+
+    // No k8s/ directory since we skipped k8s types
+    assert!(!root.join(".husako/types/k8s").exists());
+}
+
+fn write_mock_spec(dir: &Path, group_path: &str) {
+    let spec = serde_json::json!({
+        "components": {
+            "schemas": {
+                "io.k8s.api.apps.v1.Deployment": {
+                    "description": "Deployment enables declarative updates.",
+                    "properties": {
+                        "apiVersion": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "metadata": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},
+                        "spec": {"$ref": "#/components/schemas/io.k8s.api.apps.v1.DeploymentSpec"}
+                    },
+                    "x-kubernetes-group-version-kind": [
+                        {"group": "apps", "version": "v1", "kind": "Deployment"}
+                    ]
+                },
+                "io.k8s.api.apps.v1.DeploymentSpec": {
+                    "properties": {
+                        "replicas": {"type": "integer"}
+                    }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
+                    "description": "Standard object metadata.",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "namespace": {"type": "string"}
+                    }
+                }
+            }
+        }
+    });
+
+    let spec_path = dir.join(format!("{group_path}.json"));
+    std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+    std::fs::write(spec_path, spec.to_string()).unwrap();
+}
+
+#[test]
+fn init_spec_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Create mock spec directory
+    let spec_dir = root.join("specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    write_mock_spec(&spec_dir, "apis/apps/v1");
+
+    husako_at(root)
+        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Static .d.ts files should exist
+    assert!(root.join(".husako/types/husako.d.ts").exists());
+    assert!(root.join(".husako/types/husako/_base.d.ts").exists());
+
+    // Generated k8s types should exist
+    assert!(root.join(".husako/types/k8s/_common.d.ts").exists());
+    assert!(root.join(".husako/types/k8s/apps/v1.d.ts").exists());
+
+    // Content should contain Deployment
+    let apps_v1 = std::fs::read_to_string(root.join(".husako/types/k8s/apps/v1.d.ts")).unwrap();
+    assert!(apps_v1.contains("class Deployment"));
+    assert!(apps_v1.contains("_ResourceBuilder"));
+
+    // tsconfig.json should exist
+    assert!(root.join("tsconfig.json").exists());
+}
+
+#[test]
+fn init_updates_existing_tsconfig() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Pre-create tsconfig.json with existing content
+    let existing = serde_json::json!({
+        "compilerOptions": {
+            "strict": true,
+            "target": "ES2020",
+            "paths": {
+                "mylib/*": ["./lib/*"]
+            }
+        },
+        "include": ["src/**/*"]
+    });
+    std::fs::write(
+        root.join("tsconfig.json"),
+        serde_json::to_string_pretty(&existing).unwrap(),
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["init", "--skip-k8s"])
+        .assert()
+        .success();
+
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+
+    // Original fields preserved
+    assert_eq!(parsed["compilerOptions"]["target"], "ES2020");
+    assert!(parsed["include"].is_array());
+
+    // Original path preserved
+    assert!(parsed["compilerOptions"]["paths"]["mylib/*"].is_array());
+
+    // husako paths added
+    assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
+    assert!(parsed["compilerOptions"]["paths"]["husako/_base"].is_array());
+    assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
 }

@@ -7,7 +7,13 @@ repository.workspace = true
 
 [dependencies]
 husako-compile-oxc = { path = "../husako-compile-oxc" }
+husako-dts = { path = "../husako-dts" }
 husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
+husako-sdk = { path = "../husako-sdk" }
 husako-yaml = { path = "../husako-yaml" }
+serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

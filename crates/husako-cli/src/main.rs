@@ -23,6 +23,21 @@ enum Commands {
         #[arg(long)]
         allow_outside_root: bool,
     },
+
+    /// Initialize project: generate type definitions and tsconfig.json
+    Init {
+        /// Kubernetes API server URL (e.g. https://localhost:6443)
+        #[arg(long)]
+        api_server: Option<String>,
+
+        /// Local directory with pre-fetched OpenAPI spec JSON files
+        #[arg(long)]
+        spec_dir: Option<PathBuf>,
+
+        /// Skip Kubernetes type generation (only write husako.d.ts + tsconfig)
+        #[arg(long)]
+        skip_k8s: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -69,6 +84,46 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Commands::Init {
+            api_server,
+            spec_dir,
+            skip_k8s,
+        } => {
+            let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+            let openapi = if skip_k8s {
+                None
+            } else if let Some(dir) = spec_dir {
+                Some(husako_openapi::FetchOptions {
+                    source: husako_openapi::OpenApiSource::Directory(dir),
+                    cache_dir: project_root.join(".husako/cache"),
+                    offline: true,
+                })
+            } else {
+                api_server.map(|url| husako_openapi::FetchOptions {
+                    source: husako_openapi::OpenApiSource::Url {
+                        base_url: url,
+                        bearer_token: None,
+                    },
+                    cache_dir: project_root.join(".husako/cache"),
+                    offline: false,
+                })
+            };
+
+            let options = husako_core::InitOptions {
+                project_root,
+                openapi,
+                skip_k8s,
+            };
+
+            match husako_core::init(&options) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
     }
 }
 
@@ -82,6 +137,8 @@ fn exit_code(err: &HusakoError) -> u8 {
             | RuntimeError::StrictJson { .. },
         ) => 7,
         HusakoError::Emit(_) => 7,
+        HusakoError::Dts(_) => 5,
         HusakoError::OpenApi(_) => 6,
+        HusakoError::InitIo(_) => 1,
     }
 }

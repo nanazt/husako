@@ -747,9 +747,11 @@ dependencies = [
  "assert_cmd",
  "clap",
  "husako-core",
+ "husako-openapi",
  "husako-runtime-qjs",
  "insta",
  "predicates",
+ "serde_json",
  "tempfile",
 ]
 
@@ -771,15 +773,24 @@ name = "husako-core"
 version = "0.1.0"
 dependencies = [
  "husako-compile-oxc",
+ "husako-dts",
  "husako-openapi",
  "husako-runtime-qjs",
+ "husako-sdk",
  "husako-yaml",
+ "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
 [[package]]
 name = "husako-dts"
 version = "0.1.0"
+dependencies = [
+ "insta",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "husako-openapi"

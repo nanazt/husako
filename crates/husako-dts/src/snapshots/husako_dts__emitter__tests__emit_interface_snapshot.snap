@@ -1,0 +1,10 @@
+---
+source: crates/husako-dts/src/emitter.rs
+assertion_line: 267
+expression: output
+---
+export interface DeploymentSpec {
+  /** Number of desired pods. */
+  replicas?: number;
+  selector: LabelSelector;
+}
