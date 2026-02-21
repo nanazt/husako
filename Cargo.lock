@@ -546,6 +546,7 @@ name = "husako-runtime-qjs"
 version = "0.1.0"
 dependencies = [
  "husako-compile-oxc",
+ "husako-sdk",
  "rquickjs",
  "serde_json",
  "tempfile",

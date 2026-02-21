@@ -1,0 +1,28 @@
+---
+source: crates/husako-cli/tests/integration.rs
+assertion_line: 230
+expression: yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    key1: value1
+    key2: value2
+    key3: value3
+    key4: value4
+    key5: value5
+    key6: value6
+  name: nginx
+  namespace: nginx-ns
+spec:
+  template:
+    spec:
+      containers:
+      - resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: '1'
+            memory: 2Gi

@@ -197,6 +197,157 @@ fn extension_inference() {
         .stdout(predicates::str::contains("v: 1"));
 }
 
+// --- Milestone 3: SDK Builders ---
+
+#[test]
+fn render_canonical() {
+    let root = repo_root();
+    husako_at(&root)
+        .args(["render", "examples/canonical.ts"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: apps/v1"))
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("name: nginx"))
+        .stdout(predicates::str::contains("namespace: nginx-ns"))
+        .stdout(predicates::str::contains("key1: value1"))
+        .stdout(predicates::str::contains("key5: value5"))
+        .stdout(predicates::str::contains("cpu: '1'"))
+        .stdout(predicates::str::contains("memory: 2Gi"))
+        .stdout(predicates::str::contains("cpu: 500m"))
+        .stdout(predicates::str::contains("memory: 1Gi"));
+}
+
+#[test]
+fn render_canonical_snapshot() {
+    let root = repo_root();
+    let output = husako_at(&root)
+        .args(["render", "examples/canonical.ts"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    insta::assert_snapshot!(yaml);
+}
+
+#[test]
+fn metadata_fragment_reuse() {
+    let f = write_temp_ts(
+        r#"
+import { build, label } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const base = label("env", "dev");
+const a = base.label("team", "a");
+const b = base.label("team", "b");
+const da = new Deployment().metadata(a);
+const db = new Deployment().metadata(b);
+build([da, db]);
+"#,
+    );
+    let output = husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    // Both should have env: dev
+    assert_eq!(yaml.matches("env: dev").count(), 2);
+    // a should have team: a, b should have team: b
+    assert!(yaml.contains("team: a"));
+    assert!(yaml.contains("team: b"));
+}
+
+#[test]
+fn merge_labels_deep() {
+    let f = write_temp_ts(
+        r#"
+import { build, name, label, merge } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const m = merge([name("test"), label("a", "1"), label("b", "2"), label("c", "3")]);
+const d = new Deployment().metadata(m);
+build([d]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("name: test"))
+        .stdout(predicates::str::contains("a: '1'"))
+        .stdout(predicates::str::contains("b: '2'"))
+        .stdout(predicates::str::contains("c: '3'"));
+}
+
+#[test]
+fn cpu_normalization() {
+    let f = write_temp_ts(
+        r#"
+import { build, cpu, requests } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const d = new Deployment().resources(requests(cpu(0.5)));
+build([d]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("cpu: 500m"));
+}
+
+#[test]
+fn memory_normalization() {
+    let f = write_temp_ts(
+        r#"
+import { build, memory, requests } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const d = new Deployment().resources(requests(memory(4)));
+build([d]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("memory: 4Gi"));
+}
+
+#[test]
+fn k8s_core_v1_namespace() {
+    let f = write_temp_ts(
+        r#"
+import { build, name } from "husako";
+import { Namespace } from "k8s/core/v1";
+const ns = new Namespace().metadata(name("my-ns"));
+build([ns]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: v1"))
+        .stdout(predicates::str::contains("kind: Namespace"))
+        .stdout(predicates::str::contains("name: my-ns"));
+}
+
+#[test]
+fn backward_compat_plain_objects() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
+"#,
+    );
+    husako()
+        .args(["render", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: v1"))
+        .stdout(predicates::str::contains("kind: Namespace"))
+        .stdout(predicates::str::contains("name: test"));
+}
+
 #[test]
 fn index_inference() {
     let dir = tempfile::tempdir().unwrap();

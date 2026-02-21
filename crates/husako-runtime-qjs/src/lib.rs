@@ -52,12 +52,6 @@ fn execution_error(ctx: &Ctx<'_>, err: Error) -> RuntimeError {
     RuntimeError::Execution(err.to_string())
 }
 
-const HUSAKO_MODULE_SOURCE: &str = r#"
-export function build(input) {
-    __husako_build(input);
-}
-"#;
-
 pub fn execute(
     js_source: &str,
     options: &ExecuteOptions,
@@ -66,7 +60,11 @@ pub fn execute(
     let ctx = Context::full(&rt).map_err(|e| RuntimeError::Init(e.to_string()))?;
 
     let resolver = (
-        BuiltinResolver::default().with_module("husako"),
+        BuiltinResolver::default()
+            .with_module("husako")
+            .with_module("husako/_base")
+            .with_module("k8s/apps/v1")
+            .with_module("k8s/core/v1"),
         HusakoFileResolver::new(
             &options.project_root,
             options.allow_outside_root,
@@ -74,7 +72,11 @@ pub fn execute(
         ),
     );
     let loader = (
-        BuiltinLoader::default().with_module("husako", HUSAKO_MODULE_SOURCE),
+        BuiltinLoader::default()
+            .with_module("husako", husako_sdk::HUSAKO_MODULE)
+            .with_module("husako/_base", husako_sdk::HUSAKO_BASE)
+            .with_module("k8s/apps/v1", husako_sdk::K8S_APPS_V1)
+            .with_module("k8s/core/v1", husako_sdk::K8S_CORE_V1),
         HusakoFileLoader::new(),
     );
     rt.set_loader(resolver, loader);
@@ -302,5 +304,147 @@ mod tests {
         let err = execute(js, &test_options()).unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
         assert!(err.to_string().contains("function"));
+    }
+
+    // --- Milestone 3: SDK builder tests ---
+
+    #[test]
+    fn deployment_builder_basic() {
+        let js = r#"
+            import { build, name } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d = new Deployment().metadata(name("test"));
+            build([d]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(result[0]["apiVersion"], "apps/v1");
+        assert_eq!(result[0]["kind"], "Deployment");
+        assert_eq!(result[0]["metadata"]["name"], "test");
+    }
+
+    #[test]
+    fn namespace_builder() {
+        let js = r#"
+            import { build, name } from "husako";
+            import { Namespace } from "k8s/core/v1";
+            const ns = new Namespace().metadata(name("my-ns"));
+            build([ns]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(result[0]["apiVersion"], "v1");
+        assert_eq!(result[0]["kind"], "Namespace");
+        assert_eq!(result[0]["metadata"]["name"], "my-ns");
+    }
+
+    #[test]
+    fn metadata_fragment_immutability() {
+        let js = r#"
+            import { build, label } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const base = label("env", "dev");
+            const a = base.label("team", "a");
+            const b = base.label("team", "b");
+            const da = new Deployment().metadata(a);
+            const db = new Deployment().metadata(b);
+            build([da, db]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        let a_labels = &result[0]["metadata"]["labels"];
+        let b_labels = &result[1]["metadata"]["labels"];
+        assert_eq!(a_labels["env"], "dev");
+        assert_eq!(a_labels["team"], "a");
+        assert_eq!(b_labels["env"], "dev");
+        assert_eq!(b_labels["team"], "b");
+    }
+
+    #[test]
+    fn merge_metadata_labels() {
+        let js = r#"
+            import { build, name, label, merge } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const m = merge([name("test"), label("a", "1"), label("b", "2")]);
+            const d = new Deployment().metadata(m);
+            build([d]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(result[0]["metadata"]["name"], "test");
+        assert_eq!(result[0]["metadata"]["labels"]["a"], "1");
+        assert_eq!(result[0]["metadata"]["labels"]["b"], "2");
+    }
+
+    #[test]
+    fn cpu_normalization() {
+        let js = r#"
+            import { build, cpu, requests } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d1 = new Deployment().resources(requests(cpu(1)));
+            const d2 = new Deployment().resources(requests(cpu(0.5)));
+            const d3 = new Deployment().resources(requests(cpu("250m")));
+            build([d1, d2, d3]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(
+            result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"],
+            "1"
+        );
+        assert_eq!(
+            result[1]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"],
+            "500m"
+        );
+        assert_eq!(
+            result[2]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"],
+            "250m"
+        );
+    }
+
+    #[test]
+    fn memory_normalization() {
+        let js = r#"
+            import { build, memory, requests } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d1 = new Deployment().resources(requests(memory(4)));
+            const d2 = new Deployment().resources(requests(memory("512Mi")));
+            build([d1, d2]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(
+            result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["memory"],
+            "4Gi"
+        );
+        assert_eq!(
+            result[1]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["memory"],
+            "512Mi"
+        );
+    }
+
+    #[test]
+    fn resources_requests_and_limits() {
+        let js = r#"
+            import { build, cpu, memory, requests, limits } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d = new Deployment().resources(
+                requests(cpu(1).memory("2Gi")),
+                limits(cpu("500m").memory(1))
+            );
+            build([d]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        let res = &result[0]["spec"]["template"]["spec"]["containers"][0]["resources"];
+        assert_eq!(res["requests"]["cpu"], "1");
+        assert_eq!(res["requests"]["memory"], "2Gi");
+        assert_eq!(res["limits"]["cpu"], "500m");
+        assert_eq!(res["limits"]["memory"], "1Gi");
+    }
+
+    #[test]
+    fn backward_compat_plain_objects() {
+        let js = r#"
+            import { build } from "husako";
+            build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(result[0]["apiVersion"], "v1");
+        assert_eq!(result[0]["kind"], "Namespace");
+        assert_eq!(result[0]["metadata"]["name"], "test");
     }
 }
