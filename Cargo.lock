@@ -789,6 +789,7 @@ dependencies = [
 name = "husako-dts"
 version = "0.1.0"
 dependencies = [
+ "husako-core",
  "insta",
  "serde_json",
  "thiserror",
