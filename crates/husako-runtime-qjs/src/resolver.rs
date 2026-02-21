@@ -2,6 +2,51 @@ use std::path::{Path, PathBuf};
 
 use rquickjs::{Ctx, Error, Result};
 
+/// Resolves `k8s/*` imports to generated `.js` files under `.husako/types/k8s/`.
+pub struct HusakoK8sResolver {
+    generated_types_dir: Option<PathBuf>,
+}
+
+impl HusakoK8sResolver {
+    pub fn new(generated_types_dir: Option<PathBuf>) -> Self {
+        Self {
+            generated_types_dir,
+        }
+    }
+}
+
+impl rquickjs::loader::Resolver for HusakoK8sResolver {
+    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> Result<String> {
+        // Only handle k8s/* imports
+        if !name.starts_with("k8s/") {
+            return Err(Error::new_resolving(base, name));
+        }
+
+        let Some(types_dir) = &self.generated_types_dir else {
+            return Err(Error::new_resolving_message(
+                base,
+                name,
+                "k8s modules require 'husako init' to be run first".to_string(),
+            ));
+        };
+
+        let js_path = types_dir.join(format!("{name}.js"));
+
+        if js_path.is_file() {
+            Ok(js_path.to_string_lossy().into_owned())
+        } else {
+            Err(Error::new_resolving_message(
+                base,
+                name,
+                format!(
+                    "module '{}' not found. Run 'husako init' to generate k8s modules",
+                    name
+                ),
+            ))
+        }
+    }
+}
+
 pub struct HusakoFileResolver {
     project_root: PathBuf,
     allow_outside_root: bool,
@@ -93,6 +138,79 @@ mod tests {
     use super::*;
     use rquickjs::loader::Resolver;
     use std::fs;
+
+    // --- HusakoK8sResolver tests ---
+
+    #[test]
+    fn k8s_resolver_resolves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let types_dir = dir.path().join("k8s/apps");
+        fs::create_dir_all(&types_dir).unwrap();
+        fs::write(types_dir.join("v1.js"), "export class Deployment {}").unwrap();
+
+        let mut resolver = HusakoK8sResolver::new(Some(dir.path().to_path_buf()));
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "k8s/apps/v1").unwrap();
+            assert!(result.ends_with("k8s/apps/v1.js"));
+        });
+    }
+
+    #[test]
+    fn k8s_resolver_error_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut resolver = HusakoK8sResolver::new(Some(dir.path().to_path_buf()));
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "k8s/apps/v1");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn k8s_resolver_error_when_no_types_dir() {
+        let mut resolver = HusakoK8sResolver::new(None);
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "k8s/apps/v1");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn k8s_resolver_ignores_non_k8s() {
+        let mut resolver = HusakoK8sResolver::new(Some(PathBuf::from("/tmp")));
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "husako");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn k8s_resolver_crd_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let types_dir = dir.path().join("k8s/postgresql.cnpg.io");
+        fs::create_dir_all(&types_dir).unwrap();
+        fs::write(types_dir.join("v1.js"), "export class Cluster {}").unwrap();
+
+        let mut resolver = HusakoK8sResolver::new(Some(dir.path().to_path_buf()));
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver
+                .resolve(&ctx, "main", "k8s/postgresql.cnpg.io/v1")
+                .unwrap();
+            assert!(result.ends_with("k8s/postgresql.cnpg.io/v1.js"));
+        });
+    }
+
+    // --- HusakoFileResolver tests ---
 
     #[test]
     fn resolve_ts_extension() {

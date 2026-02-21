@@ -16,19 +16,9 @@ pub enum DtsError {
     NoSchemas(String),
 }
 
-/// A registered kind that should get a builder class.
-pub struct RegisteredKind {
-    /// API group (empty string for core).
-    pub group: String,
-    pub version: String,
-    pub kind: String,
-}
-
 pub struct GenerateOptions {
     /// Map of discovery path (e.g. "api/v1", "apis/apps/v1") to OpenAPI spec JSON.
     pub specs: HashMap<String, serde_json::Value>,
-    /// Kinds that have runtime builders.
-    pub registered_kinds: Vec<RegisteredKind>,
 }
 
 #[derive(Debug)]
@@ -40,21 +30,6 @@ pub struct GenerateResult {
 pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
     let mut files = HashMap::new();
 
-    // Build a lookup of registered kinds: (dts_group, version) -> Set<kind>
-    // dts_group maps "" to "core" for matching against schema classification
-    let mut registered_by_gv: HashMap<(String, String), HashSet<String>> = HashMap::new();
-    for rk in &options.registered_kinds {
-        let dts_group = if rk.group.is_empty() {
-            "core".to_string()
-        } else {
-            rk.group.clone()
-        };
-        registered_by_gv
-            .entry((dts_group, rk.version.clone()))
-            .or_default()
-            .insert(rk.kind.clone());
-    }
-
     // Parse all specs into SchemaInfo
     let mut all_schemas: Vec<SchemaInfo> = Vec::new();
     for spec in options.specs.values() {
@@ -65,6 +40,24 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         return Err(DtsError::NoSchemas(
             "no schemas found in any provided spec".to_string(),
         ));
+    }
+
+    // CRD reclassification: schemas classified as Other but having GVK
+    // should be placed into their proper group-version.
+    for schema in &mut all_schemas {
+        if schema.location == SchemaLocation::Other
+            && let Some(gvk) = &schema.gvk
+        {
+            let group = if gvk.group.is_empty() {
+                "core".to_string()
+            } else {
+                gvk.group.clone()
+            };
+            schema.location = SchemaLocation::GroupVersion {
+                group,
+                version: gvk.version.clone(),
+            };
+        }
     }
 
     // Separate common vs group-version schemas
@@ -94,16 +87,18 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         }
     }
 
-    // Emit per-group-version .d.ts files
+    // Emit per-group-version .d.ts and .js files
     for ((group, version), schemas) in &by_gv {
-        let registered = registered_by_gv
-            .get(&(group.clone(), version.clone()))
-            .cloned()
-            .unwrap_or_default();
+        let dts_content = emitter::emit_group_version(schemas, &common_names);
+        let dts_path = format!("k8s/{group}/{version}.d.ts");
+        files.insert(dts_path, dts_content);
 
-        let content = emitter::emit_group_version(schemas, &registered, &common_names);
-        let path = format!("k8s/{group}/{version}.d.ts");
-        files.insert(path, content);
+        // Only emit .js if there are schemas with GVK in this group-version
+        if schemas.iter().any(|s| s.gvk.is_some()) {
+            let js_content = emitter::emit_group_version_js(schemas);
+            let js_path = format!("k8s/{group}/{version}.js");
+            files.insert(js_path, js_content);
+        }
     }
 
     // Generate _schema.json
@@ -165,45 +160,38 @@ mod tests {
     fn generate_produces_files() {
         let specs = HashMap::from([("apis/apps/v1".to_string(), mock_apps_v1_spec())]);
 
-        let options = GenerateOptions {
-            specs,
-            registered_kinds: vec![RegisteredKind {
-                group: "apps".to_string(),
-                version: "v1".to_string(),
-                kind: "Deployment".to_string(),
-            }],
-        };
+        let options = GenerateOptions { specs };
 
         let result = generate(&options).unwrap();
 
-        // Should have _common.d.ts and apps/v1.d.ts
+        // Should have _common.d.ts, apps/v1.d.ts, and apps/v1.js
         assert!(result.files.contains_key("k8s/_common.d.ts"));
         assert!(result.files.contains_key("k8s/apps/v1.d.ts"));
+        assert!(result.files.contains_key("k8s/apps/v1.js"));
 
         // _common should have ObjectMeta and LabelSelector
         let common = &result.files["k8s/_common.d.ts"];
         assert!(common.contains("ObjectMeta"));
         assert!(common.contains("LabelSelector"));
 
-        // apps/v1 should have Deployment builder and DeploymentSpec interface
-        let apps = &result.files["k8s/apps/v1.d.ts"];
-        assert!(apps.contains("class Deployment"));
-        assert!(apps.contains("interface DeploymentSpec"));
-        assert!(apps.contains("_ResourceBuilder"));
+        // apps/v1.d.ts should have Deployment builder and DeploymentSpec interface
+        let apps_dts = &result.files["k8s/apps/v1.d.ts"];
+        assert!(apps_dts.contains("class Deployment"));
+        assert!(apps_dts.contains("interface DeploymentSpec"));
+        assert!(apps_dts.contains("_ResourceBuilder"));
+
+        // apps/v1.js should have Deployment class
+        let apps_js = &result.files["k8s/apps/v1.js"];
+        assert!(apps_js.contains("class Deployment"));
+        assert!(apps_js.contains("_ResourceBuilder"));
+        assert!(apps_js.contains("\"apps/v1\""));
     }
 
     #[test]
     fn generate_snapshot() {
         let specs = HashMap::from([("apis/apps/v1".to_string(), mock_apps_v1_spec())]);
 
-        let options = GenerateOptions {
-            specs,
-            registered_kinds: vec![RegisteredKind {
-                group: "apps".to_string(),
-                version: "v1".to_string(),
-                kind: "Deployment".to_string(),
-            }],
-        };
+        let options = GenerateOptions { specs };
 
         let result = generate(&options).unwrap();
 
@@ -212,16 +200,56 @@ mod tests {
 
         // Snapshot apps/v1.d.ts
         insta::assert_snapshot!("apps_v1_dts", &result.files["k8s/apps/v1.d.ts"]);
+
+        // Snapshot apps/v1.js
+        insta::assert_snapshot!("apps_v1_js", &result.files["k8s/apps/v1.js"]);
     }
 
     #[test]
     fn generate_empty_specs_errors() {
         let options = GenerateOptions {
             specs: HashMap::from([("api/v1".to_string(), json!({"openapi": "3.0.0"}))]),
-            registered_kinds: vec![],
         };
 
         let err = generate(&options).unwrap_err();
         assert!(matches!(err, DtsError::NoSchemas(_)));
+    }
+
+    #[test]
+    fn crd_reclassification() {
+        let specs = HashMap::from([(
+            "apis/postgresql.cnpg.io/v1".to_string(),
+            json!({
+                "components": {
+                    "schemas": {
+                        "io.cnpg.postgresql.v1.Cluster": {
+                            "description": "Cluster is the PostgreSQL cluster CRD.",
+                            "properties": {
+                                "apiVersion": {"type": "string"},
+                                "kind": {"type": "string"},
+                                "spec": {"type": "object"}
+                            },
+                            "x-kubernetes-group-version-kind": [
+                                {"group": "postgresql.cnpg.io", "version": "v1", "kind": "Cluster"}
+                            ]
+                        }
+                    }
+                }
+            }),
+        )]);
+
+        let options = GenerateOptions { specs };
+        let result = generate(&options).unwrap();
+
+        // CRD should be reclassified into its GVK group-version
+        assert!(result.files.contains_key("k8s/postgresql.cnpg.io/v1.d.ts"));
+        assert!(result.files.contains_key("k8s/postgresql.cnpg.io/v1.js"));
+
+        let dts = &result.files["k8s/postgresql.cnpg.io/v1.d.ts"];
+        assert!(dts.contains("class Cluster"));
+
+        let js = &result.files["k8s/postgresql.cnpg.io/v1.js"];
+        assert!(js.contains("class Cluster"));
+        assert!(js.contains("\"postgresql.cnpg.io/v1\""));
     }
 }

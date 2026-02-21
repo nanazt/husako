@@ -52,12 +52,19 @@ pub fn render(
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(filename));
 
+    let generated_types_dir = options
+        .project_root
+        .join(".husako/types")
+        .canonicalize()
+        .ok();
+
     let exec_options = ExecuteOptions {
         entry_path,
         project_root: options.project_root.clone(),
         allow_outside_root: options.allow_outside_root,
         timeout_ms: options.timeout_ms,
         max_heap_mb: options.max_heap_mb,
+        generated_types_dir,
     };
 
     if options.verbose {
@@ -132,32 +139,6 @@ pub struct InitOptions {
     pub skip_k8s: bool,
 }
 
-/// Hardcoded list of kinds that have runtime builders.
-fn registered_kinds() -> Vec<husako_dts::RegisteredKind> {
-    vec![
-        husako_dts::RegisteredKind {
-            group: "apps".to_string(),
-            version: "v1".to_string(),
-            kind: "Deployment".to_string(),
-        },
-        husako_dts::RegisteredKind {
-            group: String::new(),
-            version: "v1".to_string(),
-            kind: "Namespace".to_string(),
-        },
-        husako_dts::RegisteredKind {
-            group: String::new(),
-            version: "v1".to_string(),
-            kind: "Service".to_string(),
-        },
-        husako_dts::RegisteredKind {
-            group: String::new(),
-            version: "v1".to_string(),
-            kind: "ConfigMap".to_string(),
-        },
-    ]
-}
-
 pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
 
@@ -193,10 +174,7 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
 
         let specs = client.fetch_all_specs()?;
 
-        let gen_options = husako_dts::GenerateOptions {
-            specs,
-            registered_kinds: registered_kinds(),
-        };
+        let gen_options = husako_dts::GenerateOptions { specs };
 
         let result = husako_dts::generate(&gen_options)?;
 

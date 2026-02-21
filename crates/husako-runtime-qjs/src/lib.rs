@@ -11,7 +11,7 @@ use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
 use rquickjs::{Context, Ctx, Error, Function, Module, Runtime, Value};
 
 use loader::HusakoFileLoader;
-use resolver::HusakoFileResolver;
+use resolver::{HusakoFileResolver, HusakoK8sResolver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -37,6 +37,7 @@ pub struct ExecuteOptions {
     pub allow_outside_root: bool,
     pub timeout_ms: Option<u64>,
     pub max_heap_mb: Option<usize>,
+    pub generated_types_dir: Option<PathBuf>,
 }
 
 /// Extract a meaningful error message from rquickjs errors.
@@ -88,9 +89,8 @@ pub fn execute(
     let resolver = (
         BuiltinResolver::default()
             .with_module("husako")
-            .with_module("husako/_base")
-            .with_module("k8s/apps/v1")
-            .with_module("k8s/core/v1"),
+            .with_module("husako/_base"),
+        HusakoK8sResolver::new(options.generated_types_dir.clone()),
         HusakoFileResolver::new(
             &options.project_root,
             options.allow_outside_root,
@@ -100,9 +100,7 @@ pub fn execute(
     let loader = (
         BuiltinLoader::default()
             .with_module("husako", husako_sdk::HUSAKO_MODULE)
-            .with_module("husako/_base", husako_sdk::HUSAKO_BASE)
-            .with_module("k8s/apps/v1", husako_sdk::K8S_APPS_V1)
-            .with_module("k8s/core/v1", husako_sdk::K8S_CORE_V1),
+            .with_module("husako/_base", husako_sdk::HUSAKO_BASE),
         HusakoFileLoader::new(),
     );
     rt.set_loader(resolver, loader);
@@ -290,6 +288,7 @@ mod tests {
             allow_outside_root: false,
             timeout_ms: None,
             max_heap_mb: None,
+            generated_types_dir: None,
         }
     }
 
@@ -347,17 +346,62 @@ mod tests {
         assert!(err.to_string().contains("function"));
     }
 
-    // --- Milestone 3: SDK builder tests ---
+    // --- Milestone 3: SDK builder tests (using generated k8s modules) ---
+
+    /// Create a temp dir with generated k8s module files and return (dir, options).
+    fn test_options_with_k8s() -> (tempfile::TempDir, ExecuteOptions) {
+        let dir = tempfile::tempdir().unwrap();
+        let types_dir = dir.path().join("k8s/apps");
+        std::fs::create_dir_all(&types_dir).unwrap();
+        std::fs::write(
+            types_dir.join("v1.js"),
+            r#"import { _ResourceBuilder } from "husako/_base";
+export class Deployment extends _ResourceBuilder {
+  constructor() { super("apps/v1", "Deployment"); }
+}
+"#,
+        )
+        .unwrap();
+
+        let core_dir = dir.path().join("k8s/core");
+        std::fs::create_dir_all(&core_dir).unwrap();
+        std::fs::write(
+            core_dir.join("v1.js"),
+            r#"import { _ResourceBuilder } from "husako/_base";
+export class Namespace extends _ResourceBuilder {
+  constructor() { super("v1", "Namespace"); }
+}
+export class Service extends _ResourceBuilder {
+  constructor() { super("v1", "Service"); }
+}
+export class ConfigMap extends _ResourceBuilder {
+  constructor() { super("v1", "ConfigMap"); }
+}
+"#,
+        )
+        .unwrap();
+
+        let opts = ExecuteOptions {
+            entry_path: PathBuf::from("/tmp/test.ts"),
+            project_root: PathBuf::from("/tmp"),
+            allow_outside_root: false,
+            timeout_ms: None,
+            max_heap_mb: None,
+            generated_types_dir: Some(dir.path().to_path_buf()),
+        };
+        (dir, opts)
+    }
 
     #[test]
     fn deployment_builder_basic() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
             import { Deployment } from "k8s/apps/v1";
             const d = new Deployment().metadata(name("test"));
             build([d]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         assert_eq!(result[0]["apiVersion"], "apps/v1");
         assert_eq!(result[0]["kind"], "Deployment");
         assert_eq!(result[0]["metadata"]["name"], "test");
@@ -365,13 +409,14 @@ mod tests {
 
     #[test]
     fn namespace_builder() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
             import { Namespace } from "k8s/core/v1";
             const ns = new Namespace().metadata(name("my-ns"));
             build([ns]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         assert_eq!(result[0]["apiVersion"], "v1");
         assert_eq!(result[0]["kind"], "Namespace");
         assert_eq!(result[0]["metadata"]["name"], "my-ns");
@@ -379,6 +424,7 @@ mod tests {
 
     #[test]
     fn metadata_fragment_immutability() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, label } from "husako";
             import { Deployment } from "k8s/apps/v1";
@@ -389,7 +435,7 @@ mod tests {
             const db = new Deployment().metadata(b);
             build([da, db]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         let a_labels = &result[0]["metadata"]["labels"];
         let b_labels = &result[1]["metadata"]["labels"];
         assert_eq!(a_labels["env"], "dev");
@@ -400,6 +446,7 @@ mod tests {
 
     #[test]
     fn merge_metadata_labels() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name, label, merge } from "husako";
             import { Deployment } from "k8s/apps/v1";
@@ -407,7 +454,7 @@ mod tests {
             const d = new Deployment().metadata(m);
             build([d]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         assert_eq!(result[0]["metadata"]["name"], "test");
         assert_eq!(result[0]["metadata"]["labels"]["a"], "1");
         assert_eq!(result[0]["metadata"]["labels"]["b"], "2");
@@ -415,6 +462,7 @@ mod tests {
 
     #[test]
     fn cpu_normalization() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, cpu, requests } from "husako";
             import { Deployment } from "k8s/apps/v1";
@@ -423,7 +471,7 @@ mod tests {
             const d3 = new Deployment().resources(requests(cpu("250m")));
             build([d1, d2, d3]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         assert_eq!(
             result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"],
             "1"
@@ -440,6 +488,7 @@ mod tests {
 
     #[test]
     fn memory_normalization() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, memory, requests } from "husako";
             import { Deployment } from "k8s/apps/v1";
@@ -447,7 +496,7 @@ mod tests {
             const d2 = new Deployment().resources(requests(memory("512Mi")));
             build([d1, d2]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         assert_eq!(
             result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["memory"],
             "4Gi"
@@ -460,6 +509,7 @@ mod tests {
 
     #[test]
     fn resources_requests_and_limits() {
+        let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, cpu, memory, requests, limits } from "husako";
             import { Deployment } from "k8s/apps/v1";
@@ -468,12 +518,76 @@ mod tests {
             );
             build([d]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &opts).unwrap();
         let res = &result[0]["spec"]["template"]["spec"]["containers"][0]["resources"];
         assert_eq!(res["requests"]["cpu"], "1");
         assert_eq!(res["requests"]["memory"], "2Gi");
         assert_eq!(res["limits"]["cpu"], "500m");
         assert_eq!(res["limits"]["memory"], "1Gi");
+    }
+
+    // --- Milestone 8: Dynamic resources ---
+
+    #[test]
+    fn k8s_import_without_init_fails() {
+        let js = r#"
+            import { build } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            build([new Deployment()]);
+        "#;
+        let err = execute(js, &test_options()).unwrap_err();
+        assert!(err.to_string().contains("husako init"));
+    }
+
+    #[test]
+    fn spec_generic_setter() {
+        let (_dir, opts) = test_options_with_k8s();
+        let js = r#"
+            import { build, name } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d = new Deployment()
+                .metadata(name("test"))
+                .spec({ replicas: 3, selector: { matchLabels: { app: "test" } } });
+            build([d]);
+        "#;
+        let result = execute(js, &opts).unwrap();
+        assert_eq!(result[0]["spec"]["replicas"], 3);
+        assert_eq!(result[0]["spec"]["selector"]["matchLabels"]["app"], "test");
+    }
+
+    #[test]
+    fn set_generic_top_level() {
+        let (_dir, opts) = test_options_with_k8s();
+        let js = r#"
+            import { build, name } from "husako";
+            import { ConfigMap } from "k8s/core/v1";
+            const cm = new ConfigMap()
+                .metadata(name("my-config"))
+                .set("data", { key1: "val1", key2: "val2" });
+            build([cm]);
+        "#;
+        let result = execute(js, &opts).unwrap();
+        assert_eq!(result[0]["kind"], "ConfigMap");
+        assert_eq!(result[0]["data"]["key1"], "val1");
+        assert_eq!(result[0]["data"]["key2"], "val2");
+    }
+
+    #[test]
+    fn spec_overrides_resources() {
+        let (_dir, opts) = test_options_with_k8s();
+        let js = r#"
+            import { build, name, cpu, requests } from "husako";
+            import { Deployment } from "k8s/apps/v1";
+            const d = new Deployment()
+                .metadata(name("test"))
+                .resources(requests(cpu(1)))
+                .spec({ replicas: 5 });
+            build([d]);
+        "#;
+        let result = execute(js, &opts).unwrap();
+        // .spec() should win over .resources()
+        assert_eq!(result[0]["spec"]["replicas"], 5);
+        assert!(result[0]["spec"]["template"].is_null());
     }
 
     #[test]
