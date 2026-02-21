@@ -10,6 +10,8 @@ pub enum HusakoError {
     Runtime(#[from] husako_runtime_qjs::RuntimeError),
     #[error(transparent)]
     Emit(#[from] husako_yaml::EmitError),
+    #[error(transparent)]
+    OpenApi(#[from] husako_openapi::OpenApiError),
 }
 
 pub struct RenderOptions {

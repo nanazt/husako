@@ -82,5 +82,6 @@ fn exit_code(err: &HusakoError) -> u8 {
             | RuntimeError::StrictJson { .. },
         ) => 7,
         HusakoError::Emit(_) => 7,
+        HusakoError::OpenApi(_) => 6,
     }
 }

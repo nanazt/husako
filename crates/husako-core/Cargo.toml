@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 husako-compile-oxc = { path = "../husako-compile-oxc" }
+husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 husako-yaml = { path = "../husako-yaml" }
 thiserror.workspace = true

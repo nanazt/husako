@@ -31,9 +31,13 @@ clap = { version = "4", features = ["derive"] }
 # Errors
 thiserror = "2"
 
+# HTTP
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
 # Dev
 assert_cmd = "2"
 insta = { version = "1", features = ["yaml"] }
+mockito = "1"
 tempfile = "3"
 
 [profile.release]
