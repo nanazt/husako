@@ -49,7 +49,9 @@ pub fn compile(source: &str, filename: &str) -> Result<String, CompileError> {
         .with_scoping(Some(transform_ret.scoping))
         .build(&program);
 
-    Ok(codegen_ret.code)
+    let mut code = codegen_ret.code;
+    code.push_str(&format!("\n//# sourceURL={filename}\n"));
+    Ok(code)
 }
 
 #[cfg(test)]
@@ -70,6 +72,13 @@ mod tests {
         let result = compile(ts, "bad.ts");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), CompileError::Parse(_)));
+    }
+
+    #[test]
+    fn source_url_appended() {
+        let ts = r#"const x: number = 42; export { x };"#;
+        let js = compile(ts, "my-file.ts").unwrap();
+        assert!(js.contains("//# sourceURL=my-file.ts"));
     }
 
     #[test]

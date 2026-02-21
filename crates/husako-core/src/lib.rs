@@ -27,6 +27,9 @@ pub struct RenderOptions {
     pub project_root: PathBuf,
     pub allow_outside_root: bool,
     pub schema_store: Option<validate::SchemaStore>,
+    pub timeout_ms: Option<u64>,
+    pub max_heap_mb: Option<usize>,
+    pub verbose: bool,
 }
 
 pub fn render(
@@ -36,6 +39,15 @@ pub fn render(
 ) -> Result<String, HusakoError> {
     let js = husako_compile_oxc::compile(source, filename)?;
 
+    if options.verbose {
+        eprintln!(
+            "[compile] {} ({} bytes → {} bytes JS)",
+            filename,
+            source.len(),
+            js.len()
+        );
+    }
+
     let entry_path = std::path::Path::new(filename)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(filename));
@@ -44,10 +56,45 @@ pub fn render(
         entry_path,
         project_root: options.project_root.clone(),
         allow_outside_root: options.allow_outside_root,
+        timeout_ms: options.timeout_ms,
+        max_heap_mb: options.max_heap_mb,
     };
 
+    if options.verbose {
+        eprintln!(
+            "[execute] QuickJS: timeout={}ms, heap={}MB",
+            options
+                .timeout_ms
+                .map_or("none".to_string(), |ms| ms.to_string()),
+            options
+                .max_heap_mb
+                .map_or("none".to_string(), |mb| mb.to_string()),
+        );
+    }
+
+    let execute_start = std::time::Instant::now();
     let value = husako_runtime_qjs::execute(&js, &exec_options)?;
 
+    if options.verbose {
+        eprintln!("[execute] done ({}ms)", execute_start.elapsed().as_millis());
+    }
+
+    let validate_mode = if options.schema_store.is_some() {
+        "schema-based"
+    } else {
+        "fallback"
+    };
+    let doc_count = if let serde_json::Value::Array(arr) = &value {
+        arr.len()
+    } else {
+        1
+    };
+
+    if options.verbose {
+        eprintln!("[validate] {} documents, {}", doc_count, validate_mode);
+    }
+
+    let validate_start = std::time::Instant::now();
     if let Err(errors) = validate::validate(&value, options.schema_store.as_ref()) {
         let msg = errors
             .iter()
@@ -57,7 +104,20 @@ pub fn render(
         return Err(HusakoError::Validation(msg));
     }
 
+    if options.verbose {
+        eprintln!(
+            "[validate] done ({}ms), 0 errors",
+            validate_start.elapsed().as_millis()
+        );
+    }
+
     let yaml = husako_yaml::emit_yaml(&value)?;
+
+    if options.verbose {
+        let line_count = yaml.lines().count();
+        eprintln!("[emit] {} documents ({} lines YAML)", doc_count, line_count);
+    }
+
     Ok(yaml)
 }
 
@@ -235,6 +295,9 @@ mod tests {
             project_root: PathBuf::from("/tmp"),
             allow_outside_root: false,
             schema_store: None,
+            timeout_ms: None,
+            max_heap_mb: None,
+            verbose: false,
         }
     }
 

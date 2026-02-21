@@ -22,6 +22,18 @@ enum Commands {
         /// Allow imports outside the project root
         #[arg(long)]
         allow_outside_root: bool,
+
+        /// Execution timeout in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Maximum heap memory in megabytes
+        #[arg(long)]
+        max_heap_mb: Option<usize>,
+
+        /// Print diagnostic traces to stderr
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Initialize project: generate type definitions and tsconfig.json
@@ -47,6 +59,9 @@ fn main() -> ExitCode {
         Commands::Render {
             file,
             allow_outside_root,
+            timeout_ms,
+            max_heap_mb,
+            verbose,
         } => {
             let source = match std::fs::read_to_string(&file) {
                 Ok(s) => s,
@@ -74,6 +89,9 @@ fn main() -> ExitCode {
                 project_root,
                 allow_outside_root,
                 schema_store,
+                timeout_ms,
+                max_heap_mb,
+                verbose,
             };
 
             match husako_core::render(&source, &filename, &options) {
@@ -133,7 +151,12 @@ fn main() -> ExitCode {
 fn exit_code(err: &HusakoError) -> u8 {
     match err {
         HusakoError::Compile(_) => 3,
-        HusakoError::Runtime(RuntimeError::Init(_) | RuntimeError::Execution(_)) => 4,
+        HusakoError::Runtime(
+            RuntimeError::Init(_)
+            | RuntimeError::Execution(_)
+            | RuntimeError::Timeout(_)
+            | RuntimeError::MemoryLimit(_),
+        ) => 4,
         HusakoError::Runtime(
             RuntimeError::BuildNotCalled
             | RuntimeError::BuildCalledMultiple(_)

@@ -846,6 +846,74 @@ build([{
         .stderr(predicates::str::contains("2gb"));
 }
 
+// --- Milestone 8: Safety & Diagnostics ---
+
+#[test]
+fn timeout_infinite_loop_exit_4() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+while(true) {}
+build([]);
+"#,
+    );
+    husako()
+        .args(["render", "--timeout-ms", "100", f.path().to_str().unwrap()])
+        .assert()
+        .code(4)
+        .stderr(predicates::str::contains("timed out"));
+}
+
+#[test]
+fn memory_limit_exit_4() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+const arr = [];
+for (let i = 0; i < 10000000; i++) { arr.push(new Array(1000)); }
+build([]);
+"#,
+    );
+    husako()
+        .args(["render", "--max-heap-mb", "1", f.path().to_str().unwrap()])
+        .assert()
+        .code(4)
+        .stderr(predicates::str::contains("memory limit"));
+}
+
+#[test]
+fn timeout_does_not_interfere_with_normal_script() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
+"#,
+    );
+    husako()
+        .args(["render", "--timeout-ms", "5000", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Namespace"));
+}
+
+#[test]
+fn verbose_produces_stderr_output() {
+    let f = write_temp_ts(
+        r#"
+import { build } from "husako";
+build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
+"#,
+    );
+    husako()
+        .args(["render", "--verbose", f.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("[compile]"))
+        .stderr(predicates::str::contains("[execute]"))
+        .stderr(predicates::str::contains("[validate]"))
+        .stderr(predicates::str::contains("[emit]"));
+}
+
 #[test]
 fn init_generates_schema_json() {
     let dir = tempfile::tempdir().unwrap();
