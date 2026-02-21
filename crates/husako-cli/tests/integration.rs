@@ -489,7 +489,14 @@ fn init_skip_k8s() {
 }
 
 fn write_mock_spec(dir: &Path, group_path: &str) {
-    let spec = serde_json::json!({
+    let spec = rich_mock_spec();
+    let spec_path = dir.join(format!("{group_path}.json"));
+    std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+    std::fs::write(spec_path, spec.to_string()).unwrap();
+}
+
+fn rich_mock_spec() -> serde_json::Value {
+    serde_json::json!({
         "components": {
             "schemas": {
                 "io.k8s.api.apps.v1.Deployment": {
@@ -506,8 +513,59 @@ fn write_mock_spec(dir: &Path, group_path: &str) {
                 },
                 "io.k8s.api.apps.v1.DeploymentSpec": {
                     "properties": {
-                        "replicas": {"type": "integer"}
+                        "replicas": {"type": "integer"},
+                        "selector": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector"},
+                        "strategy": {"$ref": "#/components/schemas/io.k8s.api.apps.v1.DeploymentStrategy"},
+                        "template": {"$ref": "#/components/schemas/io.k8s.api.core.v1.PodTemplateSpec"}
+                    },
+                    "required": ["selector"]
+                },
+                "io.k8s.api.apps.v1.DeploymentStrategy": {
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["Recreate", "RollingUpdate"]
+                        }
                     }
+                },
+                "io.k8s.api.core.v1.PodTemplateSpec": {
+                    "properties": {
+                        "spec": {"$ref": "#/components/schemas/io.k8s.api.core.v1.PodSpec"}
+                    }
+                },
+                "io.k8s.api.core.v1.PodSpec": {
+                    "properties": {
+                        "containers": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/io.k8s.api.core.v1.Container"}
+                        }
+                    }
+                },
+                "io.k8s.api.core.v1.Container": {
+                    "properties": {
+                        "name": {"type": "string"},
+                        "imagePullPolicy": {
+                            "type": "string",
+                            "enum": ["Always", "IfNotPresent", "Never"]
+                        },
+                        "resources": {"$ref": "#/components/schemas/io.k8s.api.core.v1.ResourceRequirements"}
+                    }
+                },
+                "io.k8s.api.core.v1.ResourceRequirements": {
+                    "properties": {
+                        "limits": {
+                            "type": "object",
+                            "additionalProperties": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.api.resource.Quantity"}
+                        },
+                        "requests": {
+                            "type": "object",
+                            "additionalProperties": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.api.resource.Quantity"}
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.api.resource.Quantity": {
+                    "description": "Quantity is a representation of a decimal number.",
+                    "type": "string"
                 },
                 "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
                     "description": "Standard object metadata.",
@@ -515,14 +573,29 @@ fn write_mock_spec(dir: &Path, group_path: &str) {
                         "name": {"type": "string"},
                         "namespace": {"type": "string"}
                     }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector": {
+                    "properties": {
+                        "matchLabels": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"}
+                        }
+                    }
                 }
             }
         }
-    });
+    })
+}
 
-    let spec_path = dir.join(format!("{group_path}.json"));
-    std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
-    std::fs::write(spec_path, spec.to_string()).unwrap();
+/// Write a `_schema.json` at `.husako/types/k8s/_schema.json` using husako_dts.
+fn write_schema_store(root: &Path) {
+    let spec = rich_mock_spec();
+    let specs = std::collections::HashMap::from([("apis/apps/v1".to_string(), spec)]);
+    let store = husako_dts::schema_store::generate_schema_store(&specs);
+    let json = serde_json::to_string_pretty(&store).unwrap();
+    let schema_dir = root.join(".husako/types/k8s");
+    std::fs::create_dir_all(&schema_dir).unwrap();
+    std::fs::write(schema_dir.join("_schema.json"), json).unwrap();
 }
 
 #[test]
@@ -598,4 +671,202 @@ fn init_updates_existing_tsconfig() {
     assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
     assert!(parsed["compilerOptions"]["paths"]["husako/_base"].is_array());
     assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
+}
+
+// --- Milestone 7: Schema-based Validation ---
+
+#[test]
+fn schema_invalid_enum_exit_7() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_schema_store(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        selector: {},
+        strategy: { type: "bluegreen" }
+    }
+}]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(predicates::str::contains("invalid value"))
+        .stderr(predicates::str::contains("bluegreen"));
+}
+
+#[test]
+fn schema_type_mismatch_exit_7() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_schema_store(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        selector: {},
+        replicas: "abc"
+    }
+}]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(predicates::str::contains("expected type integer"));
+}
+
+#[test]
+fn schema_missing_required_exit_7() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_schema_store(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        replicas: 3
+    }
+}]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(predicates::str::contains("missing required field"));
+}
+
+#[test]
+fn schema_valid_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_schema_store(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        selector: { matchLabels: { app: "test" } },
+        replicas: 3,
+        strategy: { type: "RollingUpdate" },
+        template: {
+            spec: {
+                containers: [{
+                    name: "main",
+                    imagePullPolicy: "Always",
+                    resources: {
+                        requests: { cpu: "500m", memory: "1Gi" },
+                        limits: { cpu: "1", memory: "2Gi" }
+                    }
+                }]
+            }
+        }
+    }
+}]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn schema_invalid_quantity_exit_7() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write_schema_store(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+build([{
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    spec: {
+        selector: {},
+        template: {
+            spec: {
+                containers: [{
+                    resources: {
+                        requests: { cpu: "2gb" }
+                    }
+                }]
+            }
+        }
+    }
+}]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .code(7)
+        .stderr(predicates::str::contains("invalid quantity"))
+        .stderr(predicates::str::contains("2gb"));
+}
+
+#[test]
+fn init_generates_schema_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    let spec_dir = root.join("specs");
+    std::fs::create_dir_all(&spec_dir).unwrap();
+    write_mock_spec(&spec_dir, "apis/apps/v1");
+
+    husako_at(root)
+        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // _schema.json should exist (replaces _validation.json)
+    assert!(root.join(".husako/types/k8s/_schema.json").exists());
+
+    // Check basic structure
+    let content = std::fs::read_to_string(root.join(".husako/types/k8s/_schema.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(parsed["version"], 2);
+    assert!(parsed["gvk_index"].is_object());
+    assert!(parsed["schemas"].is_object());
 }

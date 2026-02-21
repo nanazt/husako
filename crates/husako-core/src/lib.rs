@@ -1,4 +1,5 @@
 pub mod quantity;
+pub mod validate;
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +26,7 @@ pub enum HusakoError {
 pub struct RenderOptions {
     pub project_root: PathBuf,
     pub allow_outside_root: bool,
-    pub validation_map: Option<quantity::ValidationMap>,
+    pub schema_store: Option<validate::SchemaStore>,
 }
 
 pub fn render(
@@ -47,7 +48,7 @@ pub fn render(
 
     let value = husako_runtime_qjs::execute(&js, &exec_options)?;
 
-    if let Err(errors) = quantity::validate_quantities(&value, options.validation_map.as_ref()) {
+    if let Err(errors) = validate::validate(&value, options.schema_store.as_ref()) {
         let msg = errors
             .iter()
             .map(|e| e.to_string())
@@ -60,12 +61,9 @@ pub fn render(
     Ok(yaml)
 }
 
-/// Load a `ValidationMap` from `.husako/types/k8s/_validation.json` if it exists.
-pub fn load_validation_map(project_root: &Path) -> Option<quantity::ValidationMap> {
-    let path = project_root.join(".husako/types/k8s/_validation.json");
-    let content = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    quantity::ValidationMap::from_json(&value)
+/// Load a `SchemaStore` from `.husako/types/k8s/_schema.json` if it exists.
+pub fn load_schema_store(project_root: &Path) -> Option<validate::SchemaStore> {
+    validate::load_schema_store(project_root)
 }
 
 pub struct InitOptions {
@@ -236,7 +234,7 @@ mod tests {
         RenderOptions {
             project_root: PathBuf::from("/tmp"),
             allow_outside_root: false,
-            validation_map: None,
+            schema_store: None,
         }
     }
 

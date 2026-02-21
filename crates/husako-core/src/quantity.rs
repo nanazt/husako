@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde_json::Value;
 
 /// Validates a string against the Kubernetes quantity grammar.
@@ -101,83 +99,7 @@ fn is_suffix(s: &str) -> bool {
     )
 }
 
-// --- Path matching ---
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathSegment {
-    Field(String),
-    Wildcard,
-}
-
-#[derive(Debug, Clone)]
-pub struct QuantityPath {
-    segments: Vec<PathSegment>,
-}
-
-impl QuantityPath {
-    /// Parse a JSONPath-like pattern: `$.spec.containers[*].resources.limits[*]`
-    pub fn parse(pattern: &str) -> Self {
-        let stripped = pattern.strip_prefix("$.").unwrap_or(pattern);
-        let mut segments = Vec::new();
-
-        for part in stripped.split('.') {
-            if part.is_empty() {
-                continue;
-            }
-            if let Some(field) = part.strip_suffix("[*]") {
-                if !field.is_empty() {
-                    segments.push(PathSegment::Field(field.to_string()));
-                }
-                segments.push(PathSegment::Wildcard);
-            } else {
-                segments.push(PathSegment::Field(part.to_string()));
-            }
-        }
-
-        Self { segments }
-    }
-}
-
-/// Pre-parsed validation map: maps `<apiVersion>:<kind>` to quantity paths.
-#[derive(Debug, Clone)]
-pub struct ValidationMap {
-    entries: HashMap<String, Vec<QuantityPath>>,
-}
-
-impl ValidationMap {
-    /// Load from parsed `_validation.json` content.
-    pub fn from_json(value: &Value) -> Option<Self> {
-        let obj = value.as_object()?;
-
-        // Check version
-        let version = obj.get("version")?.as_u64()?;
-        if version != 1 {
-            return None;
-        }
-
-        let quantities = obj.get("quantities")?.as_object()?;
-        let mut entries = HashMap::new();
-
-        for (key, paths_val) in quantities {
-            let paths_arr = paths_val.as_array()?;
-            let mut paths = Vec::new();
-            for p in paths_arr {
-                let pattern = p.as_str()?;
-                paths.push(QuantityPath::parse(pattern));
-            }
-            entries.insert(key.clone(), paths);
-        }
-
-        Some(Self { entries })
-    }
-
-    fn paths_for(&self, api_version: &str, kind: &str) -> Option<&[QuantityPath]> {
-        let key = format!("{api_version}:{kind}");
-        self.entries.get(&key).map(|v| v.as_slice())
-    }
-}
-
-/// A single quantity validation error.
+/// A single quantity validation error (used by the fallback heuristic).
 #[derive(Debug)]
 pub struct QuantityError {
     pub doc_index: usize,
@@ -195,125 +117,15 @@ impl std::fmt::Display for QuantityError {
     }
 }
 
-/// Validate all quantity fields in the build output.
-///
-/// `value` is the top-level array from `husako.build()`.
-/// If `validation_map` is `Some`, uses schema-aware paths.
-/// Otherwise, falls back to heuristic search for `resources.requests.*` / `resources.limits.*`.
-pub fn validate_quantities(
-    value: &Value,
-    validation_map: Option<&ValidationMap>,
-) -> Result<(), Vec<QuantityError>> {
-    let docs = match value.as_array() {
-        Some(arr) => arr,
-        None => return Ok(()),
-    };
-
-    let mut errors = Vec::new();
-
-    for (idx, doc) in docs.iter().enumerate() {
-        if let Some(map) = validation_map {
-            validate_doc_with_map(doc, idx, map, &mut errors);
-        } else {
-            validate_doc_fallback(doc, idx, &mut errors);
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
-}
-
-fn validate_doc_with_map(
-    doc: &Value,
-    doc_index: usize,
-    map: &ValidationMap,
-    errors: &mut Vec<QuantityError>,
-) {
-    let api_version = doc.get("apiVersion").and_then(Value::as_str).unwrap_or("");
-    let kind = doc.get("kind").and_then(Value::as_str).unwrap_or("");
-
-    if let Some(paths) = map.paths_for(api_version, kind) {
-        for path in paths {
-            walk_and_validate(doc, &path.segments, 0, "$", doc_index, errors);
-        }
-    } else {
-        // Fall back to heuristic for unknown kinds
-        validate_doc_fallback(doc, doc_index, errors);
-    }
-}
-
-fn walk_and_validate(
-    value: &Value,
-    segments: &[PathSegment],
-    seg_idx: usize,
-    current_path: &str,
-    doc_index: usize,
-    errors: &mut Vec<QuantityError>,
-) {
-    if seg_idx >= segments.len() {
-        // Reached a leaf — validate
-        validate_leaf(value, current_path, doc_index, errors);
-        return;
-    }
-
-    match &segments[seg_idx] {
-        PathSegment::Field(name) => {
-            if let Some(child) = value.get(name.as_str()) {
-                let next_path = format!("{current_path}.{name}");
-                walk_and_validate(child, segments, seg_idx + 1, &next_path, doc_index, errors);
-            }
-            // Field doesn't exist — skip silently (optional field)
-        }
-        PathSegment::Wildcard => match value {
-            Value::Array(arr) => {
-                for (i, item) in arr.iter().enumerate() {
-                    let next_path = format!("{current_path}[{i}]");
-                    walk_and_validate(item, segments, seg_idx + 1, &next_path, doc_index, errors);
-                }
-            }
-            Value::Object(obj) => {
-                for (key, child) in obj {
-                    let next_path = format!("{current_path}.{key}");
-                    walk_and_validate(child, segments, seg_idx + 1, &next_path, doc_index, errors);
-                }
-            }
-            _ => {}
-        },
-    }
-}
-
-fn validate_leaf(value: &Value, path: &str, doc_index: usize, errors: &mut Vec<QuantityError>) {
-    match value {
-        Value::String(s) => {
-            if !is_valid_quantity(s) {
-                errors.push(QuantityError {
-                    doc_index,
-                    path: path.to_string(),
-                    value: s.clone(),
-                });
-            }
-        }
-        Value::Number(_) | Value::Null => {
-            // Valid: numbers are implicit quantities, null is optional
-        }
-        _ => {
-            errors.push(QuantityError {
-                doc_index,
-                path: path.to_string(),
-                value: format!("{value}"),
-            });
-        }
-    }
-}
-
 // --- Fallback heuristic ---
 
 /// Recursively searches for `resources.requests.*` and `resources.limits.*`
 /// at any depth, validating leaf values as quantities.
-fn validate_doc_fallback(doc: &Value, doc_index: usize, errors: &mut Vec<QuantityError>) {
+pub(crate) fn validate_doc_fallback(
+    doc: &Value,
+    doc_index: usize,
+    errors: &mut Vec<QuantityError>,
+) {
     search_resources(doc, "$", doc_index, errors);
 }
 
@@ -369,6 +181,30 @@ fn validate_quantity_map(
         for (key, val) in obj {
             let leaf_path = format!("{path}.{key}");
             validate_leaf(val, &leaf_path, doc_index, errors);
+        }
+    }
+}
+
+fn validate_leaf(value: &Value, path: &str, doc_index: usize, errors: &mut Vec<QuantityError>) {
+    match value {
+        Value::String(s) => {
+            if !is_valid_quantity(s) {
+                errors.push(QuantityError {
+                    doc_index,
+                    path: path.to_string(),
+                    value: s.clone(),
+                });
+            }
+        }
+        Value::Number(_) | Value::Null => {
+            // Valid: numbers are implicit quantities, null is optional
+        }
+        _ => {
+            errors.push(QuantityError {
+                doc_index,
+                path: path.to_string(),
+                value: format!("{value}"),
+            });
         }
     }
 }
@@ -467,108 +303,6 @@ mod tests {
         assert!(!is_valid_quantity("1.2.3"));
     }
 
-    // --- QuantityPath ---
-
-    #[test]
-    fn parse_simple_path() {
-        let p = QuantityPath::parse("$.spec.replicas");
-        assert_eq!(p.segments.len(), 2);
-        assert_eq!(p.segments[0], PathSegment::Field("spec".into()));
-        assert_eq!(p.segments[1], PathSegment::Field("replicas".into()));
-    }
-
-    #[test]
-    fn parse_wildcard_path() {
-        let p = QuantityPath::parse("$.spec.containers[*].resources.limits[*]");
-        assert_eq!(
-            p.segments,
-            vec![
-                PathSegment::Field("spec".into()),
-                PathSegment::Field("containers".into()),
-                PathSegment::Wildcard,
-                PathSegment::Field("resources".into()),
-                PathSegment::Field("limits".into()),
-                PathSegment::Wildcard,
-            ]
-        );
-    }
-
-    // --- walk_and_validate ---
-
-    #[test]
-    fn walk_field_path() {
-        let doc = json!({"spec": {"capacity": {"storage": "10Gi"}}});
-        let path = QuantityPath::parse("$.spec.capacity.storage");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn walk_invalid_field() {
-        let doc = json!({"spec": {"capacity": {"storage": "10gb"}}});
-        let path = QuantityPath::parse("$.spec.capacity.storage");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].path, "$.spec.capacity.storage");
-        assert_eq!(errors[0].value, "10gb");
-    }
-
-    #[test]
-    fn walk_wildcard_on_map() {
-        let doc = json!({"resources": {"limits": {"cpu": "500m", "memory": "1Gi"}}});
-        let path = QuantityPath::parse("$.resources.limits[*]");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn walk_wildcard_on_array() {
-        let doc = json!({
-            "spec": {
-                "containers": [
-                    {"resources": {"limits": {"cpu": "500m"}}},
-                    {"resources": {"limits": {"cpu": "bad"}}}
-                ]
-            }
-        });
-        let path = QuantityPath::parse("$.spec.containers[*].resources.limits[*]");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].path.contains("[1]"));
-        assert_eq!(errors[0].value, "bad");
-    }
-
-    #[test]
-    fn walk_missing_field_is_ok() {
-        let doc = json!({"spec": {}});
-        let path = QuantityPath::parse("$.spec.capacity.storage");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn number_at_quantity_position_is_valid() {
-        let doc = json!({"resources": {"limits": {"cpu": 1}}});
-        let path = QuantityPath::parse("$.resources.limits[*]");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn null_at_quantity_position_is_valid() {
-        let doc = json!({"resources": {"limits": {"cpu": null}}});
-        let path = QuantityPath::parse("$.resources.limits[*]");
-        let mut errors = Vec::new();
-        walk_and_validate(&doc, &path.segments, 0, "$", 0, &mut errors);
-        assert!(errors.is_empty());
-    }
-
     // --- Fallback heuristic ---
 
     #[test]
@@ -621,83 +355,5 @@ mod tests {
         let mut errors = Vec::new();
         validate_doc_fallback(&doc, 0, &mut errors);
         assert!(errors.is_empty());
-    }
-
-    // --- ValidationMap ---
-
-    #[test]
-    fn validation_map_from_json() {
-        let json = json!({
-            "version": 1,
-            "quantities": {
-                "apps/v1:Deployment": [
-                    "$.spec.template.spec.containers[*].resources.limits[*]",
-                    "$.spec.template.spec.containers[*].resources.requests[*]"
-                ]
-            }
-        });
-        let map = ValidationMap::from_json(&json).unwrap();
-        let paths = map.paths_for("apps/v1", "Deployment").unwrap();
-        assert_eq!(paths.len(), 2);
-    }
-
-    #[test]
-    fn validation_map_unknown_kind_uses_fallback() {
-        let json = json!({
-            "version": 1,
-            "quantities": {}
-        });
-        let map = ValidationMap::from_json(&json).unwrap();
-        assert!(map.paths_for("v1", "Namespace").is_none());
-    }
-
-    // --- validate_quantities (integration) ---
-
-    #[test]
-    fn validate_quantities_schema_aware() {
-        let map_json = json!({
-            "version": 1,
-            "quantities": {
-                "v1:PersistentVolume": ["$.spec.capacity[*]"]
-            }
-        });
-        let map = ValidationMap::from_json(&map_json).unwrap();
-
-        let value = json!([{
-            "apiVersion": "v1",
-            "kind": "PersistentVolume",
-            "spec": {"capacity": {"storage": "10Gi"}}
-        }]);
-        assert!(validate_quantities(&value, Some(&map)).is_ok());
-
-        let bad = json!([{
-            "apiVersion": "v1",
-            "kind": "PersistentVolume",
-            "spec": {"capacity": {"storage": "10gb"}}
-        }]);
-        let errs = validate_quantities(&bad, Some(&map)).unwrap_err();
-        assert_eq!(errs.len(), 1);
-        assert!(errs[0].path.contains("capacity.storage"));
-    }
-
-    #[test]
-    fn validate_quantities_fallback() {
-        let value = json!([{
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [{
-                            "resources": {
-                                "requests": {"cpu": "2gb"}
-                            }
-                        }]
-                    }
-                }
-            }
-        }]);
-        let errs = validate_quantities(&value, None).unwrap_err();
-        assert_eq!(errs.len(), 1);
     }
 }

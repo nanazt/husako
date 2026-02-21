@@ -1,0 +1,129 @@
+---
+source: crates/husako-dts/src/schema_store.rs
+assertion_line: 317
+expression: formatted
+---
+{
+  "gvk_index": {
+    "apps/v1:Deployment": "io.k8s.api.apps.v1.Deployment"
+  },
+  "schemas": {
+    "io.k8s.api.apps.v1.Deployment": {
+      "description": "Deployment",
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"
+        },
+        "spec": {
+          "$ref": "io.k8s.api.apps.v1.DeploymentSpec"
+        }
+      },
+      "x-kubernetes-group-version-kind": [
+        {
+          "group": "apps",
+          "kind": "Deployment",
+          "version": "v1"
+        }
+      ]
+    },
+    "io.k8s.api.apps.v1.DeploymentSpec": {
+      "properties": {
+        "replicas": {
+          "type": "integer"
+        },
+        "selector": {
+          "$ref": "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector"
+        },
+        "template": {
+          "$ref": "io.k8s.api.core.v1.PodTemplateSpec"
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    },
+    "io.k8s.api.core.v1.Container": {
+      "properties": {
+        "imagePullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "io.k8s.api.core.v1.ResourceRequirements"
+        }
+      }
+    },
+    "io.k8s.api.core.v1.PodSpec": {
+      "properties": {
+        "containers": {
+          "items": {
+            "$ref": "io.k8s.api.core.v1.Container"
+          },
+          "type": "array"
+        }
+      }
+    },
+    "io.k8s.api.core.v1.PodTemplateSpec": {
+      "properties": {
+        "spec": {
+          "$ref": "io.k8s.api.core.v1.PodSpec"
+        }
+      }
+    },
+    "io.k8s.api.core.v1.ResourceRequirements": {
+      "properties": {
+        "limits": {
+          "additionalProperties": {
+            "$ref": "io.k8s.apimachinery.pkg.api.resource.Quantity"
+          },
+          "type": "object"
+        },
+        "requests": {
+          "additionalProperties": {
+            "$ref": "io.k8s.apimachinery.pkg.api.resource.Quantity"
+          },
+          "type": "object"
+        }
+      }
+    },
+    "io.k8s.apimachinery.pkg.api.resource.Quantity": {
+      "description": "Quantity is a representation of a decimal number.",
+      "format": "quantity",
+      "type": "string"
+    },
+    "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector": {
+      "properties": {
+        "matchLabels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      }
+    },
+    "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "version": 2
+}

@@ -12,6 +12,7 @@ husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 husako-sdk = { path = "../husako-sdk" }
 husako-yaml = { path = "../husako-yaml" }
+regex-lite = "0.1"
 serde_json.workspace = true
 thiserror.workspace = true
 
