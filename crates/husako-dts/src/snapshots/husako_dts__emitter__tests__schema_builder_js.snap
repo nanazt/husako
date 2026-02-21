@@ -1,0 +1,9 @@
+---
+source: crates/husako-dts/src/emitter.rs
+expression: js
+---
+export class Container extends _SchemaBuilder {
+  name(v) { return this._set("name", v); }
+  image(v) { return this._set("image", v); }
+  resources(v) { return this._set("resources", v); }
+}

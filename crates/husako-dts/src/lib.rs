@@ -93,8 +93,10 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         let dts_path = format!("k8s/{group}/{version}.d.ts");
         files.insert(dts_path, dts_content);
 
-        // Only emit .js if there are schemas with GVK in this group-version
-        if schemas.iter().any(|s| s.gvk.is_some()) {
+        // Emit .js if there are resource builders (GVK) or schema builders
+        let has_js_content = schemas.iter().any(|s| s.gvk.is_some())
+            || schemas.iter().any(|s| emitter::should_generate_builder(s));
+        if has_js_content {
             let js_content = emitter::emit_group_version_js(schemas);
             let js_path = format!("k8s/{group}/{version}.js");
             files.insert(js_path, js_content);

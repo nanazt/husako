@@ -1,5 +1,11 @@
 import { MetadataFragment, ResourceRequirementsFragment } from "husako";
 
+/** Base class for schema builders (intermediate types like Container, PodSpec). */
+export class _SchemaBuilder {
+  /** Serialize to a plain object, resolving nested builders. */
+  _toJSON(): Record<string, any>;
+}
+
 /** Base class for Kubernetes resource builders. */
 export class _ResourceBuilder {
   /** Set metadata using a MetadataFragment. Returns a new builder (copy-on-write). */

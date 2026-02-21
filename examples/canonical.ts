@@ -12,8 +12,16 @@ const another_labels_2 = label("key5", "value5").label("key6", "value6");
 
 const nginx = new Deployment()
   .metadata(husako.merge([nginx_metadata, another_labels_1, another_labels_2]))
-  .resources(
-    requests(cpu(1).memory("2Gi")).limits(cpu("500m").memory(1))
-  );
+  .replicas(3)
+  .selector({ matchLabels: { app: "nginx" } })
+  .template({ metadata: { labels: { app: "nginx" } } })
+  .containers([{
+    name: "nginx",
+    image: "nginx:1.25",
+    resources: {
+      requests: { cpu: "1", memory: "2Gi" },
+      limits: { cpu: "500m", memory: "1Gi" },
+    },
+  }]);
 
 husako.build([nginx]);

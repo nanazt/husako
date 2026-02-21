@@ -1,0 +1,10 @@
+---
+source: crates/husako-dts/src/emitter.rs
+expression: dts
+---
+/** A single container within a pod. */
+export class Container extends _SchemaBuilder {
+  name(value: string): this;
+  image(value: string): this;
+  resources(value: ResourceRequirements): this;
+}

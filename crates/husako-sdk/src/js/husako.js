@@ -87,6 +87,12 @@ function normalizeMemory(v) {
 const rrMethods = {
   requests(rl) { return createRR(rl, this._limits); },
   limits(rl) { return createRR(this._requests, rl); },
+  _toJSON() {
+    const obj = {};
+    if (this._requests) obj.requests = this._requests._toJSON();
+    if (this._limits) obj.limits = this._limits._toJSON();
+    return obj;
+  },
 };
 
 function createRR(requests, limits) {

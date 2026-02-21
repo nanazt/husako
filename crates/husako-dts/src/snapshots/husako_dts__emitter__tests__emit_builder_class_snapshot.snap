@@ -1,6 +1,5 @@
 ---
 source: crates/husako-dts/src/emitter.rs
-assertion_line: 333
 expression: output
 ---
 /** Deployment enables declarative updates for Pods and ReplicaSets. */
@@ -8,4 +7,12 @@ export class Deployment extends _ResourceBuilder {
   constructor();
   /** Set the resource specification. */
   spec(value: DeploymentSpec): this;
+  /** Number of desired pods. */
+  replicas(value: number): this;
+  selector(value: LabelSelector): this;
+  template(value: PodTemplateSpec): this;
+  /** Set pod containers (shortcut for template.spec.containers). */
+  containers(value: any[]): this;
+  /** Set pod init containers (shortcut for template.spec.initContainers). */
+  initContainers(value: any[]): this;
 }

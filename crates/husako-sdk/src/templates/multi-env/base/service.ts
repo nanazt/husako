@@ -6,8 +6,6 @@ export function nginxService(ns: string) {
     .metadata(
       name("nginx").namespace(ns).label("app", "nginx").label("env", ns)
     )
-    .spec({
-      selector: { app: "nginx" },
-      ports: [{ port: 80, targetPort: 80 }],
-    });
+    .selector({ app: "nginx" })
+    .ports([{ port: 80, targetPort: 80 }]);
 }

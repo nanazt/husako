@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use crate::schema::{PropertyInfo, SchemaInfo, TsType};
+use crate::schema::{PropertyInfo, SchemaInfo, TsType, has_complex_property};
+
+/// Properties to skip when generating spec property methods on resource builders.
+const RESOURCE_SPEC_SKIP: &[&str] = &["status", "apiVersion", "kind", "metadata"];
 
 /// Format a TsType into its TypeScript string representation.
 pub fn format_ts_type(ty: &TsType) -> String {
@@ -60,8 +63,83 @@ fn find_spec_type(schema: &SchemaInfo) -> Option<String> {
     })
 }
 
-/// Emit a builder class for a kind with GVK, including typed .spec() override if available.
-pub fn emit_builder_class(schema: &SchemaInfo, api_version: &str) -> String {
+/// Find the spec schema for a resource by looking up its spec type name.
+fn find_spec_schema<'a>(
+    resource: &SchemaInfo,
+    all_schemas: &'a [&'a SchemaInfo],
+) -> Option<&'a SchemaInfo> {
+    let spec_type = find_spec_type(resource)?;
+    all_schemas.iter().find(|s| s.ts_name == spec_type).copied()
+}
+
+/// Check if a spec schema has a `template` property referencing PodTemplateSpec.
+fn has_pod_template(spec_schema: &SchemaInfo) -> bool {
+    spec_schema.properties.iter().any(|p| {
+        p.name == "template" && matches!(&p.ts_type, TsType::Ref(name) if name == "PodTemplateSpec")
+    })
+}
+
+/// Check if a schema should get a `_SchemaBuilder` subclass.
+/// A schema benefits from a builder when it has at least one property with a
+/// `Ref` or `Array(Ref)` type, indicating deep nesting.
+pub fn should_generate_builder(schema: &SchemaInfo) -> bool {
+    // Only non-GVK schemas (intermediate types) get schema builders
+    schema.gvk.is_none() && has_complex_property(schema)
+}
+
+/// Emit typed chainable method declarations for each property of a schema (.d.ts).
+fn emit_property_methods_dts(out: &mut String, props: &[PropertyInfo], skip: &[&str]) {
+    for prop in props {
+        if skip.contains(&prop.name.as_str()) {
+            continue;
+        }
+        if let Some(desc) = &prop.description {
+            let _ = writeln!(out, "  /** {desc} */");
+        }
+        let _ = writeln!(
+            out,
+            "  {}(value: {}): this;",
+            prop.name,
+            format_ts_type(&prop.ts_type)
+        );
+    }
+}
+
+/// Emit JS chainable method implementations using `_set` for each property.
+fn emit_property_methods_js_set(out: &mut String, props: &[PropertyInfo], skip: &[&str]) {
+    for prop in props {
+        if skip.contains(&prop.name.as_str()) {
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "  {}(v) {{ return this._set(\"{}\", v); }}",
+            prop.name, prop.name
+        );
+    }
+}
+
+/// Emit JS chainable method implementations using `_setSpec` for each property.
+fn emit_property_methods_js_spec(out: &mut String, props: &[PropertyInfo], skip: &[&str]) {
+    for prop in props {
+        if skip.contains(&prop.name.as_str()) {
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "  {}(v) {{ return this._setSpec(\"{}\", v); }}",
+            prop.name, prop.name
+        );
+    }
+}
+
+/// Emit a builder class for a kind with GVK, including typed .spec() override
+/// and per-spec-property chainable methods if the spec schema is available.
+pub fn emit_builder_class(
+    schema: &SchemaInfo,
+    api_version: &str,
+    all_schemas: &[&SchemaInfo],
+) -> String {
     let mut out = String::new();
 
     if let Some(desc) = &schema.description {
@@ -78,6 +156,25 @@ pub fn emit_builder_class(schema: &SchemaInfo, api_version: &str) -> String {
     if let Some(spec_type) = find_spec_type(schema) {
         let _ = writeln!(out, "  /** Set the resource specification. */");
         let _ = writeln!(out, "  spec(value: {spec_type}): this;");
+
+        // Emit per-spec-property methods
+        if let Some(spec_schema) = find_spec_schema(schema, all_schemas) {
+            emit_property_methods_dts(&mut out, &spec_schema.properties, RESOURCE_SPEC_SKIP);
+
+            // Convenience shortcuts for workload resources with PodTemplateSpec
+            if has_pod_template(spec_schema) {
+                let _ = writeln!(
+                    out,
+                    "  /** Set pod containers (shortcut for template.spec.containers). */"
+                );
+                let _ = writeln!(out, "  containers(value: any[]): this;");
+                let _ = writeln!(
+                    out,
+                    "  /** Set pod init containers (shortcut for template.spec.initContainers). */"
+                );
+                let _ = writeln!(out, "  initContainers(value: any[]): this;");
+            }
+        }
     }
 
     let _ = writeln!(out, "}}");
@@ -85,6 +182,41 @@ pub fn emit_builder_class(schema: &SchemaInfo, api_version: &str) -> String {
     // Suppress unused warning — api_version is available for future use
     let _ = api_version;
 
+    out
+}
+
+/// Emit a `_SchemaBuilder` subclass declaration (.d.ts).
+fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
+    let mut out = String::new();
+
+    if let Some(desc) = &schema.description {
+        let _ = writeln!(out, "/** {desc} */");
+    }
+    let _ = writeln!(
+        out,
+        "export class {} extends _SchemaBuilder {{",
+        schema.ts_name
+    );
+
+    emit_property_methods_dts(&mut out, &schema.properties, &[]);
+
+    let _ = writeln!(out, "}}");
+    out
+}
+
+/// Emit a `_SchemaBuilder` subclass implementation (.js).
+fn emit_schema_builder_js(schema: &SchemaInfo) -> String {
+    let mut out = String::new();
+
+    let _ = writeln!(
+        out,
+        "export class {} extends _SchemaBuilder {{",
+        schema.ts_name
+    );
+
+    emit_property_methods_js_set(&mut out, &schema.properties, &[]);
+
+    let _ = writeln!(out, "}}\n");
     out
 }
 
@@ -144,25 +276,35 @@ pub fn emit_common(schemas: &[&SchemaInfo]) -> String {
 /// Emit a per-group-version `.d.ts` file.
 ///
 /// All schemas with GVK get builder classes (no registered_kinds filter).
+/// Non-GVK schemas with complex properties get `_SchemaBuilder` subclasses.
 /// `common_names` — set of type names available in `_common.d.ts`.
 pub fn emit_group_version(schemas: &[&SchemaInfo], common_names: &HashSet<String>) -> String {
     let mut out = String::new();
 
     let _ = writeln!(out, "// Auto-generated by husako. Do not edit.\n");
 
-    let has_builders = schemas.iter().any(|s| s.gvk.is_some());
+    let has_resource_builders = schemas.iter().any(|s| s.gvk.is_some());
+    let has_schema_builders = schemas.iter().any(|s| should_generate_builder(s));
+
+    // Build import for base classes
+    let mut base_imports = Vec::new();
+    if has_resource_builders {
+        base_imports.push("_ResourceBuilder");
+    }
+    if has_schema_builders {
+        base_imports.push("_SchemaBuilder");
+    }
+    if !base_imports.is_empty() {
+        let _ = writeln!(
+            out,
+            "import {{ {} }} from \"husako/_base\";\n",
+            base_imports.join(", ")
+        );
+    }
 
     // Collect all referenced types
     let refs = collect_refs(schemas);
     let local_names: HashSet<&str> = schemas.iter().map(|s| s.ts_name.as_str()).collect();
-
-    // Import _ResourceBuilder if there are builders
-    if has_builders {
-        let _ = writeln!(
-            out,
-            "import {{ _ResourceBuilder }} from \"husako/_base\";\n"
-        );
-    }
 
     // Import common types that are referenced but not defined locally
     let common_imports: Vec<&String> = refs
@@ -195,7 +337,15 @@ pub fn emit_group_version(schemas: &[&SchemaInfo], common_names: &HashSet<String
             } else {
                 format!("{}/{}", gvk.group, gvk.version)
             };
-            let _ = write!(out, "{}", emit_builder_class(schema, &api_version));
+            let _ = write!(out, "{}", emit_builder_class(schema, &api_version, schemas));
+            let _ = writeln!(out);
+        }
+    }
+
+    // Emit schema builder classes for non-GVK schemas with complex properties
+    for schema in schemas {
+        if should_generate_builder(schema) {
+            let _ = write!(out, "{}", emit_schema_builder_class(schema));
             let _ = writeln!(out);
         }
     }
@@ -205,16 +355,34 @@ pub fn emit_group_version(schemas: &[&SchemaInfo], common_names: &HashSet<String
 
 /// Emit a per-group-version `.js` runtime module.
 ///
-/// Each schema with GVK gets a builder class extending `_ResourceBuilder`.
+/// Each schema with GVK gets a builder class extending `_ResourceBuilder`
+/// with per-spec-property chainable methods.
+/// Non-GVK schemas with complex properties get `_SchemaBuilder` subclasses.
 pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
     let mut out = String::new();
 
     let _ = writeln!(out, "// Auto-generated by husako. Do not edit.\n");
-    let _ = writeln!(
-        out,
-        "import {{ _ResourceBuilder }} from \"husako/_base\";\n"
-    );
 
+    let has_resource_builders = schemas.iter().any(|s| s.gvk.is_some());
+    let has_schema_builders = schemas.iter().any(|s| should_generate_builder(s));
+
+    // Build import for base classes
+    let mut base_imports = Vec::new();
+    if has_resource_builders {
+        base_imports.push("_ResourceBuilder");
+    }
+    if has_schema_builders {
+        base_imports.push("_SchemaBuilder");
+    }
+    if !base_imports.is_empty() {
+        let _ = writeln!(
+            out,
+            "import {{ {} }} from \"husako/_base\";\n",
+            base_imports.join(", ")
+        );
+    }
+
+    // Emit resource builder classes with per-spec-property methods
     for schema in schemas {
         if let Some(gvk) = &schema.gvk {
             let api_version = if gvk.group.is_empty() {
@@ -232,7 +400,36 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
                 "  constructor() {{ super(\"{api_version}\", \"{}\"); }}",
                 schema.ts_name
             );
+
+            // Emit per-spec-property methods
+            if let Some(spec_schema) = find_spec_schema(schema, schemas) {
+                emit_property_methods_js_spec(
+                    &mut out,
+                    &spec_schema.properties,
+                    RESOURCE_SPEC_SKIP,
+                );
+
+                // Convenience shortcuts for workload resources
+                if has_pod_template(spec_schema) {
+                    let _ = writeln!(
+                        out,
+                        "  containers(v) {{ return this._setDeep(\"template.spec.containers\", v); }}"
+                    );
+                    let _ = writeln!(
+                        out,
+                        "  initContainers(v) {{ return this._setDeep(\"template.spec.initContainers\", v); }}"
+                    );
+                }
+            }
+
             let _ = writeln!(out, "}}\n");
+        }
+    }
+
+    // Emit schema builder classes for non-GVK schemas with complex properties
+    for schema in schemas {
+        if should_generate_builder(schema) {
+            let _ = write!(out, "{}", emit_schema_builder_js(schema));
         }
     }
 
@@ -309,6 +506,30 @@ mod tests {
 
     #[test]
     fn emit_builder_class_snapshot() {
+        let spec = make_schema(
+            "DeploymentSpec",
+            vec![
+                PropertyInfo {
+                    name: "replicas".to_string(),
+                    ts_type: TsType::Number,
+                    required: false,
+                    description: Some("Number of desired pods.".to_string()),
+                },
+                PropertyInfo {
+                    name: "selector".to_string(),
+                    ts_type: TsType::Ref("LabelSelector".to_string()),
+                    required: true,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "template".to_string(),
+                    ts_type: TsType::Ref("PodTemplateSpec".to_string()),
+                    required: false,
+                    description: None,
+                },
+            ],
+        );
+
         let mut schema = make_schema(
             "Deployment",
             vec![PropertyInfo {
@@ -326,7 +547,8 @@ mod tests {
         schema.description =
             Some("Deployment enables declarative updates for Pods and ReplicaSets.".to_string());
 
-        let output = emit_builder_class(&schema, "apps/v1");
+        let all_schemas: Vec<&SchemaInfo> = vec![&schema, &spec];
+        let output = emit_builder_class(&schema, "apps/v1", &all_schemas);
         insta::assert_snapshot!(output);
     }
 
@@ -340,7 +562,8 @@ mod tests {
         });
         schema.description = Some("Namespace provides a scope for Names.".to_string());
 
-        let output = emit_builder_class(&schema, "v1");
+        let all_schemas: Vec<&SchemaInfo> = vec![&schema];
+        let output = emit_builder_class(&schema, "v1", &all_schemas);
         insta::assert_snapshot!(output);
     }
 
@@ -459,7 +682,12 @@ mod tests {
                 group: "apps".to_string(),
                 version: "v1".to_string(),
             },
-            properties: vec![],
+            properties: vec![PropertyInfo {
+                name: "spec".to_string(),
+                ts_type: TsType::Ref("DeploymentSpec".to_string()),
+                required: false,
+                description: None,
+            }],
             gvk: Some(GroupVersionKind {
                 group: "apps".to_string(),
                 version: "v1".to_string(),
@@ -475,7 +703,12 @@ mod tests {
                 group: "apps".to_string(),
                 version: "v1".to_string(),
             },
-            properties: vec![],
+            properties: vec![PropertyInfo {
+                name: "spec".to_string(),
+                ts_type: TsType::Ref("StatefulSetSpec".to_string()),
+                required: false,
+                description: None,
+            }],
             gvk: Some(GroupVersionKind {
                 group: "apps".to_string(),
                 version: "v1".to_string(),
@@ -491,7 +724,20 @@ mod tests {
                 group: "apps".to_string(),
                 version: "v1".to_string(),
             },
-            properties: vec![],
+            properties: vec![
+                PropertyInfo {
+                    name: "replicas".to_string(),
+                    ts_type: TsType::Number,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "template".to_string(),
+                    ts_type: TsType::Ref("PodTemplateSpec".to_string()),
+                    required: false,
+                    description: None,
+                },
+            ],
             gvk: None,
             description: None,
         };
@@ -499,5 +745,83 @@ mod tests {
         let schemas: Vec<&SchemaInfo> = vec![&deployment, &stateful_set, &spec];
         let output = emit_group_version_js(&schemas);
         insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn emit_schema_builder_snapshot() {
+        let container = SchemaInfo {
+            full_name: "io.k8s.api.core.v1.Container".to_string(),
+            ts_name: "Container".to_string(),
+            location: SchemaLocation::GroupVersion {
+                group: "core".to_string(),
+                version: "v1".to_string(),
+            },
+            properties: vec![
+                PropertyInfo {
+                    name: "name".to_string(),
+                    ts_type: TsType::String,
+                    required: true,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "image".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "resources".to_string(),
+                    ts_type: TsType::Ref("ResourceRequirements".to_string()),
+                    required: false,
+                    description: None,
+                },
+            ],
+            gvk: None,
+            description: Some("A single container within a pod.".to_string()),
+        };
+
+        assert!(should_generate_builder(&container));
+        let dts = emit_schema_builder_class(&container);
+        let js = emit_schema_builder_js(&container);
+        insta::assert_snapshot!("schema_builder_dts", dts);
+        insta::assert_snapshot!("schema_builder_js", js);
+    }
+
+    #[test]
+    fn should_not_generate_builder_for_simple_schema() {
+        let label_selector = SchemaInfo {
+            full_name: "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector".to_string(),
+            ts_name: "LabelSelector".to_string(),
+            location: SchemaLocation::Common,
+            properties: vec![PropertyInfo {
+                name: "matchLabels".to_string(),
+                ts_type: TsType::Map(Box::new(TsType::String)),
+                required: false,
+                description: None,
+            }],
+            gvk: None,
+            description: None,
+        };
+        assert!(!should_generate_builder(&label_selector));
+    }
+
+    #[test]
+    fn should_not_generate_builder_for_gvk_schema() {
+        let mut deployment = make_schema(
+            "Deployment",
+            vec![PropertyInfo {
+                name: "spec".to_string(),
+                ts_type: TsType::Ref("DeploymentSpec".to_string()),
+                required: false,
+                description: None,
+            }],
+        );
+        deployment.gvk = Some(GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+        // GVK schemas get _ResourceBuilder, not _SchemaBuilder
+        assert!(!should_generate_builder(&deployment));
     }
 }

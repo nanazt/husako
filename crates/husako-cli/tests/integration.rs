@@ -32,14 +32,29 @@ import { _ResourceBuilder } from "husako/_base";
 
 export class Deployment extends _ResourceBuilder {
   constructor() { super("apps/v1", "Deployment"); }
+  replicas(v) { return this._setSpec("replicas", v); }
+  selector(v) { return this._setSpec("selector", v); }
+  strategy(v) { return this._setSpec("strategy", v); }
+  template(v) { return this._setSpec("template", v); }
+  containers(v) { return this._setDeep("template.spec.containers", v); }
+  initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
 
 export class StatefulSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "StatefulSet"); }
+  replicas(v) { return this._setSpec("replicas", v); }
+  selector(v) { return this._setSpec("selector", v); }
+  template(v) { return this._setSpec("template", v); }
+  containers(v) { return this._setDeep("template.spec.containers", v); }
+  initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
 
 export class DaemonSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "DaemonSet"); }
+  selector(v) { return this._setSpec("selector", v); }
+  template(v) { return this._setSpec("template", v); }
+  containers(v) { return this._setDeep("template.spec.containers", v); }
+  initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
 "#,
     )
@@ -59,6 +74,9 @@ export class Namespace extends _ResourceBuilder {
 
 export class Service extends _ResourceBuilder {
   constructor() { super("v1", "Service"); }
+  selector(v) { return this._setSpec("selector", v); }
+  ports(v) { return this._setSpec("ports", v); }
+  type(v) { return this._setSpec("type", v); }
 }
 
 export class ConfigMap extends _ResourceBuilder {
@@ -1328,4 +1346,171 @@ build([cm]);
         .stdout(predicates::str::contains("kind: ConfigMap"))
         .stdout(predicates::str::contains("key1: val1"))
         .stdout(predicates::str::contains("key2: val2"));
+}
+
+// --- Generic Builder Pattern ---
+
+#[test]
+fn builder_spec_property_methods() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name, label } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const d = new Deployment()
+    .metadata(name("nginx").label("app", "nginx"))
+    .replicas(3)
+    .selector({ matchLabels: { app: "nginx" } })
+    .template({ metadata: { labels: { app: "nginx" } } })
+    .containers([{ name: "nginx", image: "nginx:1.25" }]);
+build([d]);
+"#,
+    );
+    husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: apps/v1"))
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("name: nginx"))
+        .stdout(predicates::str::contains("replicas: 3"))
+        .stdout(predicates::str::contains("app: nginx"))
+        .stdout(predicates::str::contains("image: nginx:1.25"));
+}
+
+#[test]
+fn builder_set_deep_merges() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const d = new Deployment()
+    .metadata(name("nginx"))
+    .replicas(2)
+    .template({ metadata: { labels: { app: "nginx" } } })
+    .containers([{ name: "nginx", image: "nginx:1.25" }])
+    .initContainers([{ name: "init", image: "busybox" }]);
+build([d]);
+"#,
+    );
+    let output = husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    // Both containers and initContainers should exist under template.spec
+    assert!(yaml.contains("name: nginx"));
+    assert!(yaml.contains("image: nginx:1.25"));
+    assert!(yaml.contains("name: init"));
+    assert!(yaml.contains("image: busybox"));
+    assert!(yaml.contains("replicas: 2"));
+}
+
+#[test]
+fn builder_spec_overrides_spec_parts() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name } from "husako";
+import { Deployment } from "k8s/apps/v1";
+// .spec() should override any _specParts set via .replicas()
+const d = new Deployment()
+    .metadata(name("nginx"))
+    .replicas(3)
+    .spec({ replicas: 5, selector: {} });
+build([d]);
+"#,
+    );
+    let output = husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    // .spec() wins over .replicas()
+    assert!(yaml.contains("replicas: 5"));
+    assert!(!yaml.contains("replicas: 3"));
+}
+
+#[test]
+fn builder_spec_parts_and_resources_merge() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name, cpu, memory, requests, limits } from "husako";
+import { Deployment } from "k8s/apps/v1";
+// _specParts (from .replicas/.containers) and _resources should merge
+const d = new Deployment()
+    .metadata(name("nginx"))
+    .replicas(2)
+    .selector({ matchLabels: { app: "nginx" } })
+    .template({ metadata: { labels: { app: "nginx" } } })
+    .containers([{ name: "nginx", image: "nginx:1.25" }])
+    .resources(
+        requests(cpu("250m").memory("128Mi"))
+            .limits(cpu("500m").memory("256Mi"))
+    );
+build([d]);
+"#,
+    );
+    let output = husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    // Both specParts and resources should be present
+    assert!(yaml.contains("replicas: 2"));
+    assert!(yaml.contains("image: nginx:1.25"));
+    assert!(yaml.contains("cpu: 250m"));
+    assert!(yaml.contains("memory: 128Mi"));
+    assert!(yaml.contains("cpu: 500m"));
+    assert!(yaml.contains("memory: 256Mi"));
+}
+
+#[test]
+fn builder_copy_on_write_isolation() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name } from "husako";
+import { Deployment } from "k8s/apps/v1";
+const base = new Deployment().metadata(name("base")).replicas(1);
+const a = base.replicas(3);
+const b = base.replicas(5);
+build([a, b]);
+"#,
+    );
+    let output = husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    assert!(yaml.contains("replicas: 3"));
+    assert!(yaml.contains("replicas: 5"));
+    // base's replicas=1 should not appear
+    assert!(!yaml.contains("replicas: 1"));
+}
+
+#[test]
+fn builder_service_spec_properties() {
+    let (dir, entry) = project_with_k8s(
+        r#"
+import { build, name } from "husako";
+import { Service } from "k8s/core/v1";
+const svc = new Service()
+    .metadata(name("nginx"))
+    .selector({ app: "nginx" })
+    .ports([{ port: 80, targetPort: 8080 }])
+    .type("ClusterIP");
+build([svc]);
+"#,
+    );
+    husako_at(dir.path())
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Service"))
+        .stdout(predicates::str::contains("app: nginx"))
+        .stdout(predicates::str::contains("port: 80"))
+        .stdout(predicates::str::contains("targetPort: 8080"))
+        .stdout(predicates::str::contains("type: ClusterIP"));
 }

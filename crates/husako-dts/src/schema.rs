@@ -137,6 +137,23 @@ pub fn ts_type_from_schema(schema: &Value) -> TsType {
     }
 }
 
+/// Check if a schema has at least one property with a `Ref` or `Array(Ref)` type.
+/// Such schemas benefit from builder generation (they have deep nesting).
+pub fn has_complex_property(schema: &SchemaInfo) -> bool {
+    schema
+        .properties
+        .iter()
+        .any(|p| is_complex_type(&p.ts_type))
+}
+
+fn is_complex_type(ty: &TsType) -> bool {
+    match ty {
+        TsType::Ref(_) => true,
+        TsType::Array(inner) => matches!(inner.as_ref(), TsType::Ref(_)),
+        _ => false,
+    }
+}
+
 /// Extract GVK from `x-kubernetes-group-version-kind` extension.
 fn extract_gvk(schema: &Value) -> Option<GroupVersionKind> {
     let gvk_array = schema.get("x-kubernetes-group-version-kind")?;
@@ -385,5 +402,73 @@ mod tests {
         let spec = json!({"openapi": "3.0.0"});
         let schemas = parse_spec(&spec);
         assert!(schemas.is_empty());
+    }
+
+    #[test]
+    fn has_complex_property_with_ref() {
+        let schema = SchemaInfo {
+            full_name: "io.k8s.api.core.v1.Container".to_string(),
+            ts_name: "Container".to_string(),
+            location: SchemaLocation::GroupVersion {
+                group: "core".to_string(),
+                version: "v1".to_string(),
+            },
+            properties: vec![
+                PropertyInfo {
+                    name: "name".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "resources".to_string(),
+                    ts_type: TsType::Ref("ResourceRequirements".to_string()),
+                    required: false,
+                    description: None,
+                },
+            ],
+            gvk: None,
+            description: None,
+        };
+        assert!(has_complex_property(&schema));
+    }
+
+    #[test]
+    fn has_complex_property_with_array_ref() {
+        let schema = SchemaInfo {
+            full_name: "io.k8s.api.core.v1.PodSpec".to_string(),
+            ts_name: "PodSpec".to_string(),
+            location: SchemaLocation::GroupVersion {
+                group: "core".to_string(),
+                version: "v1".to_string(),
+            },
+            properties: vec![PropertyInfo {
+                name: "containers".to_string(),
+                ts_type: TsType::Array(Box::new(TsType::Ref("Container".to_string()))),
+                required: false,
+                description: None,
+            }],
+            gvk: None,
+            description: None,
+        };
+        assert!(has_complex_property(&schema));
+    }
+
+    #[test]
+    fn has_complex_property_simple_schema() {
+        let schema = SchemaInfo {
+            full_name: "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector".to_string(),
+            ts_name: "LabelSelector".to_string(),
+            location: SchemaLocation::Common,
+            properties: vec![PropertyInfo {
+                name: "matchLabels".to_string(),
+                ts_type: TsType::Map(Box::new(TsType::String)),
+                required: false,
+                description: None,
+            }],
+            gvk: None,
+            description: None,
+        };
+        assert!(!has_complex_property(&schema));
     }
 }
