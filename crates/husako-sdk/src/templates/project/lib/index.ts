@@ -1,1 +1,1 @@
-export { metadata } from "./metadata";
+export { appMetadata } from "./metadata";

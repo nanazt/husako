@@ -26,6 +26,9 @@ export interface ResourceRequirementsFragment {
   limits(rl: ResourceListFragment): ResourceRequirementsFragment;
 }
 
+/** Create an empty MetadataFragment. Entry point for metadata chains. */
+export function metadata(): MetadataFragment;
+
 /** Create a MetadataFragment with the given name. */
 export function name(value: string): MetadataFragment;
 
@@ -55,4 +58,4 @@ export function merge(items: MetadataFragment[]): MetadataFragment;
 export function merge(items: ResourceListFragment[]): ResourceListFragment;
 
 /** Submit resources to husako for rendering. Must be called exactly once. */
-export function build(input: object | object[]): void;
+export function build(input: { _render(): any } | { _render(): any }[]): void;

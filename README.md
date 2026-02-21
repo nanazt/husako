@@ -9,54 +9,33 @@ Inspired by [gaji](https://github.com/dodok8/gaji).
 ## Quick example
 
 ```typescript
-// entry.ts
-import { build } from "husako";
+import { deployment } from "k8s/apps/v1";
+import { container } from "k8s/core/v1";
+import { selector } from "k8s/_common";
+import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const deployment = {
-  apiVersion: "apps/v1",
-  kind: "Deployment",
-  metadata: { name: "nginx", namespace: "default" },
-  spec: {
-    replicas: 3,
-    selector: { matchLabels: { app: "nginx" } },
-    template: {
-      metadata: { labels: { app: "nginx" } },
-      spec: {
-        containers: [{ name: "nginx", image: "nginx:1.25" }],
-      },
-    },
-  },
-};
+const nginx = deployment()
+  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
+  .replicas(1)
+  .selector(selector().matchLabels({ app: "nginx" }))
+  .containers([
+    container()
+      .name("nginx")
+      .image("nginx:1.25")
+      .resources(
+        requests(cpu("250m").memory("128Mi"))
+          .limits(cpu("500m").memory("256Mi"))
+      )
+  ]);
 
-build([deployment]);
+build([nginx]);
 ```
 
 ```
 $ husako render entry.ts
 ```
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx
-  namespace: default
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: nginx
-  template:
-    metadata:
-      labels:
-        app: nginx
-    spec:
-      containers:
-      - image: nginx:1.25
-        name: nginx
-```
-
-Plain objects work, but husako also provides typed builders with autocomplete for every Kubernetes resource. See [Getting started](#getting-started) below.
+Every builder exports a lowercase factory function — `deployment()`, `service()`, `container()`. Properties are chainable methods with full type safety and autocomplete. See [Getting started](#getting-started) below.
 
 ## Install
 
@@ -85,7 +64,7 @@ Connect to a running cluster to generate typed builders for every resource kind:
 husako init --api-server https://localhost:6443
 ```
 
-Or skip Kubernetes types and use plain objects:
+Skip Kubernetes type generation:
 
 ```
 husako init --skip-k8s
@@ -98,27 +77,31 @@ This writes a `.husako/` directory with `.d.ts` type definitions and `tsconfig.j
 With types initialized, you can use the typed builder API:
 
 ```typescript
-import * as husako from "husako";
-import { Deployment } from "k8s/apps/v1";
-import { name, cpu, memory, requests, limits } from "husako";
+import { deployment } from "k8s/apps/v1";
+import { container } from "k8s/core/v1";
+import { selector } from "k8s/_common";
+import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const nginx = new Deployment()
-  .metadata(name("nginx").namespace("default").label("app", "nginx"))
+const nginx = deployment()
+  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
-  .selector({ matchLabels: { app: "nginx" } })
-  .template({ metadata: { labels: { app: "nginx" } } })
-  .containers([{ name: "nginx", image: "nginx:1.25" }])
-  .resources(
-    requests(cpu("250m").memory("128Mi"))
-      .limits(cpu("500m").memory("256Mi"))
-  );
+  .selector(selector().matchLabels({ app: "nginx" }))
+  .containers([
+    container()
+      .name("nginx")
+      .image("nginx:1.25")
+      .resources(
+        requests(cpu("250m").memory("128Mi"))
+          .limits(cpu("500m").memory("256Mi"))
+      )
+  ]);
 
-husako.build([nginx]);
+build([nginx]);
 ```
 
-Every spec property is available as a chainable method — `.replicas()`, `.selector()`, `.template()`, etc. Workload resources also get `.containers()` and `.initContainers()` shortcuts that reach into `template.spec`.
+Every builder exports a lowercase factory function — `deployment()`, `service()`, `container()`, etc. Properties are available as chainable methods. Workload resources get `.containers()` and `.initContainers()` shortcuts that reach into `template.spec`.
 
-Resource quantities have their own fragment builders — `cpu()`, `memory()`, `requests()`, `limits()` — that chain together and normalize values (e.g. `cpu(0.5)` becomes `"500m"`, `memory(2)` becomes `"2Gi"`).
+`metadata()` is the entry point for metadata chains. Resource quantities have their own fragment builders — `cpu()`, `memory()`, `requests()`, `limits()` — that chain together and normalize values (e.g. `cpu(0.5)` becomes `"500m"`, `memory(2)` becomes `"2Gi"`).
 
 ### 4. Render
 

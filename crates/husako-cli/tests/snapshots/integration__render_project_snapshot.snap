@@ -1,6 +1,5 @@
 ---
 source: crates/husako-cli/tests/integration.rs
-assertion_line: 126
 expression: yaml
 ---
 apiVersion: apps/v1
@@ -15,9 +14,6 @@ spec:
     matchLabels:
       app: nginx
   template:
-    metadata:
-      labels:
-        app: nginx
     spec:
       containers:
       - image: nginx:1.25

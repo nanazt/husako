@@ -7,3 +7,4 @@ export class Container extends _SchemaBuilder {
   image(v) { return this._set("image", v); }
   resources(v) { return this._set("resources", v); }
 }
+export function container() { return new Container(); }

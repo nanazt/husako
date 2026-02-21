@@ -68,12 +68,21 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
 
     let common_names: HashSet<String> = common.iter().map(|s| s.ts_name.clone()).collect();
 
-    // Emit _common.d.ts
+    // Emit _common.d.ts and _common.js
     if !common.is_empty() {
         files.insert(
             "k8s/_common.d.ts".to_string(),
             emitter::emit_common(&common),
         );
+
+        // Emit _common.js if there are schema builders
+        let has_common_builders = common.iter().any(|s| emitter::should_generate_builder(s));
+        if has_common_builders {
+            files.insert(
+                "k8s/_common.js".to_string(),
+                emitter::emit_common_js(&common),
+            );
+        }
     }
 
     // Group schemas by (group, version)

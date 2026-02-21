@@ -13,12 +13,15 @@ export class Deployment extends _ResourceBuilder {
   containers(v) { return this._setDeep("template.spec.containers", v); }
   initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
+export function deployment() { return new Deployment(); }
 
 export class StatefulSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "StatefulSet"); }
 }
+export function statefulSet() { return new StatefulSet(); }
 
 export class DeploymentSpec extends _SchemaBuilder {
   replicas(v) { return this._set("replicas", v); }
   template(v) { return this._set("template", v); }
 }
+export function deploymentSpec() { return new DeploymentSpec(); }

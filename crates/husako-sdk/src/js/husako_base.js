@@ -138,11 +138,7 @@ export class _ResourceBuilder {
     };
 
     if (this._metadata) {
-      if (this._metadata._type === "metadata") {
-        obj.metadata = this._metadata._toJSON();
-      } else {
-        obj.metadata = this._metadata;
-      }
+      obj.metadata = this._metadata._toJSON();
     }
 
     if (this._spec) {

@@ -16,3 +16,4 @@ export class Deployment extends _ResourceBuilder {
   /** Set pod init containers (shortcut for template.spec.initContainers). */
   initContainers(value: any[]): this;
 }
+export function deployment(): Deployment;

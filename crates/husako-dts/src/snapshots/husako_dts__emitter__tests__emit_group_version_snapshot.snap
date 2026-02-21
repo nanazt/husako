@@ -23,3 +23,4 @@ export class Deployment extends _ResourceBuilder {
   spec(value: DeploymentSpec): this;
   replicas(value: number): this;
 }
+export function deployment(): Deployment;

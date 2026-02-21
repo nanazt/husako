@@ -11,8 +11,10 @@ export class Deployment extends _ResourceBuilder {
   replicas(v) { return this._setSpec("replicas", v); }
   selector(v) { return this._setSpec("selector", v); }
 }
+export function deployment() { return new Deployment(); }
 
 export class DeploymentSpec extends _SchemaBuilder {
   replicas(v) { return this._set("replicas", v); }
   selector(v) { return this._set("selector", v); }
 }
+export function deploymentSpec() { return new DeploymentSpec(); }

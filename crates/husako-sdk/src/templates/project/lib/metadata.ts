@@ -1,5 +1,5 @@
-import { name, label } from "husako";
+import { metadata } from "husako";
 
-export function metadata(appName: string) {
-  return name(appName).label("app", appName);
+export function appMetadata(appName: string) {
+  return metadata().name(appName).label("app", appName);
 }

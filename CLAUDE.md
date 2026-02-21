@@ -38,7 +38,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar
 4. **Emitter** (`husako-yaml`): Converts validated `serde_json::Value` to YAML or JSON output
 5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs
-6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_validation.json` from OpenAPI specs
+6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs
 7. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
 
 ## Project Structure
@@ -98,7 +98,7 @@ Boundary rules:
 ## Hard Contracts
 
 - Entrypoint is executed as an ESM module.
-- `husako.build(input)` must be called exactly once. Missing call → exit 7. Multiple calls → exit 7.
+- `husako.build(input)` must be called exactly once with builder instances (items must have `_render()`). Missing call → exit 7. Multiple calls → exit 7. Plain objects → TypeError.
 - Strict JSON enforcement by default (`--strict-json=true`): no `undefined`, `bigint`, `symbol`, functions, class instances, `Date`, `Map`, `Set`, `RegExp`, or cyclic references.
 - Validation errors must include `doc[index]`, JSON path (`$.spec...`), and value kind.
 - Supported imports: relative (`./`, `../`) and builtins (`"husako"`, `"k8s/<group>/<version>"`). No npm/bare specifiers, Node built-ins, or network imports.
@@ -131,6 +131,12 @@ cargo test -p husako-core test_name
 
 - Always respond in English and write documents in English.
 - Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
+
+## Design Documents
+
+Read `docs/*` before making changes to related areas. Key documents:
+
+- `docs/builder-spec.md` — Authoritative reference for the builder DSL rules
 
 ## Plan Details
 

@@ -397,7 +397,7 @@ mod tests {
     fn end_to_end_render() {
         let ts = r#"
             import { build } from "husako";
-            build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
+            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let yaml = render(ts, "test.ts", &test_options()).unwrap();
         assert!(yaml.contains("apiVersion: v1"));

@@ -296,7 +296,7 @@ mod tests {
     fn basic_build() {
         let js = r#"
             import { build } from "husako";
-            build([{ apiVersion: "v1", kind: "Namespace" }]);
+            build([{ _render() { return { apiVersion: "v1", kind: "Namespace" }; } }]);
         "#;
         let result = execute(js, &test_options()).unwrap();
         assert!(result.is_array());
@@ -328,7 +328,7 @@ mod tests {
     fn strict_json_undefined() {
         let js = r#"
             import { build } from "husako";
-            build({ a: undefined });
+            build({ _render() { return { a: undefined }; } });
         "#;
         let err = execute(js, &test_options()).unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
@@ -339,7 +339,7 @@ mod tests {
     fn strict_json_function() {
         let js = r#"
             import { build } from "husako";
-            build({ fn: () => {} });
+            build({ _render() { return { fn: () => {} }; } });
         "#;
         let err = execute(js, &test_options()).unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
@@ -590,18 +590,6 @@ export class ConfigMap extends _ResourceBuilder {
         assert!(result[0]["spec"]["template"].is_null());
     }
 
-    #[test]
-    fn backward_compat_plain_objects() {
-        let js = r#"
-            import { build } from "husako";
-            build([{ apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }]);
-        "#;
-        let result = execute(js, &test_options()).unwrap();
-        assert_eq!(result[0]["apiVersion"], "v1");
-        assert_eq!(result[0]["kind"], "Namespace");
-        assert_eq!(result[0]["metadata"]["name"], "test");
-    }
-
     // --- Milestone 8: Safety & Diagnostics ---
 
     #[test]
@@ -635,7 +623,7 @@ export class ConfigMap extends _ResourceBuilder {
     fn limits_do_not_interfere_with_normal_execution() {
         let js = r#"
             import { build } from "husako";
-            build([{ apiVersion: "v1", kind: "Namespace" }]);
+            build([{ _render() { return { apiVersion: "v1", kind: "Namespace" }; } }]);
         "#;
         let mut opts = test_options();
         opts.timeout_ms = Some(5000);

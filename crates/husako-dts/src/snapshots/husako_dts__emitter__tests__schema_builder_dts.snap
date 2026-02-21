@@ -8,3 +8,4 @@ export class Container extends _SchemaBuilder {
   image(value: string): this;
   resources(value: ResourceRequirements): this;
 }
+export function container(): Container;

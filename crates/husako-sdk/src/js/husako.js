@@ -105,6 +105,10 @@ function createRR(requests, limits) {
 
 // --- Public factory functions ---
 
+export function metadata() {
+  return createMeta({});
+}
+
 export function name(v) {
   return createMeta({ _name: v });
 }
@@ -181,11 +185,14 @@ export function build(input) {
     items = [input];
   }
 
-  const rendered = items.map(function(item) {
+  const rendered = items.map(function(item, index) {
     if (item && typeof item._render === "function") {
       return item._render();
     }
-    return item;
+    throw new TypeError(
+      "build(): item at index " + index + " is not a builder instance. " +
+      "Use builder functions like deployment(), service(), namespace()."
+    );
   });
 
   __husako_build(rendered);

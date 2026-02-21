@@ -1,21 +1,20 @@
-import * as husako from "husako";
-import { Deployment } from "k8s/apps/v1";
-import { name, namespace, label } from "husako";
+import { deployment } from "k8s/apps/v1";
+import { container } from "k8s/core/v1";
+import { selector } from "k8s/_common";
+import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const nginx = new Deployment()
-  .metadata(
-    name("nginx").namespace("default").label("app", "nginx")
-  )
+const nginx = deployment()
+  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
-  .selector({ matchLabels: { app: "nginx" } })
-  .template({ metadata: { labels: { app: "nginx" } } })
-  .containers([{
-    name: "nginx",
-    image: "nginx:1.25",
-    resources: {
-      requests: { cpu: "250m", memory: "128Mi" },
-      limits: { cpu: "500m", memory: "256Mi" },
-    },
-  }]);
+  .selector(selector().matchLabels({ app: "nginx" }))
+  .containers([
+    container()
+      .name("nginx")
+      .image("nginx:1.25")
+      .resources(
+        requests(cpu("250m").memory("128Mi"))
+          .limits(cpu("500m").memory("256Mi"))
+      )
+  ]);
 
-husako.build([nginx]);
+build([nginx]);
