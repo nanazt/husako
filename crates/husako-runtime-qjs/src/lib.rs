@@ -423,8 +423,7 @@ mod tests {
             import { build, cpu, memory, requests, limits } from "husako";
             import { Deployment } from "k8s/apps/v1";
             const d = new Deployment().resources(
-                requests(cpu(1).memory("2Gi")),
-                limits(cpu("500m").memory(1))
+                requests(cpu(1).memory("2Gi")).limits(cpu("500m").memory(1))
             );
             build([d]);
         "#;

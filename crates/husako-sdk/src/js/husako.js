@@ -82,14 +82,19 @@ function normalizeMemory(v) {
   return String(v);
 }
 
-// --- ResourceRequirementsFragment ---
+// --- ResourceRequirementsFragment (copy-on-write) ---
+
+const rrMethods = {
+  requests(rl) { return createRR(rl, this._limits); },
+  limits(rl) { return createRR(this._requests, rl); },
+};
 
 function createRR(requests, limits) {
-  return {
-    _type: "resource_requirements",
-    _requests: requests || null,
-    _limits: limits || null,
-  };
+  const obj = Object.create(rrMethods);
+  obj._type = "resource_requirements";
+  obj._requests = requests || null;
+  obj._limits = limits || null;
+  return obj;
 }
 
 // --- Public factory functions ---
