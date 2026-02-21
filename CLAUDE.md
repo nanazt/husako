@@ -134,9 +134,9 @@ cargo test -p husako-core test_name
 
 ## Design Documents
 
-Read `docs/*` before making changes to related areas. Key documents:
+Read `.claude/*.md` before making changes to related areas. Key documents:
 
-- `docs/builder-spec.md` — Authoritative reference for the builder DSL rules
+- `.claude/builder-spec.md` — Authoritative reference for the builder DSL rules
 
 ## Plan Details
 
