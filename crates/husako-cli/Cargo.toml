@@ -1,0 +1,17 @@
+[package]
+name = "husako"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+husako-core = { path = "../husako-core" }
+husako-runtime-qjs = { path = "../husako-runtime-qjs" }
+clap.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates = "3"
+insta.workspace = true
+tempfile.workspace = true

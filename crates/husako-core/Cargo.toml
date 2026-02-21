@@ -1,0 +1,12 @@
+[package]
+name = "husako-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+husako-compile-oxc = { path = "../husako-compile-oxc" }
+husako-runtime-qjs = { path = "../husako-runtime-qjs" }
+husako-yaml = { path = "../husako-yaml" }
+thiserror.workspace = true

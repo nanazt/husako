@@ -1,0 +1,1 @@
+export { labels } from "./metadata";
