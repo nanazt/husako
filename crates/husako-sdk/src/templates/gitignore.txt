@@ -1,0 +1,5 @@
+# husako auto-managed cache and generated types
+.husako/
+
+# Build artifacts
+target/

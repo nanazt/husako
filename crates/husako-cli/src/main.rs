@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use husako_core::{HusakoError, RenderOptions};
+use husako_core::{HusakoError, RenderOptions, ScaffoldOptions, TemplateName};
 use husako_runtime_qjs::RuntimeError;
 
 #[derive(Parser)]
@@ -49,6 +49,16 @@ enum Commands {
         /// Skip Kubernetes type generation (only write husako.d.ts + tsconfig)
         #[arg(long)]
         skip_k8s: bool,
+    },
+
+    /// Create a new project from a template
+    New {
+        /// Directory to create
+        directory: PathBuf,
+
+        /// Template to use (simple, project, multi-env)
+        #[arg(short, long, default_value = "simple")]
+        template: TemplateName,
     },
 }
 
@@ -139,6 +149,30 @@ fn main() -> ExitCode {
 
             match husako_core::init(&options) {
                 Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+        Commands::New {
+            directory,
+            template,
+        } => {
+            let options = ScaffoldOptions {
+                directory: directory.clone(),
+                template,
+            };
+
+            match husako_core::scaffold(&options) {
+                Ok(()) => {
+                    eprintln!("Created '{}' project in {}", template, directory.display());
+                    eprintln!();
+                    eprintln!("Next steps:");
+                    eprintln!("  cd {}", directory.display());
+                    eprintln!("  husako init --skip-k8s   # or connect to a cluster");
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!("error: {e}");
                     ExitCode::from(exit_code(&e))

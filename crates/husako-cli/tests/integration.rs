@@ -1050,6 +1050,160 @@ fn init_generates_schema_json() {
     assert!(parsed["schemas"].is_object());
 }
 
+// --- husako new ---
+
+#[test]
+fn new_simple_creates_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", target.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Created 'simple' project"))
+        .stderr(predicates::str::contains("husako init"));
+
+    assert!(target.join(".gitignore").exists());
+    assert!(target.join("entry.ts").exists());
+}
+
+#[test]
+fn new_project_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", "--template", "project", target.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Created 'project' project"));
+
+    assert!(target.join(".gitignore").exists());
+    assert!(target.join("env/dev.ts").exists());
+    assert!(target.join("deployments/nginx.ts").exists());
+    assert!(target.join("lib/index.ts").exists());
+    assert!(target.join("lib/metadata.ts").exists());
+}
+
+#[test]
+fn new_multi_env_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", "--template", "multi-env", target.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Created 'multi-env' project"));
+
+    assert!(target.join(".gitignore").exists());
+    assert!(target.join("base/nginx.ts").exists());
+    assert!(target.join("base/service.ts").exists());
+    assert!(target.join("dev/main.ts").exists());
+    assert!(target.join("staging/main.ts").exists());
+    assert!(target.join("release/main.ts").exists());
+}
+
+#[test]
+fn new_rejects_nonempty_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("existing.txt"), "content").unwrap();
+
+    husako()
+        .args(["new", target.to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("not empty"));
+}
+
+#[test]
+fn new_then_render_simple() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    // Scaffold
+    husako()
+        .args(["new", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Write k8s modules for rendering
+    write_k8s_modules(&target);
+
+    // Render
+    husako_at(&target)
+        .args(["render", target.join("entry.ts").to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: apps/v1"))
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("name: nginx"));
+}
+
+#[test]
+fn new_then_render_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    // Scaffold
+    husako()
+        .args(["new", "--template", "project", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Write k8s modules for rendering
+    write_k8s_modules(&target);
+
+    // Render
+    husako_at(&target)
+        .args(["render", target.join("env/dev.ts").to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: apps/v1"))
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("name: nginx"));
+}
+
+#[test]
+fn new_then_render_multi_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    // Scaffold
+    husako()
+        .args(["new", "--template", "multi-env", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Write k8s modules for rendering
+    write_k8s_modules(&target);
+
+    // Render dev
+    let dev_output = husako_at(&target)
+        .args(["render", target.join("dev/main.ts").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(dev_output.status.success());
+    let dev_yaml = String::from_utf8(dev_output.stdout).unwrap();
+    assert!(dev_yaml.contains("namespace: dev"));
+    assert!(dev_yaml.contains("replicas: 1"));
+    assert!(dev_yaml.contains("image: nginx:latest"));
+
+    // Render release
+    let release_output = husako_at(&target)
+        .args(["render", target.join("release/main.ts").to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(release_output.status.success());
+    let release_yaml = String::from_utf8(release_output.stdout).unwrap();
+    assert!(release_yaml.contains("namespace: release"));
+    assert!(release_yaml.contains("replicas: 3"));
+    assert!(release_yaml.contains("image: nginx:1.25"));
+}
+
 // --- Milestone 8 (Dynamic K8s Resources): New tests ---
 
 #[test]

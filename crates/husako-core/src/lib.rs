@@ -1,7 +1,9 @@
 pub mod quantity;
 pub mod validate;
 
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use husako_runtime_qjs::ExecuteOptions;
 
@@ -253,6 +255,118 @@ fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
         .map_err(|e| HusakoError::InitIo(format!("write {}: {e}", tsconfig_path.display())))
 }
 
+// --- husako new ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateName {
+    Simple,
+    Project,
+    MultiEnv,
+}
+
+impl FromStr for TemplateName {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "simple" => Ok(Self::Simple),
+            "project" => Ok(Self::Project),
+            "multi-env" => Ok(Self::MultiEnv),
+            _ => Err(format!(
+                "unknown template '{s}'. Available: simple, project, multi-env"
+            )),
+        }
+    }
+}
+
+impl fmt::Display for TemplateName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Simple => write!(f, "simple"),
+            Self::Project => write!(f, "project"),
+            Self::MultiEnv => write!(f, "multi-env"),
+        }
+    }
+}
+
+pub struct ScaffoldOptions {
+    pub directory: PathBuf,
+    pub template: TemplateName,
+}
+
+pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
+    let dir = &options.directory;
+
+    // Reject non-empty existing directories
+    if dir.exists() {
+        let is_empty = std::fs::read_dir(dir)
+            .map_err(|e| HusakoError::InitIo(format!("read dir {}: {e}", dir.display())))?
+            .next()
+            .is_none();
+        if !is_empty {
+            return Err(HusakoError::InitIo(format!(
+                "directory '{}' is not empty",
+                dir.display()
+            )));
+        }
+    }
+
+    // Create directory
+    std::fs::create_dir_all(dir)
+        .map_err(|e| HusakoError::InitIo(format!("create dir {}: {e}", dir.display())))?;
+
+    // Write .gitignore (shared across all templates)
+    write_file(&dir.join(".gitignore"), husako_sdk::TEMPLATE_GITIGNORE)?;
+
+    match options.template {
+        TemplateName::Simple => {
+            write_file(&dir.join("entry.ts"), husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
+        }
+        TemplateName::Project => {
+            write_file(
+                &dir.join("env/dev.ts"),
+                husako_sdk::TEMPLATE_PROJECT_ENV_DEV,
+            )?;
+            write_file(
+                &dir.join("deployments/nginx.ts"),
+                husako_sdk::TEMPLATE_PROJECT_DEPLOY_NGINX,
+            )?;
+            write_file(
+                &dir.join("lib/index.ts"),
+                husako_sdk::TEMPLATE_PROJECT_LIB_INDEX,
+            )?;
+            write_file(
+                &dir.join("lib/metadata.ts"),
+                husako_sdk::TEMPLATE_PROJECT_LIB_METADATA,
+            )?;
+        }
+        TemplateName::MultiEnv => {
+            write_file(
+                &dir.join("base/nginx.ts"),
+                husako_sdk::TEMPLATE_MULTI_ENV_BASE_NGINX,
+            )?;
+            write_file(
+                &dir.join("base/service.ts"),
+                husako_sdk::TEMPLATE_MULTI_ENV_BASE_SERVICE,
+            )?;
+            write_file(
+                &dir.join("dev/main.ts"),
+                husako_sdk::TEMPLATE_MULTI_ENV_DEV_MAIN,
+            )?;
+            write_file(
+                &dir.join("staging/main.ts"),
+                husako_sdk::TEMPLATE_MULTI_ENV_STAGING_MAIN,
+            )?;
+            write_file(
+                &dir.join("release/main.ts"),
+                husako_sdk::TEMPLATE_MULTI_ENV_RELEASE_MAIN,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
 fn new_tsconfig(husako_paths: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "compilerOptions": {
@@ -376,5 +490,112 @@ mod tests {
         // husako paths added
         assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
         assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
+    }
+
+    #[test]
+    fn template_name_from_str() {
+        assert_eq!(
+            TemplateName::from_str("simple").unwrap(),
+            TemplateName::Simple
+        );
+        assert_eq!(
+            TemplateName::from_str("project").unwrap(),
+            TemplateName::Project
+        );
+        assert_eq!(
+            TemplateName::from_str("multi-env").unwrap(),
+            TemplateName::MultiEnv
+        );
+        assert!(TemplateName::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn template_name_display() {
+        assert_eq!(TemplateName::Simple.to_string(), "simple");
+        assert_eq!(TemplateName::Project.to_string(), "project");
+        assert_eq!(TemplateName::MultiEnv.to_string(), "multi-env");
+    }
+
+    #[test]
+    fn scaffold_simple_creates_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+
+        let opts = ScaffoldOptions {
+            directory: dir.clone(),
+            template: TemplateName::Simple,
+        };
+        scaffold(&opts).unwrap();
+
+        assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("entry.ts").exists());
+    }
+
+    #[test]
+    fn scaffold_project_creates_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+
+        let opts = ScaffoldOptions {
+            directory: dir.clone(),
+            template: TemplateName::Project,
+        };
+        scaffold(&opts).unwrap();
+
+        assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("env/dev.ts").exists());
+        assert!(dir.join("deployments/nginx.ts").exists());
+        assert!(dir.join("lib/index.ts").exists());
+        assert!(dir.join("lib/metadata.ts").exists());
+    }
+
+    #[test]
+    fn scaffold_multi_env_creates_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+
+        let opts = ScaffoldOptions {
+            directory: dir.clone(),
+            template: TemplateName::MultiEnv,
+        };
+        scaffold(&opts).unwrap();
+
+        assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("base/nginx.ts").exists());
+        assert!(dir.join("base/service.ts").exists());
+        assert!(dir.join("dev/main.ts").exists());
+        assert!(dir.join("staging/main.ts").exists());
+        assert!(dir.join("release/main.ts").exists());
+    }
+
+    #[test]
+    fn scaffold_rejects_nonempty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("existing.txt"), "content").unwrap();
+
+        let opts = ScaffoldOptions {
+            directory: dir,
+            template: TemplateName::Simple,
+        };
+        let err = scaffold(&opts).unwrap_err();
+        assert!(matches!(err, HusakoError::InitIo(_)));
+        assert!(err.to_string().contains("not empty"));
+    }
+
+    #[test]
+    fn scaffold_allows_empty_existing_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let opts = ScaffoldOptions {
+            directory: dir.clone(),
+            template: TemplateName::Simple,
+        };
+        scaffold(&opts).unwrap();
+
+        assert!(dir.join("entry.ts").exists());
     }
 }
