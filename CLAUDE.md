@@ -129,8 +129,10 @@ cargo test -p husako-core test_name
 
 ## Writing Docs
 
-Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
+- Always respond in English and write documents in English.
+- Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
 
 ## Plan Details
 
 Always check `.claude/PLAN.md` before proceeding.
+Before implementing a plan, write the plan document first.
