@@ -1,4 +1,4 @@
-use console::{style, Style};
+use console::{Style, style};
 use dialoguer::theme::{ColorfulTheme, Theme};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use std::fmt;
@@ -210,9 +210,8 @@ mod tests {
     #[test]
     fn format_confirm_selection() {
         let theme = husako_theme();
-        let out = render(|buf| {
-            theme.format_confirm_prompt_selection(buf, "Remove cache", Some(true))
-        });
+        let out =
+            render(|buf| theme.format_confirm_prompt_selection(buf, "Remove cache", Some(true)));
         assert!(out.contains(": "), "should have colon separator");
         assert!(out.contains("yes"), "should show 'yes' for true");
     }

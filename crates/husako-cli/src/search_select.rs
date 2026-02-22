@@ -1,4 +1,4 @@
-use console::{style, Key, Term};
+use console::{Key, Term, style};
 
 const MAX_VISIBLE: usize = 10;
 const LOAD_THRESHOLD: usize = 3;

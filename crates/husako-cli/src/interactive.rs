@@ -87,30 +87,31 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
     let theme = crate::theme::husako_theme();
     let source_type = Select::with_theme(&theme)
         .with_prompt("Source type")
-        .items(["registry", "artifacthub", "git", "file"])
+        .items(["artifacthub", "registry", "git", "file"])
         .default(0)
         .interact()
         .map_err(|e| e.to_string())?;
 
     let source = match source_type {
-        0 => prompt_registry_chart()?,
-        1 => prompt_artifacthub_chart()?,
+        0 => prompt_artifacthub_chart()?,
+        1 => prompt_registry_chart()?,
         2 => {
-            let name: String = Input::with_theme(&theme)
-                .with_prompt("Name")
-                .validate_with(validate_name)
-                .interact_text()
-                .map_err(|e| e.to_string())?;
             let repo: String = Input::with_theme(&theme)
                 .with_prompt("Git repository URL")
                 .validate_with(validate_url)
                 .interact_text()
                 .map_err(|e| e.to_string())?;
-            let tag: String = Input::with_theme(&theme)
-                .with_prompt("Git tag")
-                .validate_with(validate_non_empty("tag"))
-                .interact_text()
-                .map_err(|e| e.to_string())?;
+            let default_name = repo
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("chart")
+                .trim_end_matches(".git");
+            let name = crate::text_input::run("Name", default_name, is_valid_name)?
+                .ok_or_else(|| "cancelled".to_string())?;
+            let tag = prompt_version_select("Fetching git tags...", "Tag", || {
+                husako_core::version_check::discover_git_tags(&repo, 10).map_err(|e| e.to_string())
+            })?;
             let path: String = Input::with_theme(&theme)
                 .with_prompt("Path to chart in repository")
                 .validate_with(validate_non_empty("path"))
@@ -156,10 +157,16 @@ fn prompt_registry_chart() -> Result<AddTarget, String> {
         .interact_text()
         .map_err(|e| e.to_string())?;
 
-    let version = prompt_registry_version(&repo, &chart)?;
+    let name = crate::text_input::run("Name", &chart, is_valid_name)?
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    let version = prompt_version_select("Fetching chart versions...", "Version", || {
+        husako_core::version_check::discover_registry_versions(&repo, &chart, 10)
+            .map_err(|e| e.to_string())
+    })?;
 
     Ok(AddTarget::Chart {
-        name: chart.clone(),
+        name,
         source: ChartSource::Registry {
             repo,
             chart,
@@ -237,10 +244,17 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
     let pkgs = packages.into_inner();
     let pkg = &pkgs[idx];
     let package_id = format!("{}/{}", pkg.repository.name, pkg.name);
-    let version = pkg.version.clone();
+
+    let name = crate::text_input::run("Name", &pkg.name, is_valid_name)?
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    let version = prompt_version_select("Fetching available versions...", "Version", || {
+        husako_core::version_check::discover_artifacthub_versions(&package_id, 10)
+            .map_err(|e| e.to_string())
+    })?;
 
     Ok(AddTarget::Chart {
-        name: pkg.name.clone(),
+        name,
         source: ChartSource::ArtifactHub {
             package: package_id,
             version,
@@ -248,9 +262,7 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
     })
 }
 
-fn format_packages(
-    packages: &[husako_core::version_check::ArtifactHubPackage],
-) -> Vec<String> {
+fn format_packages(packages: &[husako_core::version_check::ArtifactHubPackage]) -> Vec<String> {
     packages
         .iter()
         .map(|pkg| {
@@ -275,18 +287,15 @@ fn prompt_artifacthub_manual() -> Result<AddTarget, String> {
         .validate_with(validate_non_empty("package"))
         .interact_text()
         .map_err(|e| e.to_string())?;
-    let version: String = Input::with_theme(&theme)
-        .with_prompt("Version")
-        .validate_with(validate_non_empty("version"))
-        .interact_text()
-        .map_err(|e| e.to_string())?;
 
-    // Derive name from package (part after '/')
-    let name = package
-        .rsplit('/')
-        .next()
-        .unwrap_or(&package)
-        .to_string();
+    let default_name = package.rsplit('/').next().unwrap_or(&package);
+    let name = crate::text_input::run("Name", default_name, is_valid_name)?
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    let version = prompt_version_select("Fetching available versions...", "Version", || {
+        husako_core::version_check::discover_artifacthub_versions(&package, 10)
+            .map_err(|e| e.to_string())
+    })?;
 
     Ok(AddTarget::Chart {
         name,
@@ -294,10 +303,15 @@ fn prompt_artifacthub_manual() -> Result<AddTarget, String> {
     })
 }
 
-fn prompt_release_version() -> Result<String, String> {
+fn prompt_version_select(
+    fetch_label: &str,
+    prompt_label: &'static str,
+    fetch_fn: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Result<String, String> {
     let theme = crate::theme::husako_theme();
-    eprintln!("{}", crate::style::dim("Fetching Kubernetes versions..."));
-    match husako_core::version_check::discover_recent_releases(5) {
+    eprintln!("{}", crate::style::dim(fetch_label));
+
+    match fetch_fn() {
         Ok(versions) if !versions.is_empty() => {
             let mut items: Vec<String> = versions
                 .iter()
@@ -313,7 +327,7 @@ fn prompt_release_version() -> Result<String, String> {
             items.push("Enter manually".to_string());
 
             let selection = Select::with_theme(&theme)
-                .with_prompt("Kubernetes version")
+                .with_prompt(prompt_label)
                 .items(&items)
                 .default(0)
                 .interact()
@@ -321,8 +335,8 @@ fn prompt_release_version() -> Result<String, String> {
 
             if selection == items.len() - 1 {
                 Input::with_theme(&theme)
-                    .with_prompt("Kubernetes version (e.g. 1.35)")
-                    .validate_with(validate_non_empty("version"))
+                    .with_prompt(prompt_label)
+                    .validate_with(validate_non_empty(prompt_label))
                     .interact_text()
                     .map_err(|e| e.to_string())
             } else {
@@ -335,61 +349,20 @@ fn prompt_release_version() -> Result<String, String> {
                 crate::style::warning_prefix()
             );
             Input::with_theme(&theme)
-                .with_prompt("Kubernetes version (e.g. 1.35)")
-                .validate_with(validate_non_empty("version"))
+                .with_prompt(prompt_label)
+                .validate_with(validate_non_empty(prompt_label))
                 .interact_text()
                 .map_err(|e| e.to_string())
         }
     }
 }
 
-fn prompt_registry_version(repo: &str, chart: &str) -> Result<String, String> {
-    let theme = crate::theme::husako_theme();
-    eprintln!("{}", crate::style::dim("Fetching chart versions..."));
-    match husako_core::version_check::discover_registry_versions(repo, chart, 10) {
-        Ok(versions) if !versions.is_empty() => {
-            let mut items: Vec<String> = versions
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    if i == 0 {
-                        format!("{v} (latest)")
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect();
-            items.push("Enter manually".to_string());
-
-            let selection = Select::with_theme(&theme)
-                .with_prompt("Version")
-                .items(&items)
-                .default(0)
-                .interact()
-                .map_err(|e| e.to_string())?;
-
-            if selection == items.len() - 1 {
-                Input::with_theme(&theme)
-                    .with_prompt("Version")
-                    .validate_with(validate_non_empty("version"))
-                    .interact_text()
-                    .map_err(|e| e.to_string())
-            } else {
-                Ok(versions[selection].clone())
-            }
-        }
-        Ok(_) | Err(_) => {
-            eprintln!(
-                "{} could not fetch versions, entering manually",
-                crate::style::warning_prefix()
-            );
-            Input::with_theme(&theme)
-                .with_prompt("Version")
-                .validate_with(validate_non_empty("version"))
-                .interact_text()
-                .map_err(|e| e.to_string())
-        }
-    }
+fn prompt_release_version() -> Result<String, String> {
+    prompt_version_select(
+        "Fetching Kubernetes versions...",
+        "Kubernetes version (e.g. 1.35)",
+        || husako_core::version_check::discover_recent_releases(5).map_err(|e| e.to_string()),
+    )
 }
 
 /// Interactively prompt which dependency to remove.
@@ -453,8 +426,7 @@ pub fn confirm(prompt: &str) -> Result<bool, String> {
 
 // --- Input validation helpers ---
 
-#[allow(clippy::ptr_arg)] // dialoguer validate_with requires Fn(&String)
-fn validate_name(input: &String) -> Result<(), String> {
+fn is_valid_name(input: &str) -> Result<(), String> {
     if input.is_empty() {
         return Err("name cannot be empty".to_string());
     }
@@ -465,6 +437,11 @@ fn validate_name(input: &String) -> Result<(), String> {
         return Err("must contain only lowercase letters, digits, and hyphens".to_string());
     }
     Ok(())
+}
+
+#[allow(clippy::ptr_arg)] // dialoguer validate_with requires Fn(&String)
+fn validate_name(input: &String) -> Result<(), String> {
+    is_valid_name(input)
 }
 
 #[allow(clippy::ptr_arg)] // dialoguer validate_with requires Fn(&String)
@@ -488,6 +465,15 @@ fn validate_non_empty(field: &'static str) -> impl Fn(&String) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_valid_name_works_with_str() {
+        assert!(is_valid_name("my-chart").is_ok());
+        assert!(is_valid_name("postgresql").is_ok());
+        assert!(is_valid_name("").is_err());
+        assert!(is_valid_name("UPPER").is_err());
+        assert!(is_valid_name("has space").is_err());
+    }
 
     #[test]
     fn validate_name_accepts_valid() {

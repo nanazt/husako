@@ -1,4 +1,4 @@
-use console::{style, Key, Style, Term};
+use console::{Key, Style, Term, style};
 
 /// Interactive text input with dim placeholder support.
 ///
@@ -103,11 +103,8 @@ fn render(
     lines += 1;
 
     if let Some(msg) = error {
-        term.write_line(&format!(
-            "  {}",
-            Style::new().red().apply_to(msg)
-        ))
-        .map_err(|e| e.to_string())?;
+        term.write_line(&format!("  {}", Style::new().red().apply_to(msg)))
+            .map_err(|e| e.to_string())?;
         lines += 1;
     }
 

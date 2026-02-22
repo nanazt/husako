@@ -5,7 +5,11 @@ pub fn error_prefix() -> String {
 }
 
 pub fn warning_prefix() -> String {
-    Style::new().yellow().bold().apply_to("warning:").to_string()
+    Style::new()
+        .yellow()
+        .bold()
+        .apply_to("warning:")
+        .to_string()
 }
 
 pub fn check_mark() -> String {

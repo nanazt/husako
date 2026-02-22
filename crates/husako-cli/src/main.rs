@@ -513,14 +513,12 @@ fn main() -> ExitCode {
                 // Non-interactive mode
                 if chart {
                     // For charts, derive name from chart_name or package if not provided
-                    let dep_name = name
-                        .or_else(|| chart_name.clone())
-                        .or_else(|| {
-                            package
-                                .as_deref()
-                                .and_then(|p| p.rsplit('/').next())
-                                .map(String::from)
-                        });
+                    let dep_name = name.or_else(|| chart_name.clone()).or_else(|| {
+                        package
+                            .as_deref()
+                            .and_then(|p| p.rsplit('/').next())
+                            .map(String::from)
+                    });
                     let Some(dep_name) = dep_name else {
                         eprintln!(
                             "{} name is required (provide as positional arg, or use --chart-name / --package)",
@@ -788,7 +786,10 @@ fn main() -> ExitCode {
                         eprintln!();
 
                         if !summary.resources.is_empty() {
-                            eprintln!("{}", style::bold(&format!("Resources ({}):", summary.resources.len())));
+                            eprintln!(
+                                "{}",
+                                style::bold(&format!("Resources ({}):", summary.resources.len()))
+                            );
                             for dep in &summary.resources {
                                 eprintln!(
                                     "  {:<16} {:<12} {}",
@@ -801,7 +802,10 @@ fn main() -> ExitCode {
                         }
 
                         if !summary.charts.is_empty() {
-                            eprintln!("{}", style::bold(&format!("Charts ({}):", summary.charts.len())));
+                            eprintln!(
+                                "{}",
+                                style::bold(&format!("Charts ({}):", summary.charts.len()))
+                            );
                             for dep in &summary.charts {
                                 eprintln!(
                                     "  {:<16} {:<12} {}",

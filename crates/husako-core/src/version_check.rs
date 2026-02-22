@@ -289,6 +289,43 @@ pub fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError>
         })
 }
 
+/// Discover available versions for a package from ArtifactHub API.
+/// Returns up to `limit` stable versions, sorted newest first.
+pub fn discover_artifacthub_versions(
+    package: &str,
+    limit: usize,
+) -> Result<Vec<String>, HusakoError> {
+    let url = format!(
+        "https://artifacthub.io/api/v1/packages/helm/{}",
+        package.trim_start_matches('/')
+    );
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("husako")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| HusakoError::GenerateIo(format!("ArtifactHub API: {e}")))?;
+
+    let data: serde_json::Value = resp
+        .json()
+        .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub response: {e}")))?;
+
+    let versions: Vec<String> = data["available_versions"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter(|entry| !entry["prerelease"].as_bool().unwrap_or(false))
+        .filter_map(|entry| entry["version"].as_str().map(|s| s.to_string()))
+        .take(limit)
+        .collect();
+
+    Ok(versions)
+}
+
 /// Discover the latest tag from a git repository using `git ls-remote --tags`.
 pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError> {
     let output = std::process::Command::new("git")
@@ -326,6 +363,50 @@ pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError
     }
 
     Ok(best.map(|(_, tag)| tag))
+}
+
+/// Discover recent stable tags from a git repository.
+/// Returns up to `limit` stable semver tags, sorted newest first.
+pub fn discover_git_tags(repo: &str, limit: usize) -> Result<Vec<String>, HusakoError> {
+    let output = std::process::Command::new("git")
+        .args(["ls-remote", "--tags", "--sort=-v:refname", repo])
+        .output()
+        .map_err(|e| HusakoError::GenerateIo(format!("git ls-remote: {e}")))?;
+
+    if !output.status.success() {
+        return Err(HusakoError::GenerateIo(format!(
+            "git ls-remote failed for '{repo}'"
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut seen = std::collections::HashSet::new();
+    let mut entries: Vec<(semver::Version, String)> = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let refname = parts[1];
+        let tag = refname
+            .strip_prefix("refs/tags/")
+            .unwrap_or(refname)
+            .trim_end_matches("^{}");
+
+        let stripped = tag.strip_prefix('v').unwrap_or(tag);
+        if let Ok(v) = semver::Version::parse(stripped)
+            && v.pre.is_empty()
+            && seen.insert(tag.to_string())
+        {
+            entries.push((v, tag.to_string()));
+        }
+    }
+
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries.truncate(limit);
+
+    Ok(entries.into_iter().map(|(_, tag)| tag).collect())
 }
 
 /// Compare two version strings for equivalence.
@@ -435,6 +516,76 @@ mod tests {
         };
         assert!(truncated.ends_with("..."));
         assert!(truncated.len() <= 53);
+    }
+
+    #[test]
+    fn git_tags_multiple() {
+        // Simulate the parsing logic from discover_git_tags
+        let stdout = "\
+abc123\trefs/tags/v2.0.0\n\
+def456\trefs/tags/v2.0.0^{}\n\
+ghi789\trefs/tags/v1.9.0\n\
+jkl012\trefs/tags/v1.9.0^{}\n\
+mno345\trefs/tags/v1.8.0-rc.1\n\
+pqr678\trefs/tags/v1.8.0-rc.1^{}\n\
+stu901\trefs/tags/v1.7.0\n\
+vwx234\trefs/tags/v1.7.0^{}\n";
+
+        let mut seen = std::collections::HashSet::new();
+        let mut entries: Vec<(semver::Version, String)> = Vec::new();
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            let refname = parts[1];
+            let tag = refname
+                .strip_prefix("refs/tags/")
+                .unwrap_or(refname)
+                .trim_end_matches("^{}");
+
+            let stripped = tag.strip_prefix('v').unwrap_or(tag);
+            if let Ok(v) = semver::Version::parse(stripped)
+                && v.pre.is_empty()
+                && seen.insert(tag.to_string())
+            {
+                entries.push((v, tag.to_string()));
+            }
+        }
+
+        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.truncate(2);
+
+        let tags: Vec<String> = entries.into_iter().map(|(_, tag)| tag).collect();
+        assert_eq!(tags, vec!["v2.0.0", "v1.9.0"]);
+    }
+
+    #[test]
+    fn artifacthub_versions_filtering() {
+        // Simulate the JSON structure returned by ArtifactHub API
+        let data = serde_json::json!({
+            "version": "3.0.0",
+            "available_versions": [
+                {"version": "3.0.0", "prerelease": false, "ts": 1700000000},
+                {"version": "3.0.0-rc.1", "prerelease": true, "ts": 1699900000},
+                {"version": "2.5.0", "prerelease": false, "ts": 1699000000},
+                {"version": "2.5.0-beta.1", "prerelease": true, "ts": 1698000000},
+                {"version": "2.4.0", "prerelease": false, "ts": 1697000000},
+                {"version": "2.3.0", "prerelease": false, "ts": 1696000000},
+            ]
+        });
+
+        let versions: Vec<String> = data["available_versions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| !entry["prerelease"].as_bool().unwrap_or(false))
+            .filter_map(|entry| entry["version"].as_str().map(|s| s.to_string()))
+            .take(3)
+            .collect();
+
+        assert_eq!(versions, vec!["3.0.0", "2.5.0", "2.4.0"]);
     }
 
     #[test]
