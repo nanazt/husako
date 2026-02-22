@@ -1175,6 +1175,7 @@ fn new_simple_creates_project() {
         .stderr(predicates::str::contains("husako init"));
 
     assert!(target.join(".gitignore").exists());
+    assert!(target.join("husako.toml").exists());
     assert!(target.join("entry.ts").exists());
 }
 
@@ -1190,6 +1191,7 @@ fn new_project_template() {
         .stderr(predicates::str::contains("Created 'project' project"));
 
     assert!(target.join(".gitignore").exists());
+    assert!(target.join("husako.toml").exists());
     assert!(target.join("env/dev.ts").exists());
     assert!(target.join("deployments/nginx.ts").exists());
     assert!(target.join("lib/index.ts").exists());
@@ -1208,6 +1210,7 @@ fn new_multi_env_template() {
         .stderr(predicates::str::contains("Created 'multi-env' project"));
 
     assert!(target.join(".gitignore").exists());
+    assert!(target.join("husako.toml").exists());
     assert!(target.join("base/nginx.ts").exists());
     assert!(target.join("base/service.ts").exists());
     assert!(target.join("dev/main.ts").exists());
@@ -1608,4 +1611,218 @@ build([svc]);
         .stdout(predicates::str::contains("port: 80"))
         .stdout(predicates::str::contains("targetPort: 8080"))
         .stdout(predicates::str::contains("type: ClusterIP"));
+}
+
+// --- husako.toml entry aliases ---
+
+#[test]
+fn render_with_entry_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Create husako.toml with an entry alias
+    std::fs::write(
+        root.join("husako.toml"),
+        r#"
+[entries]
+dev = "env/dev.ts"
+
+[schemas]
+kubernetes = { source = "release", version = "1.35" }
+"#,
+    )
+    .unwrap();
+
+    // Create the entry file
+    std::fs::create_dir_all(root.join("env")).unwrap();
+    std::fs::write(
+        root.join("env/dev.ts"),
+        r#"
+import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "dev" } }; } }]);
+"#,
+    )
+    .unwrap();
+
+    // Render using alias
+    husako_at(root)
+        .args(["render", "dev"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Namespace"))
+        .stdout(predicates::str::contains("name: dev"));
+}
+
+#[test]
+fn render_alias_file_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        r#"
+[entries]
+dev = "env/dev.ts"
+"#,
+    )
+    .unwrap();
+
+    // File doesn't exist — should show which file the alias maps to
+    husako_at(root)
+        .args(["render", "dev"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("env/dev.ts"))
+        .stderr(predicates::str::contains("not found"));
+}
+
+#[test]
+fn render_unknown_alias_lists_available() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        r#"
+[entries]
+dev = "env/dev.ts"
+staging = "env/staging.ts"
+"#,
+    )
+    .unwrap();
+
+    // Unknown alias — should list available aliases
+    husako_at(root)
+        .args(["render", "unknown"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("not a file or entry alias"))
+        .stderr(predicates::str::contains("dev"))
+        .stderr(predicates::str::contains("staging"));
+}
+
+#[test]
+fn render_direct_path_still_works_with_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Config exists but we use direct path
+    std::fs::write(
+        root.join("husako.toml"),
+        r#"
+[entries]
+alias = "other.ts"
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.join("entry.ts"),
+        r#"
+import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+"#,
+    )
+    .unwrap();
+
+    // Direct path still works
+    husako_at(root)
+        .args(["render", "entry.ts"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Namespace"));
+}
+
+#[test]
+fn render_no_config_direct_path_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // No husako.toml — direct path must still work
+    std::fs::write(
+        root.join("entry.ts"),
+        r#"
+import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", "entry.ts"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Namespace"));
+}
+
+#[test]
+fn new_creates_husako_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(target.join("husako.toml").exists());
+    let content = std::fs::read_to_string(target.join("husako.toml")).unwrap();
+    assert!(content.contains("[schemas]"));
+    assert!(content.contains("source = \"release\""));
+}
+
+#[test]
+fn new_project_creates_husako_toml_with_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", "--template", "project", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(target.join("husako.toml")).unwrap();
+    assert!(content.contains("[entries]"));
+    assert!(content.contains("dev"));
+}
+
+#[test]
+fn new_multi_env_creates_husako_toml_with_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    husako()
+        .args(["new", "--template", "multi-env", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(target.join("husako.toml")).unwrap();
+    assert!(content.contains("[entries]"));
+    assert!(content.contains("dev"));
+    assert!(content.contains("staging"));
+    assert!(content.contains("release"));
+}
+
+#[test]
+fn new_then_render_with_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("my-app");
+
+    // Scaffold project template (has [entries] dev = "env/dev.ts")
+    husako()
+        .args(["new", "--template", "project", target.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // Write k8s modules for rendering
+    write_k8s_modules(&target);
+
+    // Render using the alias "dev" instead of "env/dev.ts"
+    husako_at(&target)
+        .args(["render", "dev"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: apps/v1"))
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("name: nginx"));
 }

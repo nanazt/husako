@@ -1,0 +1,7 @@
+[entries]
+dev = "dev/main.ts"
+staging = "staging/main.ts"
+release = "release/main.ts"
+
+[schemas]
+kubernetes = { source = "release", version = "1.35" }

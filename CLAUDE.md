@@ -40,6 +40,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs
 6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs
 7. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
+8. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, schema dependencies)
 
 ## Project Structure
 
@@ -47,6 +48,8 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 crates/
 ├── husako-cli/            # CLI entry point (clap), thin — no business logic
 │   └── src/main.rs
+├── husako-config/         # husako.toml parser (entry aliases, schema deps, cluster config)
+│   └── src/lib.rs
 ├── husako-core/           # Pipeline orchestration + validation
 │   └── src/lib.rs
 ├── husako-compile-oxc/    # TS → JS compilation via oxc
@@ -59,7 +62,7 @@ crates/
 │   └── src/lib.rs
 ├── husako-yaml/           # JSON → YAML/JSON emitter
 │   └── src/lib.rs
-└── husako-sdk/            # Builtin JS sources + base .d.ts
+└── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
     └── src/lib.rs
 ```
 
@@ -132,11 +135,22 @@ cargo test -p husako-core test_name
 - Always respond in English and write documents in English.
 - Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
 
+## Configuration (`husako.toml`)
+
+Project-level configuration file created by `husako new`. Supports:
+
+- **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
+- **Schema dependencies**: `[schemas]` declares sources with 4 types: `release`, `cluster`, `git`, `file`
+- **Cluster config**: `[cluster]` (single) or `[clusters.*]` (multiple named clusters)
+
+The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
+
 ## Design Documents
 
 Read `.claude/*.md` before making changes to related areas. Key documents:
 
 - `.claude/builder-spec.md` — Authoritative reference for the builder DSL rules
+- `.claude/plans/logical-skipping-flask.md` — `husako.toml` config design (M13a/M13b/M13c)
 
 ## Plan Details
 

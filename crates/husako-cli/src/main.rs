@@ -16,8 +16,8 @@ struct Cli {
 enum Commands {
     /// Render TypeScript to Kubernetes YAML
     Render {
-        /// Path to the TypeScript entry file
-        file: PathBuf,
+        /// Path to the TypeScript entry file, or an entry alias from husako.toml
+        file: String,
 
         /// Allow imports outside the project root
         #[arg(long)]
@@ -73,24 +73,32 @@ fn main() -> ExitCode {
             max_heap_mb,
             verbose,
         } => {
-            let source = match std::fs::read_to_string(&file) {
+            let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+            // Resolve entry: try as file path first, then as alias from config
+            let resolved = match resolve_entry(&file, &project_root) {
+                Ok(p) => p,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            };
+
+            let source = match std::fs::read_to_string(&resolved) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: could not read {}: {e}", file.display());
+                    eprintln!("error: could not read {}: {e}", resolved.display());
                     return ExitCode::from(1);
                 }
             };
 
-            let abs_file = match file.canonicalize() {
+            let abs_file = match resolved.canonicalize() {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("error: could not resolve {}: {e}", file.display());
+                    eprintln!("error: could not resolve {}: {e}", resolved.display());
                     return ExitCode::from(1);
                 }
             };
-
-            let project_root = std::env::current_dir()
-                .unwrap_or_else(|_| abs_file.parent().unwrap_or(&abs_file).to_path_buf());
 
             let schema_store = husako_core::load_schema_store(&project_root);
 
@@ -170,7 +178,7 @@ fn main() -> ExitCode {
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  cd {}", directory.display());
-                    eprintln!("  husako init --skip-k8s   # or connect to a cluster");
+                    eprintln!("  husako init");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -180,6 +188,52 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+/// Resolve a file argument to a path. Tries as a direct file path first,
+/// then as an entry alias from `husako.toml`.
+fn resolve_entry(file_arg: &str, project_root: &std::path::Path) -> Result<PathBuf, String> {
+    // 1. Try as direct file path
+    let as_path = project_root.join(file_arg);
+    if as_path.exists() {
+        return Ok(as_path);
+    }
+
+    // Also check if it was given as an absolute path
+    let abs_path = PathBuf::from(file_arg);
+    if abs_path.is_absolute() && abs_path.exists() {
+        return Ok(abs_path);
+    }
+
+    // 2. Try as alias from config
+    let config = husako_config::load(project_root).map_err(|e| e.to_string())?;
+
+    if let Some(cfg) = &config
+        && let Some(mapped) = cfg.entries.get(file_arg)
+    {
+        let resolved = project_root.join(mapped);
+        if resolved.exists() {
+            return Ok(resolved);
+        }
+        return Err(format!(
+            "entry alias '{file_arg}' maps to '{mapped}', but file not found at {}",
+            resolved.display()
+        ));
+    }
+
+    // 3. Not found
+    let mut msg = format!("'{file_arg}' is not a file or entry alias");
+    if let Some(cfg) = &config
+        && !cfg.entries.is_empty()
+    {
+        msg.push_str("\n\navailable entry aliases:");
+        let mut aliases: Vec<_> = cfg.entries.iter().collect();
+        aliases.sort_by_key(|(k, _)| k.as_str());
+        for (alias, path) in aliases {
+            msg.push_str(&format!("\n  {alias} = \"{path}\""));
+        }
+    }
+    Err(msg)
 }
 
 fn exit_code(err: &HusakoError) -> u8 {
@@ -200,6 +254,7 @@ fn exit_code(err: &HusakoError) -> u8 {
         HusakoError::Validation(_) => 7,
         HusakoError::Dts(_) => 5,
         HusakoError::OpenApi(_) => 6,
+        HusakoError::Config(_) => 2,
         HusakoError::InitIo(_) => 1,
     }
 }

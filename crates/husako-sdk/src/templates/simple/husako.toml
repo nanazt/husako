@@ -1,0 +1,2 @@
+[schemas]
+kubernetes = { source = "release", version = "1.35" }

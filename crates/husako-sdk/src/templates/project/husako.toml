@@ -1,0 +1,5 @@
+[entries]
+dev = "env/dev.ts"
+
+[schemas]
+kubernetes = { source = "release", version = "1.35" }

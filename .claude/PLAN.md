@@ -418,4 +418,30 @@ If binary size matters:
 
 ---
 
+## 13) Milestone 13 — `husako.toml` configuration file
+
+### M13a: `husako-config` crate + entry aliases (**DONE**)
+
+- New `husako-config` crate: parses `husako.toml` with `HusakoConfig`, `SchemaSource` (tagged enum), `ClusterConfig`
+- Validation: no absolute paths, cluster references must resolve, no `[cluster]` + `[clusters]` together
+- CLI alias resolution: direct path → entry alias → error with available aliases list
+- `HusakoError::Config` variant (exit code 2)
+- Template TOML files for all 3 templates (`simple`, `project`, `multi-env`)
+- 24 new tests (15 unit + 9 integration), total 242
+
+### M13b: CRD YAML parsing + file/cluster sources (planned)
+
+- `husako init` reads `[schemas]` from `husako.toml`
+- `source = "file"`: parse CRD YAML manifests (`spec.versions[].schema.openAPIV3Schema`)
+- `source = "cluster"`: kubeconfig auto-detection from `~/.kube/` files, matched by server URL
+
+### M13c: K8s GitHub releases + git source (planned)
+
+- `source = "release"`: download OpenAPI specs from kubernetes/kubernetes GitHub releases
+- `source = "git"`: clone repo at tag, extract CRD YAML from specified path
+
+See `.claude/plans/logical-skipping-flask.md` for detailed design.
+
+---
+
 End of plan.

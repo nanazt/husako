@@ -19,6 +19,8 @@ pub enum HusakoError {
     OpenApi(#[from] husako_openapi::OpenApiError),
     #[error(transparent)]
     Dts(#[from] husako_dts::DtsError),
+    #[error(transparent)]
+    Config(#[from] husako_config::ConfigError),
     #[error("{0}")]
     Validation(String),
     #[error("init I/O error: {0}")]
@@ -320,9 +322,17 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
 
     match options.template {
         TemplateName::Simple => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_SIMPLE_CONFIG,
+            )?;
             write_file(&dir.join("entry.ts"), husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
         }
         TemplateName::Project => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_PROJECT_CONFIG,
+            )?;
             write_file(
                 &dir.join("env/dev.ts"),
                 husako_sdk::TEMPLATE_PROJECT_ENV_DEV,
@@ -341,6 +351,10 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
             )?;
         }
         TemplateName::MultiEnv => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
+            )?;
             write_file(
                 &dir.join("base/nginx.ts"),
                 husako_sdk::TEMPLATE_MULTI_ENV_BASE_NGINX,
@@ -528,6 +542,7 @@ mod tests {
         scaffold(&opts).unwrap();
 
         assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("husako.toml").exists());
         assert!(dir.join("entry.ts").exists());
     }
 
@@ -543,6 +558,7 @@ mod tests {
         scaffold(&opts).unwrap();
 
         assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("husako.toml").exists());
         assert!(dir.join("env/dev.ts").exists());
         assert!(dir.join("deployments/nginx.ts").exists());
         assert!(dir.join("lib/index.ts").exists());
@@ -561,6 +577,7 @@ mod tests {
         scaffold(&opts).unwrap();
 
         assert!(dir.join(".gitignore").exists());
+        assert!(dir.join("husako.toml").exists());
         assert!(dir.join("base/nginx.ts").exists());
         assert!(dir.join("base/service.ts").exists());
         assert!(dir.join("dev/main.ts").exists());
