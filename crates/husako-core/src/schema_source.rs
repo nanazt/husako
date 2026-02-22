@@ -18,7 +18,7 @@ pub fn resolve_all(
 ) -> Result<HashMap<String, Value>, HusakoError> {
     let mut merged = HashMap::new();
 
-    for (name, source) in &config.schemas {
+    for (name, source) in &config.resources {
         let specs = match source {
             SchemaSource::File { path } => resolve_file(path, project_root)?,
             SchemaSource::Cluster { cluster } => {

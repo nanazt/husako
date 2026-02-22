@@ -1,5 +1,8 @@
 [entries]
 dev = "env/dev.ts"
 
-[schemas]
+[resources]
 kubernetes = { source = "release", version = "1.35" }
+
+# [charts]
+# ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.12.0" }

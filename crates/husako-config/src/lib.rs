@@ -33,9 +33,13 @@ pub struct HusakoConfig {
     #[serde(default)]
     pub clusters: HashMap<String, ClusterConfig>,
 
-    /// Schema dependencies.
+    /// Resource schema dependencies (renamed from `schemas`).
+    #[serde(default, alias = "schemas")]
+    pub resources: HashMap<String, SchemaSource>,
+
+    /// Chart values schema sources.
     #[serde(default)]
-    pub schemas: HashMap<String, SchemaSource>,
+    pub charts: HashMap<String, ChartSource>,
 }
 
 /// Cluster connection configuration.
@@ -77,6 +81,39 @@ pub enum SchemaSource {
     File { path: String },
 }
 
+/// A chart values schema source. Specifies where to find `values.schema.json`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "source")]
+pub enum ChartSource {
+    /// Fetch from an HTTP Helm chart repository.
+    /// `ingress-nginx = { source = "registry", repo = "https://...", chart = "ingress-nginx", version = "4.12.0" }`
+    #[serde(rename = "registry")]
+    Registry {
+        repo: String,
+        chart: String,
+        version: String,
+    },
+
+    /// Fetch from ArtifactHub API.
+    /// `postgresql = { source = "artifacthub", package = "bitnami/postgresql", version = "16.4.0" }`
+    #[serde(rename = "artifacthub")]
+    ArtifactHub { package: String, version: String },
+
+    /// Read a local `values.schema.json` file.
+    /// `my-chart = { source = "file", path = "./schemas/my-chart-values.schema.json" }`
+    #[serde(rename = "file")]
+    File { path: String },
+
+    /// Clone a git repo at a tag and extract `values.schema.json`.
+    /// `my-chart = { source = "git", repo = "https://...", tag = "v1.0.0", path = "charts/my-chart" }`
+    #[serde(rename = "git")]
+    Git {
+        repo: String,
+        tag: String,
+        path: String,
+    },
+}
+
 /// Load `husako.toml` from the given directory.
 ///
 /// Returns `Ok(None)` if the file does not exist.
@@ -90,6 +127,12 @@ pub fn load(project_root: &Path) -> Result<Option<HusakoConfig>, ConfigError> {
         path: path.display().to_string(),
         source: e,
     })?;
+
+    // Detect deprecated [schemas] section
+    if content.contains("[schemas]") && !content.contains("[resources]") {
+        eprintln!("warning: [schemas] is deprecated in husako.toml, use [resources] instead");
+    }
+
     let config: HusakoConfig =
         toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
     validate(&config)?;
@@ -114,7 +157,7 @@ fn validate(config: &HusakoConfig) -> Result<(), ConfigError> {
     }
 
     // Schema cluster references must resolve
-    for (name, source) in &config.schemas {
+    for (name, source) in &config.resources {
         if let SchemaSource::Cluster {
             cluster: Some(cluster_name),
         } = source
@@ -150,6 +193,17 @@ fn validate(config: &HusakoConfig) -> Result<(), ConfigError> {
         }
     }
 
+    // Chart file paths must be relative
+    for (name, source) in &config.charts {
+        if let ChartSource::File { path } = source
+            && Path::new(path).is_absolute()
+        {
+            return Err(ConfigError::Validation(format!(
+                "chart '{name}' has absolute path '{path}'; use a relative path"
+            )));
+        }
+    }
+
     Ok(())
 }
 
@@ -176,24 +230,24 @@ my-crd = { source = "file", path = "./crds/my-crd.yaml" }
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.entries.len(), 2);
         assert_eq!(config.entries["dev"], "env/dev.ts");
-        assert_eq!(config.schemas.len(), 4);
+        assert_eq!(config.resources.len(), 4);
         assert!(config.cluster.is_some());
         assert_eq!(config.cluster.unwrap().server, "https://10.0.0.1:6443");
 
         assert!(matches!(
-            config.schemas["kubernetes"],
+            config.resources["kubernetes"],
             SchemaSource::Release { ref version } if version == "1.35"
         ));
         assert!(matches!(
-            config.schemas["cluster-crds"],
+            config.resources["cluster-crds"],
             SchemaSource::Cluster { cluster: None }
         ));
         assert!(matches!(
-            config.schemas["cert-manager"],
+            config.resources["cert-manager"],
             SchemaSource::Git { .. }
         ));
         assert!(matches!(
-            config.schemas["my-crd"],
+            config.resources["my-crd"],
             SchemaSource::File { .. }
         ));
     }
@@ -221,7 +275,7 @@ prod-crds = { source = "cluster", cluster = "prod" }
     fn parse_empty_config() {
         let config: HusakoConfig = toml::from_str("").unwrap();
         assert!(config.entries.is_empty());
-        assert!(config.schemas.is_empty());
+        assert!(config.resources.is_empty());
         assert!(config.cluster.is_none());
         assert!(config.clusters.is_empty());
     }
@@ -234,7 +288,7 @@ dev = "env/dev.ts"
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.entries.len(), 1);
-        assert!(config.schemas.is_empty());
+        assert!(config.resources.is_empty());
     }
 
     #[test]
@@ -256,7 +310,7 @@ dev = "env/dev.ts"
     #[test]
     fn reject_absolute_file_source_path() {
         let config = HusakoConfig {
-            schemas: HashMap::from([(
+            resources: HashMap::from([(
                 "my-crd".to_string(),
                 SchemaSource::File {
                     path: "/absolute/crd.yaml".to_string(),
@@ -295,7 +349,7 @@ dev = "env/dev.ts"
                     server: "https://dev:6443".to_string(),
                 },
             )]),
-            schemas: HashMap::from([(
+            resources: HashMap::from([(
                 "crds".to_string(),
                 SchemaSource::Cluster {
                     cluster: Some("staging".to_string()),
@@ -310,7 +364,10 @@ dev = "env/dev.ts"
     #[test]
     fn reject_cluster_source_without_cluster_section() {
         let config = HusakoConfig {
-            schemas: HashMap::from([("crds".to_string(), SchemaSource::Cluster { cluster: None })]),
+            resources: HashMap::from([(
+                "crds".to_string(),
+                SchemaSource::Cluster { cluster: None },
+            )]),
             ..Default::default()
         };
         let err = validate(&config).unwrap_err();
@@ -326,7 +383,10 @@ dev = "env/dev.ts"
                     server: "https://dev:6443".to_string(),
                 },
             )]),
-            schemas: HashMap::from([("crds".to_string(), SchemaSource::Cluster { cluster: None })]),
+            resources: HashMap::from([(
+                "crds".to_string(),
+                SchemaSource::Cluster { cluster: None },
+            )]),
             ..Default::default()
         };
         let err = validate(&config).unwrap_err();
@@ -374,5 +434,84 @@ foo = { source = "unknown", bar = "baz" }
 "#;
         let result: Result<HusakoConfig, _> = toml::from_str(toml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_resources_section() {
+        let toml = r#"
+[resources]
+kubernetes = { source = "release", version = "1.35" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.resources.len(), 1);
+        assert!(matches!(
+            config.resources["kubernetes"],
+            SchemaSource::Release { ref version } if version == "1.35"
+        ));
+    }
+
+    #[test]
+    fn schemas_alias_still_works() {
+        let toml = r#"
+[schemas]
+kubernetes = { source = "release", version = "1.35" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.resources.len(), 1);
+    }
+
+    #[test]
+    fn parse_charts_section() {
+        let toml = r#"
+[charts]
+ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.12.0" }
+postgresql = { source = "artifacthub", package = "bitnami/postgresql", version = "16.4.0" }
+my-chart = { source = "file", path = "./schemas/my-chart.schema.json" }
+my-other = { source = "git", repo = "https://github.com/example/repo", tag = "v1.0.0", path = "charts/my-chart" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.charts.len(), 4);
+        assert!(matches!(
+            config.charts["ingress-nginx"],
+            ChartSource::Registry { .. }
+        ));
+        assert!(matches!(
+            config.charts["postgresql"],
+            ChartSource::ArtifactHub { .. }
+        ));
+        assert!(matches!(
+            config.charts["my-chart"],
+            ChartSource::File { .. }
+        ));
+        assert!(matches!(config.charts["my-other"], ChartSource::Git { .. }));
+    }
+
+    #[test]
+    fn reject_absolute_chart_file_path() {
+        let config = HusakoConfig {
+            charts: HashMap::from([(
+                "my-chart".to_string(),
+                ChartSource::File {
+                    path: "/absolute/schema.json".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+        let err = validate(&config).unwrap_err();
+        assert!(err.to_string().contains("absolute path"));
+    }
+
+    #[test]
+    fn parse_mixed_resources_and_charts() {
+        let toml = r#"
+[resources]
+kubernetes = { source = "release", version = "1.35" }
+
+[charts]
+my-chart = { source = "file", path = "./values.schema.json" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.resources.len(), 1);
+        assert_eq!(config.charts.len(), 1);
     }
 }

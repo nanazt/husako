@@ -150,17 +150,13 @@ fn main() -> ExitCode {
                 })
             };
 
-            // Load config for config-driven schema resolution
-            let config = if openapi.is_none() && !skip_k8s {
-                match husako_config::load(&project_root) {
-                    Ok(cfg) => cfg,
-                    Err(e) => {
-                        eprintln!("error: {e}");
-                        return ExitCode::from(2);
-                    }
+            // Load config for config-driven schema/chart resolution
+            let config = match husako_config::load(&project_root) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(2);
                 }
-            } else {
-                None
             };
 
             let options = GenerateOptions {
@@ -269,6 +265,7 @@ fn exit_code(err: &HusakoError) -> u8 {
         HusakoError::Validation(_) => 7,
         HusakoError::Dts(_) => 5,
         HusakoError::OpenApi(_) => 6,
+        HusakoError::Chart(_) => 6,
         HusakoError::Config(_) => 2,
         HusakoError::GenerateIo(_) => 1,
     }

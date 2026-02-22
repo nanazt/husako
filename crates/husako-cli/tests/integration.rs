@@ -1767,7 +1767,7 @@ fn new_creates_husako_toml() {
 
     assert!(target.join("husako.toml").exists());
     let content = std::fs::read_to_string(target.join("husako.toml")).unwrap();
-    assert!(content.contains("[schemas]"));
+    assert!(content.contains("[resources]"));
     assert!(content.contains("source = \"release\""));
 }
 

@@ -1,4 +1,5 @@
 mod emitter;
+pub mod json_schema;
 mod schema;
 pub mod schema_store;
 

@@ -9,6 +9,7 @@ repository.workspace = true
 husako-compile-oxc = { path = "../husako-compile-oxc" }
 husako-config = { path = "../husako-config" }
 husako-dts = { path = "../husako-dts" }
+husako-helm = { path = "../husako-helm" }
 husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 husako-sdk = { path = "../husako-sdk" }

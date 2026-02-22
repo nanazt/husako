@@ -452,6 +452,36 @@ See `.claude/plans/m13-husako-toml.md` for detailed design.
 
 See `.claude/plans/m14-rename-generate.md` for detailed design.
 
+## 15) Milestone 15 — Helm Values Schema Type Generation (**DONE**)
+
+### M15a: Foundation — Config + File Source + Type Generation (**DONE**)
+
+- Renamed `[schemas]` to `[resources]` in config with backward-compatible `#[serde(alias = "schemas")]`
+- Added `[charts]` section with `ChartSource` tagged enum: `registry`, `artifacthub`, `file`, `git`
+- New `husako-helm` crate: resolves chart `values.schema.json` from file source
+- New `husako-dts/json_schema.rs`: JSON Schema to TypeScript `.d.ts` + `.js` code generation
+- `helm/*` import resolution via `HusakoK8sResolver` (reused resolver with prefix check)
+- `husako generate` now processes `[charts]` config alongside `[resources]`
+- `tsconfig.json` conditionally includes `helm/*` path mapping
+- 28 new tests, total 298
+
+### M15b: Network Sources — Registry + ArtifactHub (**DONE**)
+
+- `registry.rs`: HTTP Helm repository source (index.yaml parse, .tgz download, values.schema.json extraction)
+- `artifacthub.rs`: ArtifactHub API source (values_schema field extraction)
+- OCI registry detection with clear error message
+- Cache layer with djb2 hash-based directory structure
+- 12 new tests, total 310
+
+### M15c: Git Source + Polish (**DONE**)
+
+- `git.rs`: Git repository source (shallow clone at tag, schema file read, cache)
+- Updated template TOML files: `[schemas]` → `[resources]`, commented `[charts]` example
+- Updated CLAUDE.md: architecture, project structure, config documentation, import policy
+- 2 new tests, total 312
+
+See `.claude/plans/m15-helm-values-schema.md` for detailed design.
+
 ---
 
 End of plan.
