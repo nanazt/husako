@@ -15,6 +15,10 @@ husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 husako-sdk = { path = "../husako-sdk" }
 husako-yaml = { path = "../husako-yaml" }
 regex-lite = "0.1"
+reqwest.workspace = true
+semver.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

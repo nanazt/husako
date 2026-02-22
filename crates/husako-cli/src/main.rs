@@ -1,9 +1,14 @@
+mod interactive;
+mod progress;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
 use husako_core::{GenerateOptions, HusakoError, RenderOptions, ScaffoldOptions, TemplateName};
 use husako_runtime_qjs::RuntimeError;
+
+use crate::progress::IndicatifReporter;
 
 #[derive(Parser)]
 #[command(name = "husako", version)]
@@ -61,6 +66,125 @@ enum Commands {
         #[arg(short, long, default_value = "simple")]
         template: TemplateName,
     },
+
+    /// Initialize husako in the current directory
+    Init {
+        /// Template to use (simple, project, multi-env)
+        #[arg(long, default_value = "simple")]
+        template: TemplateName,
+    },
+
+    /// Clean cache and/or generated types
+    Clean {
+        /// Remove only the cache directory (.husako/cache/)
+        #[arg(long)]
+        cache: bool,
+
+        /// Remove only the types directory (.husako/types/)
+        #[arg(long)]
+        types: bool,
+
+        /// Remove both cache and types
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// List configured dependencies
+    #[command(alias = "ls")]
+    List {
+        /// Show only resources
+        #[arg(long)]
+        resources: bool,
+
+        /// Show only charts
+        #[arg(long)]
+        charts: bool,
+    },
+
+    /// Add a resource or chart dependency
+    Add {
+        /// Dependency name
+        name: Option<String>,
+
+        /// Add as a resource dependency
+        #[arg(long, group = "kind")]
+        resource: bool,
+
+        /// Add as a chart dependency
+        #[arg(long, group = "kind")]
+        chart: bool,
+
+        /// Source type (release, cluster, git, file, registry, artifacthub)
+        #[arg(long)]
+        source: Option<String>,
+
+        /// Version
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Repository URL
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Git tag
+        #[arg(long)]
+        tag: Option<String>,
+
+        /// File or directory path
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Chart name in the repository
+        #[arg(long)]
+        chart_name: Option<String>,
+
+        /// ArtifactHub package name (e.g. bitnami/postgresql)
+        #[arg(long)]
+        package: Option<String>,
+    },
+
+    /// Remove a resource or chart dependency
+    #[command(alias = "rm")]
+    Remove {
+        /// Dependency name to remove
+        name: Option<String>,
+    },
+
+    /// Check for outdated dependencies
+    Outdated,
+
+    /// Update dependencies to latest versions
+    Update {
+        /// Only update this dependency
+        name: Option<String>,
+
+        /// Only update resources
+        #[arg(long)]
+        resources_only: bool,
+
+        /// Only update charts
+        #[arg(long)]
+        charts_only: bool,
+
+        /// Show what would be updated without applying
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Show project summary or dependency details
+    Info {
+        /// Dependency name (omit for project summary)
+        name: Option<String>,
+    },
+
+    /// Check project health and diagnose issues
+    Debug,
+
+    /// Validate TypeScript without rendering output
+    Validate {
+        /// TypeScript entry file or alias
+        file: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -74,9 +198,8 @@ fn main() -> ExitCode {
             max_heap_mb,
             verbose,
         } => {
-            let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let project_root = cwd();
 
-            // Resolve entry: try as file path first, then as alias from config
             let resolved = match resolve_entry(&file, &project_root) {
                 Ok(p) => p,
                 Err(msg) => {
@@ -129,7 +252,8 @@ fn main() -> ExitCode {
             spec_dir,
             skip_k8s,
         } => {
-            let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let project_root = cwd();
+            let progress = IndicatifReporter::new();
 
             let openapi = if skip_k8s {
                 None
@@ -150,7 +274,6 @@ fn main() -> ExitCode {
                 })
             };
 
-            // Load config for config-driven schema/chart resolution
             let config = match husako_config::load(&project_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
@@ -166,7 +289,7 @@ fn main() -> ExitCode {
                 config,
             };
 
-            match husako_core::generate(&options) {
+            match husako_core::generate(&options, &progress) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -198,7 +321,523 @@ fn main() -> ExitCode {
                 }
             }
         }
+
+        // --- M16 ---
+        Commands::Init { template } => {
+            let project_root = cwd();
+            let options = husako_core::InitOptions {
+                directory: project_root,
+                template,
+            };
+
+            match husako_core::init(&options) {
+                Ok(()) => {
+                    eprintln!("Created '{template}' project in current directory");
+                    eprintln!();
+                    eprintln!("Next steps:");
+                    eprintln!("  husako generate");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+        Commands::Clean { cache, types, all } => {
+            let project_root = cwd();
+
+            let (do_cache, do_types) = if all {
+                (true, true)
+            } else if cache || types {
+                (cache, types)
+            } else {
+                // Interactive mode
+                match interactive::prompt_clean() {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(1);
+                    }
+                }
+            };
+
+            let options = husako_core::CleanOptions {
+                project_root,
+                cache: do_cache,
+                types: do_types,
+            };
+
+            match husako_core::clean(&options) {
+                Ok(result) => {
+                    if result.cache_removed {
+                        eprintln!(
+                            "Removed .husako/cache/ ({})",
+                            format_size(result.cache_size)
+                        );
+                    }
+                    if result.types_removed {
+                        eprintln!(
+                            "Removed .husako/types/ ({})",
+                            format_size(result.types_size)
+                        );
+                    }
+                    if !result.cache_removed && !result.types_removed {
+                        eprintln!("Nothing to clean");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+        Commands::List { resources, charts } => {
+            let project_root = cwd();
+
+            match husako_core::list_dependencies(&project_root) {
+                Ok(deps) => {
+                    let show_resources = !charts || resources;
+                    let show_charts = !resources || charts;
+
+                    if show_resources && !deps.resources.is_empty() {
+                        eprintln!("Resources:");
+                        for dep in &deps.resources {
+                            eprintln!(
+                                "  {:<16} {:<12} {:<10}{}",
+                                dep.name,
+                                dep.source_type,
+                                dep.version.as_deref().unwrap_or("-"),
+                                if dep.details.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("  {}", dep.details)
+                                }
+                            );
+                        }
+                    }
+
+                    if show_charts && !deps.charts.is_empty() {
+                        if show_resources && !deps.resources.is_empty() {
+                            eprintln!();
+                        }
+                        eprintln!("Charts:");
+                        for dep in &deps.charts {
+                            eprintln!(
+                                "  {:<16} {:<12} {:<10}{}",
+                                dep.name,
+                                dep.source_type,
+                                dep.version.as_deref().unwrap_or("-"),
+                                if dep.details.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("  {}", dep.details)
+                                }
+                            );
+                        }
+                    }
+
+                    if deps.resources.is_empty() && deps.charts.is_empty() {
+                        eprintln!("No dependencies configured");
+                    }
+
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+
+        // --- M17 ---
+        Commands::Add {
+            name,
+            resource: _,
+            chart,
+            source,
+            version,
+            repo,
+            tag,
+            path,
+            chart_name,
+            package,
+        } => {
+            let project_root = cwd();
+
+            let target = if let (Some(dep_name), Some(src)) = (name, source) {
+                // Non-interactive mode
+                if chart {
+                    build_chart_target(dep_name, src, version, repo, tag, path, chart_name, package)
+                } else {
+                    build_resource_target(dep_name, src, version, repo, tag, path)
+                }
+            } else {
+                // Interactive mode
+                interactive::prompt_add()
+            };
+
+            match target {
+                Ok(target) => match husako_core::add_dependency(&project_root, &target) {
+                    Ok(()) => {
+                        let (dep_name, section) = match &target {
+                            husako_core::AddTarget::Resource { name, .. } => (name, "resources"),
+                            husako_core::AddTarget::Chart { name, .. } => (name, "charts"),
+                        };
+                        eprintln!("Added '{dep_name}' to [{section}]");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(exit_code(&e))
+                    }
+                },
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(1)
+                }
+            }
+        }
+        Commands::Remove { name } => {
+            let project_root = cwd();
+
+            let dep_name = if let Some(n) = name {
+                n
+            } else {
+                // Interactive mode: list deps and let user choose
+                match husako_core::list_dependencies(&project_root) {
+                    Ok(deps) => {
+                        let mut items: Vec<(String, &'static str, &'static str)> = Vec::new();
+                        for dep in &deps.resources {
+                            items.push((dep.name.clone(), "resource", dep.source_type));
+                        }
+                        for dep in &deps.charts {
+                            items.push((dep.name.clone(), "chart", dep.source_type));
+                        }
+
+                        match interactive::prompt_remove(&items) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("error: {e}");
+                                return ExitCode::from(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(exit_code(&e));
+                    }
+                }
+            };
+
+            match husako_core::remove_dependency(&project_root, &dep_name) {
+                Ok(result) => {
+                    eprintln!("Removed '{}' from [{}]", result.name, result.section);
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+
+        // --- M18 ---
+        Commands::Outdated => {
+            let project_root = cwd();
+            let progress = IndicatifReporter::new();
+
+            match husako_core::check_outdated(&project_root, &progress) {
+                Ok(entries) => {
+                    if entries.is_empty() {
+                        eprintln!("No versioned dependencies found");
+                        return ExitCode::SUCCESS;
+                    }
+
+                    eprintln!(
+                        "{:<16} {:<10} {:<12} {:<10} {:<10}",
+                        "Name", "Kind", "Source", "Current", "Latest"
+                    );
+                    for entry in &entries {
+                        let latest = entry.latest.as_deref().unwrap_or("?");
+                        let mark = if entry.up_to_date { " \u{2713}" } else { "" };
+                        eprintln!(
+                            "{:<16} {:<10} {:<12} {:<10} {:<10}{}",
+                            entry.name, entry.kind, entry.source_type, entry.current, latest, mark,
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+
+        // --- M19 ---
+        Commands::Update {
+            name,
+            resources_only,
+            charts_only,
+            dry_run,
+        } => {
+            let project_root = cwd();
+            let progress = IndicatifReporter::new();
+
+            let options = husako_core::UpdateOptions {
+                project_root,
+                name,
+                resources_only,
+                charts_only,
+                dry_run,
+            };
+
+            match husako_core::update_dependencies(&options, &progress) {
+                Ok(result) => {
+                    for entry in &result.updated {
+                        let prefix = if dry_run { "Would update" } else { "Updated" };
+                        eprintln!(
+                            "{prefix} {}: {} \u{2192} {} ({})",
+                            entry.name, entry.old_version, entry.new_version, entry.kind
+                        );
+                    }
+                    for name in &result.skipped {
+                        eprintln!("{name}: up to date");
+                    }
+                    for (name, err) in &result.failed {
+                        eprintln!("{name}: {err}");
+                    }
+                    if result.updated.is_empty()
+                        && result.skipped.is_empty()
+                        && result.failed.is_empty()
+                    {
+                        eprintln!("No versioned dependencies found");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+
+        // --- M20 ---
+        Commands::Info { name } => {
+            let project_root = cwd();
+
+            if let Some(dep_name) = name {
+                match husako_core::dependency_detail(&project_root, &dep_name) {
+                    Ok(detail) => {
+                        eprintln!("{} ({})", detail.info.name, detail.info.source_type);
+                        if let Some(ref v) = detail.info.version {
+                            eprintln!("  Version:    {v}");
+                        }
+                        if !detail.info.details.is_empty() {
+                            eprintln!("  Details:    {}", detail.info.details);
+                        }
+                        if let Some(ref p) = detail.cache_path {
+                            eprintln!(
+                                "  Cache:      {} ({})",
+                                p.display(),
+                                format_size(detail.cache_size)
+                            );
+                        }
+                        if !detail.type_files.is_empty() {
+                            eprintln!("  Type files: {}", detail.type_files.len());
+                        }
+                        if let Some((total, top)) = detail.schema_property_count {
+                            eprintln!("  Values schema: {total} properties ({top} top-level)");
+                        }
+                        if !detail.group_versions.is_empty() {
+                            eprintln!("  Group-Versions ({}):", detail.group_versions.len());
+                            for (gv, _) in &detail.group_versions {
+                                eprintln!("    {gv}");
+                            }
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(exit_code(&e))
+                    }
+                }
+            } else {
+                match husako_core::project_summary(&project_root) {
+                    Ok(summary) => {
+                        eprintln!("Project: {}", summary.project_root.display());
+                        eprintln!(
+                            "Config:  husako.toml ({})",
+                            if summary.config_valid {
+                                "valid"
+                            } else {
+                                "invalid"
+                            }
+                        );
+                        eprintln!();
+
+                        if !summary.resources.is_empty() {
+                            eprintln!("Resources ({}):", summary.resources.len());
+                            for dep in &summary.resources {
+                                eprintln!(
+                                    "  {:<16} {:<12} {}",
+                                    dep.name,
+                                    dep.source_type,
+                                    dep.version.as_deref().unwrap_or("-")
+                                );
+                            }
+                            eprintln!();
+                        }
+
+                        if !summary.charts.is_empty() {
+                            eprintln!("Charts ({}):", summary.charts.len());
+                            for dep in &summary.charts {
+                                eprintln!(
+                                    "  {:<16} {:<12} {}",
+                                    dep.name,
+                                    dep.source_type,
+                                    dep.version.as_deref().unwrap_or("-")
+                                );
+                            }
+                            eprintln!();
+                        }
+
+                        eprintln!(
+                            "Cache:   .husako/cache/ ({})",
+                            format_size(summary.cache_size)
+                        );
+                        eprintln!(
+                            "Types:   .husako/types/ ({} files, {})",
+                            summary.type_file_count,
+                            format_size(summary.types_size)
+                        );
+
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        ExitCode::from(exit_code(&e))
+                    }
+                }
+            }
+        }
+        Commands::Debug => {
+            let project_root = cwd();
+
+            match husako_core::debug_project(&project_root) {
+                Ok(report) => {
+                    match report.config_ok {
+                        Some(true) => eprintln!("\u{2713} husako.toml found and valid"),
+                        Some(false) => eprintln!("\u{2717} husako.toml has errors"),
+                        None => eprintln!("\u{2717} husako.toml not found"),
+                    }
+
+                    if report.types_exist {
+                        eprintln!(
+                            "\u{2713} .husako/types/ exists ({} type files)",
+                            report.type_file_count
+                        );
+                    } else {
+                        eprintln!("\u{2717} .husako/types/ directory not found");
+                    }
+
+                    if report.tsconfig_ok {
+                        if report.tsconfig_has_paths {
+                            eprintln!("\u{2713} tsconfig.json has husako path mappings");
+                        } else {
+                            eprintln!("\u{2717} tsconfig.json is missing husako path mappings");
+                        }
+                    } else {
+                        eprintln!("\u{2717} tsconfig.json not found or invalid");
+                    }
+
+                    if report.stale {
+                        eprintln!(
+                            "\u{2717} Types may be stale (husako.toml newer than .husako/types/)"
+                        );
+                    }
+
+                    if report.cache_size > 0 {
+                        eprintln!(
+                            "\u{2713} .husako/cache/ exists ({})",
+                            format_size(report.cache_size)
+                        );
+                    }
+
+                    for suggestion in &report.suggestions {
+                        eprintln!("  \u{2192} {suggestion}");
+                    }
+
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+        Commands::Validate { file } => {
+            let project_root = cwd();
+
+            let resolved = match resolve_entry(&file, &project_root) {
+                Ok(p) => p,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            };
+
+            let source = match std::fs::read_to_string(&resolved) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: could not read {}: {e}", resolved.display());
+                    return ExitCode::from(1);
+                }
+            };
+
+            let abs_file = match resolved.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("error: could not resolve {}: {e}", resolved.display());
+                    return ExitCode::from(1);
+                }
+            };
+
+            let schema_store = husako_core::load_schema_store(&project_root);
+
+            let filename = abs_file.to_string_lossy();
+            let options = RenderOptions {
+                project_root,
+                allow_outside_root: false,
+                schema_store,
+                timeout_ms: None,
+                max_heap_mb: None,
+                verbose: false,
+            };
+
+            match husako_core::validate_file(&source, &filename, &options) {
+                Ok(result) => {
+                    eprintln!("\u{2713} {} compiles successfully", file);
+                    eprintln!(
+                        "\u{2713} husako.build() called with {} resources",
+                        result.resource_count
+                    );
+                    eprintln!("\u{2713} All resources pass schema validation");
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::from(exit_code(&e))
+                }
+            }
+        }
     }
+}
+
+fn cwd() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// Resolve a file argument to a path. Tries as a direct file path first,
@@ -245,6 +884,93 @@ fn resolve_entry(file_arg: &str, project_root: &std::path::Path) -> Result<PathB
         }
     }
     Err(msg)
+}
+
+fn build_resource_target(
+    name: String,
+    source: String,
+    version: Option<String>,
+    repo: Option<String>,
+    tag: Option<String>,
+    path: Option<String>,
+) -> Result<husako_core::AddTarget, String> {
+    let schema_source = match source.as_str() {
+        "release" => {
+            let version = version.ok_or("--version is required for release source")?;
+            husako_config::SchemaSource::Release { version }
+        }
+        "cluster" => husako_config::SchemaSource::Cluster { cluster: None },
+        "git" => {
+            let repo = repo.ok_or("--repo is required for git source")?;
+            let tag = tag.ok_or("--tag is required for git source")?;
+            let path = path.ok_or("--path is required for git source")?;
+            husako_config::SchemaSource::Git { repo, tag, path }
+        }
+        "file" => {
+            let path = path.ok_or("--path is required for file source")?;
+            husako_config::SchemaSource::File { path }
+        }
+        other => return Err(format!("unknown resource source type: {other}")),
+    };
+    Ok(husako_core::AddTarget::Resource {
+        name,
+        source: schema_source,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_chart_target(
+    name: String,
+    source: String,
+    version: Option<String>,
+    repo: Option<String>,
+    tag: Option<String>,
+    path: Option<String>,
+    chart_name: Option<String>,
+    package: Option<String>,
+) -> Result<husako_core::AddTarget, String> {
+    let chart_source = match source.as_str() {
+        "registry" => {
+            let repo = repo.ok_or("--repo is required for registry source")?;
+            let chart = chart_name.ok_or("--chart-name is required for registry source")?;
+            let version = version.ok_or("--version is required for registry source")?;
+            husako_config::ChartSource::Registry {
+                repo,
+                chart,
+                version,
+            }
+        }
+        "artifacthub" => {
+            let package = package.ok_or("--package is required for artifacthub source")?;
+            let version = version.ok_or("--version is required for artifacthub source")?;
+            husako_config::ChartSource::ArtifactHub { package, version }
+        }
+        "git" => {
+            let repo = repo.ok_or("--repo is required for git source")?;
+            let tag = tag.ok_or("--tag is required for git source")?;
+            let path = path.ok_or("--path is required for git source")?;
+            husako_config::ChartSource::Git { repo, tag, path }
+        }
+        "file" => {
+            let path = path.ok_or("--path is required for file source")?;
+            husako_config::ChartSource::File { path }
+        }
+        other => return Err(format!("unknown chart source type: {other}")),
+    };
+    Ok(husako_core::AddTarget::Chart {
+        name,
+        source: chart_source,
+    })
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.1} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn exit_code(err: &HusakoError) -> u8 {

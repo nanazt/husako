@@ -5,6 +5,7 @@ use husako_config::{HusakoConfig, SchemaSource};
 use serde_json::Value;
 
 use crate::HusakoError;
+use crate::progress::ProgressReporter;
 
 /// Resolve all schema sources from a `husako.toml` config.
 ///
@@ -15,10 +16,12 @@ pub fn resolve_all(
     config: &HusakoConfig,
     project_root: &Path,
     cache_dir: &Path,
+    progress: &dyn ProgressReporter,
 ) -> Result<HashMap<String, Value>, HusakoError> {
     let mut merged = HashMap::new();
 
     for (name, source) in &config.resources {
+        let task = progress.start_task(&format!("Resolving {name}..."));
         let specs = match source {
             SchemaSource::File { path } => resolve_file(path, project_root)?,
             SchemaSource::Cluster { cluster } => {
@@ -32,6 +35,7 @@ pub fn resolve_all(
             eprintln!("warning: schema source '{name}' produced no specs");
         }
 
+        task.finish_ok(&format!("{name}: {} group-versions", specs.len()));
         merged.extend(specs);
     }
 

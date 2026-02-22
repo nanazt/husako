@@ -482,6 +482,52 @@ See `.claude/plans/m14-rename-generate.md` for detailed design.
 
 See `.claude/plans/m15-helm-values-schema.md` for detailed design.
 
+## 16-21) Milestones 16-21 — CLI Usability Improvements (**DONE**)
+
+10 new commands + progress bars across 6 milestones:
+
+### M16: `init`, `clean`, `list` (**DONE**)
+
+- `husako init` — initialize husako in current directory (reuses scaffold logic, allows non-empty dirs)
+- `husako clean` — remove cache/types with `--cache`, `--types`, `--all` flags (interactive prompt if no flags)
+- `husako list` (alias `ls`) — display configured resources/charts table, `--resources`/`--charts` filters
+- New workspace deps: `dialoguer`, `console`
+
+### M17: `add`, `remove` (**DONE**)
+
+- `husako add` — interactive or flag-based dependency addition (resource/chart with all source types)
+- `husako remove` (alias `rm`) — remove dependency by name or interactive selection
+- New file: `crates/husako-config/src/edit.rs` — format-preserving TOML editing via `toml_edit::DocumentMut`
+- New file: `crates/husako-cli/src/interactive.rs` — `dialoguer` prompts for add/remove/clean
+
+### M18: `outdated` (**DONE**)
+
+- `husako outdated` — check which dependencies have newer versions available
+- New file: `crates/husako-core/src/version_check.rs` — version discovery from GitHub API, registry index.yaml, ArtifactHub API, git ls-remote
+- Semver comparison with `versions_match()` for flexible version matching
+
+### M19: `update` (**DONE**)
+
+- `husako update` — update versioned deps to latest, auto-regenerate types
+- Supports `--dry-run`, `--resources-only`, `--charts-only`, single-name filter
+- Uses M17 toml_edit + M18 version discovery
+
+### M20: `info`, `debug`, `validate` (**DONE**)
+
+- `husako info` — project summary or detailed dependency information (group-versions, cache/type sizes)
+- `husako debug` — health checks (config validity, types existence, tsconfig paths, staleness detection)
+- `husako validate` — compile and validate TS without rendering YAML
+
+### M21: Progress Bars (**DONE**)
+
+- New file: `crates/husako-core/src/progress.rs` — `ProgressReporter` trait + `SilentProgress` (no-op for tests)
+- New file: `crates/husako-cli/src/progress.rs` — `IndicatifReporter` using `indicatif` spinners
+- `generate()` signature changed to accept `&dyn ProgressReporter`
+- Progress reporting in schema source resolution and version checks
+- 46 new tests, total 365
+
+See `.claude/plans/m16-m21-cli-usability.md` for detailed design.
+
 ---
 
 End of plan.

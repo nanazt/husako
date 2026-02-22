@@ -1,3 +1,5 @@
+pub mod edit;
+
 use std::collections::HashMap;
 use std::path::Path;
 

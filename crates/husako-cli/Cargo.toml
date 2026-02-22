@@ -11,6 +11,9 @@ husako-core = { path = "../husako-core" }
 husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 clap.workspace = true
+dialoguer.workspace = true
+console.workspace = true
+indicatif.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

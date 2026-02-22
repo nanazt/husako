@@ -28,6 +28,15 @@ toml = "1"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+dialoguer = "0.12"
+console = "0.16"
+indicatif = "0.18"
+
+# TOML editing
+toml_edit = "0.25"
+
+# Version comparison
+semver = "1"
 
 # Errors
 thiserror = "2"

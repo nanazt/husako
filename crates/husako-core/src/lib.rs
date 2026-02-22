@@ -1,12 +1,16 @@
+pub mod progress;
 pub mod quantity;
 pub mod schema_source;
 pub mod validate;
+pub mod version_check;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use husako_runtime_qjs::ExecuteOptions;
+
+use progress::ProgressReporter;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HusakoError {
@@ -149,7 +153,10 @@ pub struct GenerateOptions {
     pub config: Option<husako_config::HusakoConfig>,
 }
 
-pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
+pub fn generate(
+    options: &GenerateOptions,
+    progress: &dyn ProgressReporter,
+) -> Result<(), HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
 
     // 1. Write static husako.d.ts
@@ -166,6 +173,7 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
     if !options.skip_k8s {
         let specs = if let Some(openapi_opts) = &options.openapi {
             // Legacy CLI mode
+            let task = progress.start_task("Fetching OpenAPI specs...");
             let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
                 source: match &openapi_opts.source {
                     husako_openapi::OpenApiSource::Url {
@@ -182,7 +190,9 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
                 cache_dir: options.project_root.join(".husako/cache"),
                 offline: openapi_opts.offline,
             })?;
-            Some(client.fetch_all_specs()?)
+            let result = client.fetch_all_specs()?;
+            task.finish_ok("Fetched OpenAPI specs");
+            Some(result)
         } else if let Some(config) = &options.config
             && !config.resources.is_empty()
         {
@@ -192,18 +202,21 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
                 config,
                 &options.project_root,
                 &cache_dir,
+                progress,
             )?)
         } else {
             None
         };
 
         if let Some(specs) = specs {
+            let task = progress.start_task("Generating types...");
             let gen_options = husako_dts::GenerateOptions { specs };
             let result = husako_dts::generate(&gen_options)?;
 
             for (rel_path, content) in &result.files {
                 write_file(&types_dir.join(rel_path), content)?;
             }
+            task.finish_ok("Generated k8s types");
         }
     }
 
@@ -216,9 +229,11 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
             husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir)?;
 
         for (chart_name, schema) in &chart_schemas {
+            let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
             let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
             write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
             write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
+            task.finish_ok(&format!("{chart_name}: chart types generated"));
         }
     }
 
@@ -437,6 +452,1060 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
     Ok(())
 }
 
+// --- husako init ---
+
+#[derive(Debug)]
+pub struct InitOptions {
+    pub directory: PathBuf,
+    pub template: TemplateName,
+}
+
+pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
+    let dir = &options.directory;
+
+    // Error if husako.toml already exists
+    if dir.join(husako_config::CONFIG_FILENAME).exists() {
+        return Err(HusakoError::GenerateIo(
+            "husako.toml already exists. Use 'husako new <dir>' to create a new project."
+                .to_string(),
+        ));
+    }
+
+    // Write .gitignore: skip if exists, append .husako/ line if missing
+    let gitignore_path = dir.join(".gitignore");
+    if gitignore_path.exists() {
+        let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+        if !content.lines().any(|l| l.trim() == ".husako/") {
+            let mut appended = content;
+            if !appended.ends_with('\n') && !appended.is_empty() {
+                appended.push('\n');
+            }
+            appended.push_str(".husako/\n");
+            std::fs::write(&gitignore_path, appended).map_err(|e| {
+                HusakoError::GenerateIo(format!("write {}: {e}", gitignore_path.display()))
+            })?;
+        }
+    } else {
+        write_file(&gitignore_path, husako_sdk::TEMPLATE_GITIGNORE)?;
+    }
+
+    match options.template {
+        TemplateName::Simple => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_SIMPLE_CONFIG,
+            )?;
+            let entry_path = dir.join("entry.ts");
+            if !entry_path.exists() {
+                write_file(&entry_path, husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
+            }
+        }
+        TemplateName::Project => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_PROJECT_CONFIG,
+            )?;
+            let files = [
+                ("env/dev.ts", husako_sdk::TEMPLATE_PROJECT_ENV_DEV),
+                (
+                    "deployments/nginx.ts",
+                    husako_sdk::TEMPLATE_PROJECT_DEPLOY_NGINX,
+                ),
+                ("lib/index.ts", husako_sdk::TEMPLATE_PROJECT_LIB_INDEX),
+                ("lib/metadata.ts", husako_sdk::TEMPLATE_PROJECT_LIB_METADATA),
+            ];
+            for (path, content) in files {
+                let full_path = dir.join(path);
+                if !full_path.exists() {
+                    write_file(&full_path, content)?;
+                }
+            }
+        }
+        TemplateName::MultiEnv => {
+            write_file(
+                &dir.join(husako_config::CONFIG_FILENAME),
+                husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
+            )?;
+            let files = [
+                ("base/nginx.ts", husako_sdk::TEMPLATE_MULTI_ENV_BASE_NGINX),
+                (
+                    "base/service.ts",
+                    husako_sdk::TEMPLATE_MULTI_ENV_BASE_SERVICE,
+                ),
+                ("dev/main.ts", husako_sdk::TEMPLATE_MULTI_ENV_DEV_MAIN),
+                (
+                    "staging/main.ts",
+                    husako_sdk::TEMPLATE_MULTI_ENV_STAGING_MAIN,
+                ),
+                (
+                    "release/main.ts",
+                    husako_sdk::TEMPLATE_MULTI_ENV_RELEASE_MAIN,
+                ),
+            ];
+            for (path, content) in files {
+                let full_path = dir.join(path);
+                if !full_path.exists() {
+                    write_file(&full_path, content)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// --- husako clean ---
+
+#[derive(Debug)]
+pub struct CleanOptions {
+    pub project_root: PathBuf,
+    pub cache: bool,
+    pub types: bool,
+}
+
+#[derive(Debug)]
+pub struct CleanResult {
+    pub cache_removed: bool,
+    pub types_removed: bool,
+    pub cache_size: u64,
+    pub types_size: u64,
+}
+
+pub fn clean(options: &CleanOptions) -> Result<CleanResult, HusakoError> {
+    let cache_dir = options.project_root.join(".husako/cache");
+    let types_dir = options.project_root.join(".husako/types");
+
+    let mut result = CleanResult {
+        cache_removed: false,
+        types_removed: false,
+        cache_size: 0,
+        types_size: 0,
+    };
+
+    if options.cache && cache_dir.exists() {
+        result.cache_size = dir_size(&cache_dir);
+        std::fs::remove_dir_all(&cache_dir)
+            .map_err(|e| HusakoError::GenerateIo(format!("remove {}: {e}", cache_dir.display())))?;
+        result.cache_removed = true;
+    }
+
+    if options.types && types_dir.exists() {
+        result.types_size = dir_size(&types_dir);
+        std::fs::remove_dir_all(&types_dir)
+            .map_err(|e| HusakoError::GenerateIo(format!("remove {}: {e}", types_dir.display())))?;
+        result.types_removed = true;
+    }
+
+    Ok(result)
+}
+
+fn dir_size(path: &Path) -> u64 {
+    walkdir(path).unwrap_or(0)
+}
+
+fn walkdir(path: &Path) -> Result<u64, std::io::Error> {
+    let mut total = 0;
+    if path.is_file() {
+        return Ok(path.metadata()?.len());
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            total += walkdir(&entry.path())?;
+        } else {
+            total += meta.len();
+        }
+    }
+    Ok(total)
+}
+
+// --- husako list ---
+
+#[derive(Debug)]
+pub struct DependencyList {
+    pub resources: Vec<DependencyInfo>,
+    pub charts: Vec<DependencyInfo>,
+}
+
+#[derive(Debug)]
+pub struct DependencyInfo {
+    pub name: String,
+    pub source_type: &'static str,
+    pub version: Option<String>,
+    pub details: String,
+}
+
+pub fn list_dependencies(project_root: &Path) -> Result<DependencyList, HusakoError> {
+    let config = husako_config::load(project_root)?;
+
+    let mut resources = Vec::new();
+    let mut charts = Vec::new();
+
+    if let Some(cfg) = &config {
+        let mut res_entries: Vec<_> = cfg.resources.iter().collect();
+        res_entries.sort_by_key(|(k, _)| k.as_str());
+        for (name, source) in res_entries {
+            resources.push(resource_info(name, source));
+        }
+
+        let mut chart_entries: Vec<_> = cfg.charts.iter().collect();
+        chart_entries.sort_by_key(|(k, _)| k.as_str());
+        for (name, source) in chart_entries {
+            charts.push(chart_info(name, source));
+        }
+    }
+
+    Ok(DependencyList { resources, charts })
+}
+
+fn resource_info(name: &str, source: &husako_config::SchemaSource) -> DependencyInfo {
+    match source {
+        husako_config::SchemaSource::Release { version } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "release",
+            version: Some(version.clone()),
+            details: String::new(),
+        },
+        husako_config::SchemaSource::Cluster { cluster } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "cluster",
+            version: None,
+            details: cluster
+                .as_deref()
+                .map(|c| format!("cluster: {c}"))
+                .unwrap_or_default(),
+        },
+        husako_config::SchemaSource::Git { repo, tag, path } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "git",
+            version: Some(tag.clone()),
+            details: format!("{repo} ({})", path),
+        },
+        husako_config::SchemaSource::File { path } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "file",
+            version: None,
+            details: path.clone(),
+        },
+    }
+}
+
+fn chart_info(name: &str, source: &husako_config::ChartSource) -> DependencyInfo {
+    match source {
+        husako_config::ChartSource::Registry {
+            repo,
+            chart,
+            version,
+        } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "registry",
+            version: Some(version.clone()),
+            details: format!("{repo} ({})", chart),
+        },
+        husako_config::ChartSource::ArtifactHub { package, version } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "artifacthub",
+            version: Some(version.clone()),
+            details: package.clone(),
+        },
+        husako_config::ChartSource::File { path } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "file",
+            version: None,
+            details: path.clone(),
+        },
+        husako_config::ChartSource::Git { repo, tag, path } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "git",
+            version: Some(tag.clone()),
+            details: format!("{repo} ({})", path),
+        },
+    }
+}
+
+// --- husako add / remove (M17) ---
+
+#[derive(Debug)]
+pub enum AddTarget {
+    Resource {
+        name: String,
+        source: husako_config::SchemaSource,
+    },
+    Chart {
+        name: String,
+        source: husako_config::ChartSource,
+    },
+}
+
+pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<(), HusakoError> {
+    let (mut doc, path) = husako_config::edit::load_document(project_root)?;
+
+    match target {
+        AddTarget::Resource { name, source } => {
+            husako_config::edit::add_resource(&mut doc, name, source);
+        }
+        AddTarget::Chart { name, source } => {
+            husako_config::edit::add_chart(&mut doc, name, source);
+        }
+    }
+
+    husako_config::edit::save_document(&doc, &path)?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct RemoveResult {
+    pub name: String,
+    pub section: &'static str,
+}
+
+pub fn remove_dependency(project_root: &Path, name: &str) -> Result<RemoveResult, HusakoError> {
+    let (mut doc, path) = husako_config::edit::load_document(project_root)?;
+
+    if husako_config::edit::remove_resource(&mut doc, name) {
+        husako_config::edit::save_document(&doc, &path)?;
+        return Ok(RemoveResult {
+            name: name.to_string(),
+            section: "resources",
+        });
+    }
+
+    if husako_config::edit::remove_chart(&mut doc, name) {
+        husako_config::edit::save_document(&doc, &path)?;
+        return Ok(RemoveResult {
+            name: name.to_string(),
+            section: "charts",
+        });
+    }
+
+    Err(HusakoError::Config(husako_config::ConfigError::Validation(
+        format!("dependency '{name}' not found in [resources] or [charts]"),
+    )))
+}
+
+// --- husako outdated (M18) ---
+
+#[derive(Debug)]
+pub struct OutdatedEntry {
+    pub name: String,
+    pub kind: &'static str,
+    pub source_type: &'static str,
+    pub current: String,
+    pub latest: Option<String>,
+    pub up_to_date: bool,
+}
+
+pub fn check_outdated(
+    project_root: &Path,
+    progress: &dyn ProgressReporter,
+) -> Result<Vec<OutdatedEntry>, HusakoError> {
+    let config = husako_config::load(project_root)?;
+    let Some(cfg) = config else {
+        return Ok(Vec::new());
+    };
+
+    let mut entries = Vec::new();
+
+    for (name, source) in &cfg.resources {
+        match source {
+            husako_config::SchemaSource::Release { version } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_release() {
+                    Ok(latest) => {
+                        let up_to_date = version_check::versions_match(version, &latest);
+                        task.finish_ok(&format!("{name}: {version} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "resource",
+                            source_type: "release",
+                            current: version.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "resource",
+                            source_type: "release",
+                            current: version.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            husako_config::SchemaSource::Git { tag, repo, .. } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_git_tag(repo) {
+                    Ok(Some(latest)) => {
+                        let up_to_date = tag == &latest;
+                        task.finish_ok(&format!("{name}: {tag} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "resource",
+                            source_type: "git",
+                            current: tag.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Ok(None) => {
+                        task.finish_ok(&format!("{name}: no tags"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "resource",
+                            source_type: "git",
+                            current: tag.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "resource",
+                            source_type: "git",
+                            current: tag.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            // file/cluster have no version concept
+            _ => {}
+        }
+    }
+
+    for (name, source) in &cfg.charts {
+        match source {
+            husako_config::ChartSource::Registry {
+                repo,
+                chart,
+                version,
+            } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_registry(repo, chart) {
+                    Ok(latest) => {
+                        let up_to_date = version == &latest;
+                        task.finish_ok(&format!("{name}: {version} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "registry",
+                            current: version.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "registry",
+                            current: version.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            husako_config::ChartSource::ArtifactHub { package, version } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_artifacthub(package) {
+                    Ok(latest) => {
+                        let up_to_date = version == &latest;
+                        task.finish_ok(&format!("{name}: {version} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "artifacthub",
+                            current: version.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "artifacthub",
+                            current: version.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            husako_config::ChartSource::Git { tag, repo, .. } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_git_tag(repo) {
+                    Ok(Some(latest)) => {
+                        let up_to_date = tag == &latest;
+                        task.finish_ok(&format!("{name}: {tag} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "git",
+                            current: tag.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Ok(None) => {
+                        task.finish_ok(&format!("{name}: no tags"));
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "git",
+                            current: tag.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            // file has no version concept
+            _ => {}
+        }
+    }
+
+    Ok(entries)
+}
+
+// --- husako update (M19) ---
+
+#[derive(Debug)]
+pub struct UpdateOptions {
+    pub project_root: PathBuf,
+    pub name: Option<String>,
+    pub resources_only: bool,
+    pub charts_only: bool,
+    pub dry_run: bool,
+}
+
+#[derive(Debug)]
+pub struct UpdatedEntry {
+    pub name: String,
+    pub kind: &'static str,
+    pub old_version: String,
+    pub new_version: String,
+}
+
+#[derive(Debug)]
+pub struct UpdateResult {
+    pub updated: Vec<UpdatedEntry>,
+    pub skipped: Vec<String>,
+    pub failed: Vec<(String, String)>,
+}
+
+pub fn update_dependencies(
+    options: &UpdateOptions,
+    progress: &dyn ProgressReporter,
+) -> Result<UpdateResult, HusakoError> {
+    let outdated = check_outdated(&options.project_root, progress)?;
+
+    let mut result = UpdateResult {
+        updated: Vec::new(),
+        skipped: Vec::new(),
+        failed: Vec::new(),
+    };
+
+    // Filter entries
+    let filtered: Vec<_> = outdated
+        .into_iter()
+        .filter(|e| {
+            if let Some(ref target) = options.name {
+                return &e.name == target;
+            }
+            if options.resources_only && e.kind != "resource" {
+                return false;
+            }
+            if options.charts_only && e.kind != "chart" {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    let mut doc_and_path = None;
+
+    for entry in filtered {
+        let Some(ref latest) = entry.latest else {
+            result
+                .failed
+                .push((entry.name, "could not determine latest version".to_string()));
+            continue;
+        };
+
+        if entry.up_to_date {
+            result.skipped.push(entry.name);
+            continue;
+        }
+
+        if options.dry_run {
+            result.updated.push(UpdatedEntry {
+                name: entry.name,
+                kind: entry.kind,
+                old_version: entry.current,
+                new_version: latest.clone(),
+            });
+            continue;
+        }
+
+        // Load TOML document lazily
+        if doc_and_path.is_none() {
+            doc_and_path = Some(husako_config::edit::load_document(&options.project_root)?);
+        }
+        let (doc, _) = doc_and_path.as_mut().unwrap();
+
+        let updated = if entry.kind == "resource" {
+            husako_config::edit::update_resource_version(doc, &entry.name, latest)
+        } else {
+            husako_config::edit::update_chart_version(doc, &entry.name, latest)
+        };
+
+        if updated {
+            result.updated.push(UpdatedEntry {
+                name: entry.name,
+                kind: entry.kind,
+                old_version: entry.current,
+                new_version: latest.clone(),
+            });
+        }
+    }
+
+    // Save if we modified the document
+    if let Some((doc, path)) = &doc_and_path
+        && !result.updated.is_empty()
+    {
+        husako_config::edit::save_document(doc, path)?;
+    }
+
+    // Auto-regenerate types if we updated anything
+    if !options.dry_run && !result.updated.is_empty() {
+        let task = progress.start_task("Regenerating types...");
+        let config = husako_config::load(&options.project_root)?;
+        let gen_options = GenerateOptions {
+            project_root: options.project_root.clone(),
+            openapi: None,
+            skip_k8s: false,
+            config,
+        };
+        match generate(&gen_options, progress) {
+            Ok(()) => task.finish_ok("Types regenerated"),
+            Err(e) => task.finish_err(&format!("Type generation failed: {e}")),
+        }
+    }
+
+    Ok(result)
+}
+
+// --- husako info (M20) ---
+
+#[derive(Debug)]
+pub struct ProjectSummary {
+    pub project_root: PathBuf,
+    pub config_valid: bool,
+    pub resources: Vec<DependencyInfo>,
+    pub charts: Vec<DependencyInfo>,
+    pub cache_size: u64,
+    pub type_file_count: usize,
+    pub types_size: u64,
+}
+
+pub fn project_summary(project_root: &Path) -> Result<ProjectSummary, HusakoError> {
+    let config = husako_config::load(project_root);
+    let config_valid = config.is_ok();
+
+    let deps = list_dependencies(project_root).unwrap_or(DependencyList {
+        resources: Vec::new(),
+        charts: Vec::new(),
+    });
+
+    let cache_dir = project_root.join(".husako/cache");
+    let types_dir = project_root.join(".husako/types");
+
+    let cache_size = if cache_dir.exists() {
+        dir_size(&cache_dir)
+    } else {
+        0
+    };
+
+    let (type_file_count, types_size) = if types_dir.exists() {
+        count_files_and_size(&types_dir)
+    } else {
+        (0, 0)
+    };
+
+    Ok(ProjectSummary {
+        project_root: project_root.to_path_buf(),
+        config_valid,
+        resources: deps.resources,
+        charts: deps.charts,
+        cache_size,
+        type_file_count,
+        types_size,
+    })
+}
+
+#[derive(Debug)]
+pub struct DependencyDetail {
+    pub info: DependencyInfo,
+    pub cache_path: Option<PathBuf>,
+    pub cache_size: u64,
+    pub type_files: Vec<(PathBuf, u64)>,
+    pub schema_property_count: Option<(usize, usize)>,
+    pub group_versions: Vec<(String, Vec<String>)>,
+}
+
+pub fn dependency_detail(project_root: &Path, name: &str) -> Result<DependencyDetail, HusakoError> {
+    let config = husako_config::load(project_root)?;
+    let Some(cfg) = config else {
+        return Err(HusakoError::Config(husako_config::ConfigError::Validation(
+            "no husako.toml found".to_string(),
+        )));
+    };
+
+    // Check resources first
+    if let Some(source) = cfg.resources.get(name) {
+        let info = resource_info(name, source);
+        let types_dir = project_root.join(".husako/types/k8s");
+        let type_files = list_type_files(&types_dir);
+
+        // Try to read group-versions from generated types
+        let group_versions = read_group_versions(&types_dir);
+
+        let (cache_path, cache_size) = resource_cache_info(source, project_root);
+
+        return Ok(DependencyDetail {
+            info,
+            cache_path,
+            cache_size,
+            type_files,
+            schema_property_count: None,
+            group_versions,
+        });
+    }
+
+    // Check charts
+    if let Some(source) = cfg.charts.get(name) {
+        let info = chart_info(name, source);
+        let types_dir = project_root.join(".husako/types/helm");
+        let type_files = list_chart_type_files(&types_dir, name);
+        let schema_property_count = read_chart_schema_props(project_root, name);
+        let (cache_path, cache_size) = chart_cache_info(source, project_root);
+
+        return Ok(DependencyDetail {
+            info,
+            cache_path,
+            cache_size,
+            type_files,
+            schema_property_count,
+            group_versions: Vec::new(),
+        });
+    }
+
+    Err(HusakoError::Config(husako_config::ConfigError::Validation(
+        format!("dependency '{name}' not found"),
+    )))
+}
+
+fn count_files_and_size(dir: &Path) -> (usize, u64) {
+    let mut count = 0;
+    let mut size = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let meta = entry.metadata();
+            if let Ok(m) = meta {
+                if m.is_dir() {
+                    let (c, s) = count_files_and_size(&entry.path());
+                    count += c;
+                    size += s;
+                } else {
+                    count += 1;
+                    size += m.len();
+                }
+            }
+        }
+    }
+    (count, size)
+}
+
+fn list_type_files(dir: &Path) -> Vec<(PathBuf, u64)> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata()
+                && meta.is_file()
+            {
+                files.push((entry.path(), meta.len()));
+            }
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
+
+fn list_chart_type_files(dir: &Path, chart_name: &str) -> Vec<(PathBuf, u64)> {
+    let mut files = Vec::new();
+    for ext in ["d.ts", "js"] {
+        let path = dir.join(format!("{chart_name}.{ext}"));
+        if let Ok(meta) = path.metadata() {
+            files.push((path, meta.len()));
+        }
+    }
+    files
+}
+
+fn read_group_versions(types_dir: &Path) -> Vec<(String, Vec<String>)> {
+    let mut gvs: Vec<(String, Vec<String>)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(types_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "ts")
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(".d.ts"))
+            {
+                let stem = path
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .trim_end_matches(".d")
+                    .to_string();
+                let gv = stem.replace("__", "/");
+                gvs.push((gv, Vec::new()));
+            }
+        }
+    }
+    gvs.sort_by(|a, b| a.0.cmp(&b.0));
+    gvs
+}
+
+fn resource_cache_info(
+    source: &husako_config::SchemaSource,
+    project_root: &Path,
+) -> (Option<PathBuf>, u64) {
+    let cache_base = project_root.join(".husako/cache");
+    match source {
+        husako_config::SchemaSource::Release { version } => {
+            let path = cache_base.join(format!("release/v{version}.0"));
+            let size = if path.exists() { dir_size(&path) } else { 0 };
+            (Some(path), size)
+        }
+        _ => (None, 0),
+    }
+}
+
+fn chart_cache_info(
+    _source: &husako_config::ChartSource,
+    _project_root: &Path,
+) -> (Option<PathBuf>, u64) {
+    (None, 0)
+}
+
+fn read_chart_schema_props(project_root: &Path, chart_name: &str) -> Option<(usize, usize)> {
+    let dts_path = project_root.join(format!(".husako/types/helm/{chart_name}.d.ts"));
+    if !dts_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&dts_path).ok()?;
+    // Count properties in ValuesSpec interface
+    let total = content.matches("?: ").count() + content.matches(": ").count();
+    let top_level = content
+        .lines()
+        .filter(|l| {
+            l.starts_with("  ")
+                && !l.starts_with("    ")
+                && (l.contains("?: ") || l.contains(": "))
+                && !l.contains("export")
+                && !l.contains("class")
+                && !l.contains("interface")
+        })
+        .count();
+    Some((total, top_level))
+}
+
+// --- husako debug (M20) ---
+
+#[derive(Debug)]
+pub struct DebugReport {
+    pub config_ok: Option<bool>,
+    pub types_exist: bool,
+    pub type_file_count: usize,
+    pub tsconfig_ok: bool,
+    pub tsconfig_has_paths: bool,
+    pub stale: bool,
+    pub cache_size: u64,
+    pub issues: Vec<String>,
+    pub suggestions: Vec<String>,
+}
+
+pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
+    let config_path = project_root.join(husako_config::CONFIG_FILENAME);
+    let types_dir = project_root.join(".husako/types");
+    let cache_dir = project_root.join(".husako/cache");
+    let tsconfig_path = project_root.join("tsconfig.json");
+
+    let mut issues = Vec::new();
+    let mut suggestions = Vec::new();
+
+    // 1. Check config
+    let config_ok = if config_path.exists() {
+        match husako_config::load(project_root) {
+            Ok(_) => Some(true),
+            Err(e) => {
+                issues.push(format!("husako.toml parse error: {e}"));
+                Some(false)
+            }
+        }
+    } else {
+        issues.push("husako.toml not found".to_string());
+        suggestions.push("Run 'husako init' to initialize a project".to_string());
+        None
+    };
+
+    // 2. Check types directory
+    let types_exist = types_dir.exists();
+    let (type_file_count, _) = if types_exist {
+        count_files_and_size(&types_dir)
+    } else {
+        issues.push(".husako/types/ directory not found".to_string());
+        suggestions.push("Run 'husako generate' to create type definitions".to_string());
+        (0, 0)
+    };
+
+    // 3. Check tsconfig.json
+    let (tsconfig_ok, tsconfig_has_paths) = if tsconfig_path.exists() {
+        let content = std::fs::read_to_string(&tsconfig_path).unwrap_or_default();
+        let stripped = strip_jsonc(&content);
+        match serde_json::from_str::<serde_json::Value>(&stripped) {
+            Ok(parsed) => {
+                let has_husako = parsed.pointer("/compilerOptions/paths/husako").is_some();
+                let has_k8s = parsed.pointer("/compilerOptions/paths/k8s~1*").is_some();
+                if !has_husako && !has_k8s {
+                    issues.push("tsconfig.json is missing husako path mappings".to_string());
+                    suggestions.push("Run 'husako generate' to update tsconfig.json".to_string());
+                }
+                (true, has_husako || has_k8s)
+            }
+            Err(_) => {
+                issues.push("tsconfig.json could not be parsed".to_string());
+                (false, false)
+            }
+        }
+    } else {
+        issues.push("tsconfig.json not found".to_string());
+        suggestions.push("Run 'husako generate' to create tsconfig.json".to_string());
+        (false, false)
+    };
+
+    // 4. Staleness check
+    let stale = if config_path.exists() && types_dir.exists() {
+        let config_mtime = config_path.metadata().and_then(|m| m.modified()).ok();
+        let types_mtime = types_dir.metadata().and_then(|m| m.modified()).ok();
+        match (config_mtime, types_mtime) {
+            (Some(c), Some(t)) if c > t => {
+                issues
+                    .push("Types may be stale (husako.toml newer than .husako/types/)".to_string());
+                suggestions.push("Run 'husako generate' to update".to_string());
+                true
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    // 5. Cache size
+    let cache_size = if cache_dir.exists() {
+        dir_size(&cache_dir)
+    } else {
+        0
+    };
+
+    Ok(DebugReport {
+        config_ok,
+        types_exist,
+        type_file_count,
+        tsconfig_ok,
+        tsconfig_has_paths,
+        stale,
+        cache_size,
+        issues,
+        suggestions,
+    })
+}
+
+// --- husako validate (M20) ---
+
+#[derive(Debug)]
+pub struct ValidateResult {
+    pub resource_count: usize,
+    pub validation_errors: Vec<String>,
+}
+
+pub fn validate_file(
+    source: &str,
+    filename: &str,
+    options: &RenderOptions,
+) -> Result<ValidateResult, HusakoError> {
+    let js = husako_compile_oxc::compile(source, filename)?;
+
+    let entry_path = std::path::Path::new(filename)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(filename));
+
+    let generated_types_dir = options
+        .project_root
+        .join(".husako/types")
+        .canonicalize()
+        .ok();
+
+    let exec_options = ExecuteOptions {
+        entry_path,
+        project_root: options.project_root.clone(),
+        allow_outside_root: options.allow_outside_root,
+        timeout_ms: options.timeout_ms,
+        max_heap_mb: options.max_heap_mb,
+        generated_types_dir,
+    };
+
+    let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+
+    let resource_count = if let serde_json::Value::Array(arr) = &value {
+        arr.len()
+    } else {
+        1
+    };
+
+    let validation_errors =
+        if let Err(errors) = validate::validate(&value, options.schema_store.as_ref()) {
+            errors.iter().map(|e| e.to_string()).collect()
+        } else {
+            Vec::new()
+        };
+
+    if !validation_errors.is_empty() {
+        return Err(HusakoError::Validation(validation_errors.join("\n")));
+    }
+
+    Ok(ValidateResult {
+        resource_count,
+        validation_errors,
+    })
+}
+
 /// Strip JSONC features (comments and trailing commas) to produce valid JSON.
 ///
 /// tsconfig.json supports JSONC format: `//` line comments, `/* */` block comments,
@@ -578,7 +1647,7 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts).unwrap();
+        generate(&opts, &progress::SilentProgress).unwrap();
 
         // Check static .d.ts files exist
         assert!(root.join(".husako/types/husako.d.ts").exists());
@@ -622,7 +1691,7 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts).unwrap();
+        generate(&opts, &progress::SilentProgress).unwrap();
 
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
@@ -789,7 +1858,7 @@ mod tests {
             skip_k8s: true,
             config: Some(config),
         };
-        generate(&opts).unwrap();
+        generate(&opts, &progress::SilentProgress).unwrap();
 
         // Check chart type files exist
         assert!(root.join(".husako/types/helm/my-chart.d.ts").exists());
@@ -824,7 +1893,7 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts).unwrap();
+        generate(&opts, &progress::SilentProgress).unwrap();
 
         // No helm path in tsconfig when no charts
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
@@ -923,7 +1992,7 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts).unwrap();
+        generate(&opts, &progress::SilentProgress).unwrap();
 
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
@@ -935,5 +2004,444 @@ mod tests {
         // husako paths added
         assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
         assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
+    }
+
+    // --- M16 tests: init, clean, list ---
+
+    #[test]
+    fn init_simple_template() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+        };
+        init(&opts).unwrap();
+
+        assert!(tmp.path().join("husako.toml").exists());
+        assert!(tmp.path().join("entry.ts").exists());
+        assert!(tmp.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn init_project_template() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Project,
+        };
+        init(&opts).unwrap();
+
+        assert!(tmp.path().join("husako.toml").exists());
+        assert!(tmp.path().join("env/dev.ts").exists());
+    }
+
+    #[test]
+    fn init_error_if_config_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+        };
+        let err = init(&opts).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn init_works_in_nonempty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("existing.txt"), "content").unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+        };
+        init(&opts).unwrap();
+
+        assert!(tmp.path().join("husako.toml").exists());
+        assert!(tmp.path().join("existing.txt").exists());
+    }
+
+    #[test]
+    fn init_appends_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "node_modules/\n").unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+        };
+        init(&opts).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains(".husako/"));
+    }
+
+    #[test]
+    fn init_skips_gitignore_if_husako_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), ".husako/\n").unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+        };
+        init(&opts).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        // Should not have duplicate .husako/ lines
+        assert_eq!(content.matches(".husako/").count(), 1);
+    }
+
+    #[test]
+    fn clean_cache_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".husako/cache")).unwrap();
+        std::fs::write(root.join(".husako/cache/test.json"), "data").unwrap();
+        std::fs::create_dir_all(root.join(".husako/types")).unwrap();
+        std::fs::write(root.join(".husako/types/test.d.ts"), "types").unwrap();
+
+        let opts = CleanOptions {
+            project_root: root.to_path_buf(),
+            cache: true,
+            types: false,
+        };
+        let result = clean(&opts).unwrap();
+        assert!(result.cache_removed);
+        assert!(!result.types_removed);
+        assert!(!root.join(".husako/cache").exists());
+        assert!(root.join(".husako/types").exists());
+    }
+
+    #[test]
+    fn clean_types_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".husako/cache")).unwrap();
+        std::fs::create_dir_all(root.join(".husako/types")).unwrap();
+        std::fs::write(root.join(".husako/types/test.d.ts"), "types").unwrap();
+
+        let opts = CleanOptions {
+            project_root: root.to_path_buf(),
+            cache: false,
+            types: true,
+        };
+        let result = clean(&opts).unwrap();
+        assert!(!result.cache_removed);
+        assert!(result.types_removed);
+        assert!(root.join(".husako/cache").exists());
+        assert!(!root.join(".husako/types").exists());
+    }
+
+    #[test]
+    fn clean_both() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".husako/cache")).unwrap();
+        std::fs::create_dir_all(root.join(".husako/types")).unwrap();
+
+        let opts = CleanOptions {
+            project_root: root.to_path_buf(),
+            cache: true,
+            types: true,
+        };
+        let result = clean(&opts).unwrap();
+        assert!(result.cache_removed);
+        assert!(result.types_removed);
+    }
+
+    #[test]
+    fn clean_nothing_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let opts = CleanOptions {
+            project_root: tmp.path().to_path_buf(),
+            cache: true,
+            types: true,
+        };
+        let result = clean(&opts).unwrap();
+        assert!(!result.cache_removed);
+        assert!(!result.types_removed);
+    }
+
+    #[test]
+    fn list_empty_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let deps = list_dependencies(tmp.path()).unwrap();
+        assert!(deps.resources.is_empty());
+        assert!(deps.charts.is_empty());
+    }
+
+    #[test]
+    fn list_resources_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[resources]\nkubernetes = { source = \"release\", version = \"1.35\" }\n",
+        )
+        .unwrap();
+
+        let deps = list_dependencies(tmp.path()).unwrap();
+        assert_eq!(deps.resources.len(), 1);
+        assert_eq!(deps.resources[0].name, "kubernetes");
+        assert_eq!(deps.resources[0].source_type, "release");
+        assert_eq!(deps.resources[0].version.as_deref(), Some("1.35"));
+        assert!(deps.charts.is_empty());
+    }
+
+    #[test]
+    fn list_charts_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[charts]\nmy-chart = { source = \"file\", path = \"./values.schema.json\" }\n",
+        )
+        .unwrap();
+
+        let deps = list_dependencies(tmp.path()).unwrap();
+        assert!(deps.resources.is_empty());
+        assert_eq!(deps.charts.len(), 1);
+        assert_eq!(deps.charts[0].name, "my-chart");
+    }
+
+    #[test]
+    fn list_mixed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[resources]\nkubernetes = { source = \"release\", version = \"1.35\" }\n\n[charts]\nmy-chart = { source = \"file\", path = \"./values.schema.json\" }\n",
+        )
+        .unwrap();
+
+        let deps = list_dependencies(tmp.path()).unwrap();
+        assert_eq!(deps.resources.len(), 1);
+        assert_eq!(deps.charts.len(), 1);
+    }
+
+    #[test]
+    fn list_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let deps = list_dependencies(tmp.path()).unwrap();
+        assert!(deps.resources.is_empty());
+        assert!(deps.charts.is_empty());
+    }
+
+    // --- M17 tests: add, remove ---
+
+    #[test]
+    fn add_resource_creates_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Resource {
+            name: "kubernetes".to_string(),
+            source: husako_config::SchemaSource::Release {
+                version: "1.35".to_string(),
+            },
+        };
+        add_dependency(tmp.path(), &target).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert!(content.contains("kubernetes"));
+        assert!(content.contains("release"));
+        assert!(content.contains("1.35"));
+    }
+
+    #[test]
+    fn add_chart_creates_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.12.0".to_string(),
+            },
+        };
+        add_dependency(tmp.path(), &target).unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert!(content.contains("ingress-nginx"));
+        assert!(content.contains("4.12.0"));
+    }
+
+    #[test]
+    fn remove_resource_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[resources]\nkubernetes = { source = \"release\", version = \"1.35\" }\n",
+        )
+        .unwrap();
+
+        let result = remove_dependency(tmp.path(), "kubernetes").unwrap();
+        assert_eq!(result.section, "resources");
+
+        let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert!(!content.contains("kubernetes"));
+    }
+
+    #[test]
+    fn remove_chart_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[charts]\nmy-chart = { source = \"file\", path = \"./values.schema.json\" }\n",
+        )
+        .unwrap();
+
+        let result = remove_dependency(tmp.path(), "my-chart").unwrap();
+        assert_eq!(result.section, "charts");
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let err = remove_dependency(tmp.path(), "nonexistent").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    // --- M20 tests: info, debug, validate ---
+
+    #[test]
+    fn project_summary_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let summary = project_summary(tmp.path()).unwrap();
+        assert!(summary.config_valid);
+        assert!(summary.resources.is_empty());
+        assert!(summary.charts.is_empty());
+    }
+
+    #[test]
+    fn project_summary_with_deps() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[resources]\nkubernetes = { source = \"release\", version = \"1.35\" }\n",
+        )
+        .unwrap();
+
+        let summary = project_summary(tmp.path()).unwrap();
+        assert_eq!(summary.resources.len(), 1);
+    }
+
+    #[test]
+    fn debug_missing_config() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let report = debug_project(tmp.path()).unwrap();
+        assert!(report.config_ok.is_none());
+        assert!(!report.types_exist);
+        assert!(!report.suggestions.is_empty());
+    }
+
+    #[test]
+    fn debug_valid_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+        std::fs::create_dir_all(tmp.path().join(".husako/types")).unwrap();
+        std::fs::write(tmp.path().join(".husako/types/husako.d.ts"), "").unwrap();
+
+        let opts = GenerateOptions {
+            project_root: tmp.path().to_path_buf(),
+            openapi: None,
+            skip_k8s: true,
+            config: None,
+        };
+        generate(&opts, &progress::SilentProgress).unwrap();
+
+        let report = debug_project(tmp.path()).unwrap();
+        assert_eq!(report.config_ok, Some(true));
+        assert!(report.types_exist);
+        assert!(report.tsconfig_ok);
+    }
+
+    #[test]
+    fn debug_missing_types() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let report = debug_project(tmp.path()).unwrap();
+        assert_eq!(report.config_ok, Some(true));
+        assert!(!report.types_exist);
+    }
+
+    #[test]
+    fn validate_valid_ts() {
+        let ts = r#"
+            import { build } from "husako";
+            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+        "#;
+        let options = test_options();
+        let result = validate_file(ts, "test.ts", &options).unwrap();
+        assert_eq!(result.resource_count, 1);
+        assert!(result.validation_errors.is_empty());
+    }
+
+    #[test]
+    fn validate_compile_error() {
+        let ts = "const = ;";
+        let options = test_options();
+        let err = validate_file(ts, "bad.ts", &options).unwrap_err();
+        assert!(matches!(err, HusakoError::Compile(_)));
+    }
+
+    #[test]
+    fn validate_runtime_error() {
+        let ts = r#"import { build } from "husako"; const x = 1;"#;
+        let err = validate_file(ts, "test.ts", &test_options()).unwrap_err();
+        assert!(matches!(err, HusakoError::Runtime(_)));
+    }
+
+    #[test]
+    fn dependency_detail_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let err = dependency_detail(tmp.path(), "nonexistent").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dependency_detail_resource() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[resources]\nkubernetes = { source = \"release\", version = \"1.35\" }\n",
+        )
+        .unwrap();
+
+        let detail = dependency_detail(tmp.path(), "kubernetes").unwrap();
+        assert_eq!(detail.info.name, "kubernetes");
+        assert_eq!(detail.info.source_type, "release");
+        assert_eq!(detail.info.version.as_deref(), Some("1.35"));
+    }
+
+    #[test]
+    fn dependency_detail_chart() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("husako.toml"),
+            "[charts]\nmy-chart = { source = \"file\", path = \"./values.schema.json\" }\n",
+        )
+        .unwrap();
+
+        let detail = dependency_detail(tmp.path(), "my-chart").unwrap();
+        assert_eq!(detail.info.name, "my-chart");
+        assert_eq!(detail.info.source_type, "file");
     }
 }
