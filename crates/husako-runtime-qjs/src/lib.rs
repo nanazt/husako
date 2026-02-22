@@ -631,4 +631,53 @@ export class ConfigMap extends _ResourceBuilder {
         let result = execute(js, &opts).unwrap();
         assert_eq!(result[0]["kind"], "Namespace");
     }
+
+    // --- Helm chart module tests ---
+
+    #[test]
+    fn helm_import_without_generate_fails() {
+        let js = r#"
+            import { build } from "husako";
+            import { values } from "helm/my-chart";
+            build([]);
+        "#;
+        let err = execute(js, &test_options()).unwrap_err();
+        assert!(err.to_string().contains("husako generate"));
+    }
+
+    #[test]
+    fn helm_import_with_generated_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let helm_dir = dir.path().join("helm");
+        std::fs::create_dir_all(&helm_dir).unwrap();
+        std::fs::write(
+            helm_dir.join("my-chart.js"),
+            r#"import { _SchemaBuilder } from "husako/_base";
+export class Values extends _SchemaBuilder {
+  replicaCount(v) { return this._set("replicaCount", v); }
+}
+export function values() { return new Values(); }
+"#,
+        )
+        .unwrap();
+
+        let opts = ExecuteOptions {
+            entry_path: PathBuf::from("/tmp/test.ts"),
+            project_root: PathBuf::from("/tmp"),
+            allow_outside_root: false,
+            timeout_ms: None,
+            max_heap_mb: None,
+            generated_types_dir: Some(dir.path().to_path_buf()),
+        };
+
+        let js = r#"
+            import { build } from "husako";
+            import { values } from "helm/my-chart";
+            const v = values().replicaCount(3);
+            build([{ _render() { return v._toJSON(); } }]);
+        "#;
+
+        let result = execute(js, &opts).unwrap();
+        assert_eq!(result[0]["replicaCount"], 3);
+    }
 }

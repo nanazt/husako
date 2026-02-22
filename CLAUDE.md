@@ -34,13 +34,14 @@ cargo fmt --all           # apply
 The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit YAML**
 
 1. **Compiler** (`husako-compile-oxc`): Strips TypeScript types with oxc, producing plain JavaScript
-2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`), captures `husako.build()` output via Rust-side sink
+2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`, `"helm/*"`), captures `husako.build()` output via Rust-side sink
 3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar
 4. **Emitter** (`husako-yaml`): Converts validated `serde_json::Value` to YAML or JSON output
 5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; kubeconfig credential resolution; GitHub release spec download
-6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs
-7. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
-8. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, schema dependencies)
+6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs; JSON Schema → TypeScript for Helm charts
+7. **Helm** (`husako-helm`): Resolves Helm chart `values.schema.json` from file, registry, ArtifactHub, or git sources
+8. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
+9. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, resource/chart dependencies)
 
 ## Project Structure
 
@@ -48,7 +49,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 crates/
 ├── husako-cli/            # CLI entry point (clap), thin — no business logic
 │   └── src/main.rs
-├── husako-config/         # husako.toml parser (entry aliases, schema deps, cluster config)
+├── husako-config/         # husako.toml parser (entry aliases, resource/chart deps, cluster config)
 │   └── src/lib.rs
 ├── husako-core/           # Pipeline orchestration + validation + schema source resolution
 │   └── src/
@@ -64,7 +65,14 @@ crates/
 │       ├── crd.rs          # CRD YAML → OpenAPI JSON conversion
 │       ├── kubeconfig.rs   # Bearer token extraction from ~/.kube/
 │       └── release.rs      # GitHub k8s release spec download + cache
-├── husako-dts/            # OpenAPI → .d.ts + _validation.json generation
+├── husako-helm/           # Helm chart values.schema.json resolution (file, registry, artifacthub, git)
+│   └── src/
+│       ├── lib.rs
+│       ├── file.rs         # Local file source
+│       ├── registry.rs     # HTTP Helm repository source
+│       ├── artifacthub.rs  # ArtifactHub API source
+│       └── git.rs          # Git repository source
+├── husako-dts/            # OpenAPI → .d.ts + _validation.json generation; JSON Schema → TS for Helm
 │   └── src/lib.rs
 ├── husako-yaml/           # JSON → YAML/JSON emitter
 │   └── src/lib.rs
@@ -110,7 +118,7 @@ Boundary rules:
 - `husako.build(input)` must be called exactly once with builder instances (items must have `_render()`). Missing call → exit 7. Multiple calls → exit 7. Plain objects → TypeError.
 - Strict JSON enforcement by default (`--strict-json=true`): no `undefined`, `bigint`, `symbol`, functions, class instances, `Date`, `Map`, `Set`, `RegExp`, or cyclic references.
 - Validation errors must include `doc[index]`, JSON path (`$.spec...`), and value kind.
-- Supported imports: relative (`./`, `../`) and builtins (`"husako"`, `"k8s/<group>/<version>"`). No npm/bare specifiers, Node built-ins, or network imports.
+- Supported imports: relative (`./`, `../`) and builtins (`"husako"`, `"k8s/<group>/<version>"`, `"helm/<chart-name>"`). No npm/bare specifiers, Node built-ins, or network imports.
 - Resolved imports must stay within project root by default. `--allow-outside-root` overrides this.
 
 ## Testing
@@ -146,12 +154,13 @@ cargo test -p husako-core test_name
 Project-level configuration file created by `husako new`. Supports:
 
 - **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
-- **Schema dependencies**: `[schemas]` declares sources with 4 types: `release`, `cluster`, `git`, `file`
+- **Resource dependencies**: `[resources]` declares k8s schema sources with 4 types: `release`, `cluster`, `git`, `file` (aliased from legacy `[schemas]`)
+- **Chart dependencies**: `[charts]` declares Helm chart sources with 4 types: `registry`, `artifacthub`, `git`, `file`
 - **Cluster config**: `[cluster]` (single) or `[clusters.*]` (multiple named clusters)
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
-The `Generate` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip.
+The `Generate` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip.
 
 ## Design Documents
 
@@ -159,6 +168,7 @@ Read `.claude/*.md` before making changes to related areas. Key documents:
 
 - `.claude/builder-spec.md` — Authoritative reference for the builder DSL rules
 - `.claude/plans/m13-husako-toml.md` — `husako.toml` config design (M13a/M13b/M13c)
+- `.claude/plans/m15-helm-values-schema.md` — Helm values schema type generation (M15a/M15b/M15c)
 
 ## Plan Details
 

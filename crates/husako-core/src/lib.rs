@@ -22,6 +22,8 @@ pub enum HusakoError {
     Dts(#[from] husako_dts::DtsError),
     #[error(transparent)]
     Config(#[from] husako_config::ConfigError),
+    #[error(transparent)]
+    Chart(#[from] husako_helm::HelmError),
     #[error("{0}")]
     Validation(String),
     #[error("generate I/O error: {0}")]
@@ -182,7 +184,7 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
             })?;
             Some(client.fetch_all_specs()?)
         } else if let Some(config) = &options.config
-            && !config.schemas.is_empty()
+            && !config.resources.is_empty()
         {
             // Config-driven mode
             let cache_dir = options.project_root.join(".husako/cache");
@@ -205,8 +207,23 @@ pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
         }
     }
 
-    // 4. Write/update tsconfig.json
-    write_tsconfig(&options.project_root)?;
+    // 4. Generate chart (helm) types from [charts] config
+    if let Some(config) = &options.config
+        && !config.charts.is_empty()
+    {
+        let cache_dir = options.project_root.join(".husako/cache");
+        let chart_schemas =
+            husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir)?;
+
+        for (chart_name, schema) in &chart_schemas {
+            let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
+            write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
+            write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
+        }
+    }
+
+    // 5. Write/update tsconfig.json
+    write_tsconfig(&options.project_root, options.config.as_ref())?;
 
     Ok(())
 }
@@ -221,14 +238,29 @@ fn write_file(path: &std::path::Path, content: &str) -> Result<(), HusakoError> 
         .map_err(|e| HusakoError::GenerateIo(format!("write {}: {e}", path.display())))
 }
 
-fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
+fn write_tsconfig(
+    project_root: &std::path::Path,
+    config: Option<&husako_config::HusakoConfig>,
+) -> Result<(), HusakoError> {
     let tsconfig_path = project_root.join("tsconfig.json");
 
-    let husako_paths: serde_json::Value = serde_json::json!({
+    let mut paths = serde_json::json!({
         "husako": [".husako/types/husako.d.ts"],
         "husako/_base": [".husako/types/husako/_base.d.ts"],
         "k8s/*": [".husako/types/k8s/*"]
     });
+
+    // Add helm/* path if charts are configured
+    if let Some(cfg) = config
+        && !cfg.charts.is_empty()
+    {
+        paths.as_object_mut().unwrap().insert(
+            "helm/*".to_string(),
+            serde_json::json!([".husako/types/helm/*"]),
+        );
+    }
+
+    let husako_paths = paths;
 
     let config = if tsconfig_path.exists() {
         let content = std::fs::read_to_string(&tsconfig_path).map_err(|e| {
@@ -640,5 +672,88 @@ mod tests {
         scaffold(&opts).unwrap();
 
         assert!(dir.join("entry.ts").exists());
+    }
+
+    #[test]
+    fn generate_chart_types_from_file_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        // Create a values.schema.json
+        std::fs::write(
+            root.join("values.schema.json"),
+            r#"{
+                "type": "object",
+                "properties": {
+                    "replicaCount": { "type": "integer" },
+                    "image": {
+                        "type": "object",
+                        "properties": {
+                            "repository": { "type": "string" },
+                            "tag": { "type": "string" }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config = husako_config::HusakoConfig {
+            charts: std::collections::HashMap::from([(
+                "my-chart".to_string(),
+                husako_config::ChartSource::File {
+                    path: "values.schema.json".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let opts = GenerateOptions {
+            project_root: root.clone(),
+            openapi: None,
+            skip_k8s: true,
+            config: Some(config),
+        };
+        generate(&opts).unwrap();
+
+        // Check chart type files exist
+        assert!(root.join(".husako/types/helm/my-chart.d.ts").exists());
+        assert!(root.join(".husako/types/helm/my-chart.js").exists());
+
+        // Check DTS content
+        let dts = std::fs::read_to_string(root.join(".husako/types/helm/my-chart.d.ts")).unwrap();
+        assert!(dts.contains("export interface ValuesSpec"));
+        assert!(dts.contains("replicaCount"));
+        assert!(dts.contains("export class Values extends _SchemaBuilder"));
+        assert!(dts.contains("export function values(): Values;"));
+
+        // Check JS content
+        let js = std::fs::read_to_string(root.join(".husako/types/helm/my-chart.js")).unwrap();
+        assert!(js.contains("export class Values extends _SchemaBuilder"));
+        assert!(js.contains("export function values()"));
+
+        // Check tsconfig includes helm path
+        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+        assert!(parsed["compilerOptions"]["paths"]["helm/*"].is_array());
+    }
+
+    #[test]
+    fn generate_without_charts_no_helm_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        let opts = GenerateOptions {
+            project_root: root.clone(),
+            openapi: None,
+            skip_k8s: true,
+            config: None,
+        };
+        generate(&opts).unwrap();
+
+        // No helm path in tsconfig when no charts
+        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+        assert!(parsed["compilerOptions"]["paths"]["helm/*"].is_null());
     }
 }
