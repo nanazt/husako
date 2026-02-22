@@ -149,10 +149,24 @@ fn main() -> ExitCode {
                 })
             };
 
+            // Load config for config-driven schema resolution
+            let config = if openapi.is_none() && !skip_k8s {
+                match husako_config::load(&project_root) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        eprintln!("error: {e}");
+                        return ExitCode::from(2);
+                    }
+                }
+            } else {
+                None
+            };
+
             let options = husako_core::InitOptions {
                 project_root,
                 openapi,
                 skip_k8s,
+                config,
             };
 
             match husako_core::init(&options) {

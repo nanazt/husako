@@ -1,4 +1,5 @@
 pub mod quantity;
+pub mod schema_source;
 pub mod validate;
 
 use std::fmt;
@@ -139,8 +140,11 @@ pub fn load_schema_store(project_root: &Path) -> Option<validate::SchemaStore> {
 
 pub struct InitOptions {
     pub project_root: PathBuf,
+    /// CLI override for OpenAPI source (legacy mode).
     pub openapi: Option<husako_openapi::FetchOptions>,
     pub skip_k8s: bool,
+    /// Config from `husako.toml` (config-driven mode).
+    pub config: Option<husako_config::HusakoConfig>,
 }
 
 pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
@@ -155,35 +159,49 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
         husako_sdk::HUSAKO_BASE_DTS,
     )?;
 
-    // 3. Generate k8s types if not skipped
-    if !options.skip_k8s
-        && let Some(openapi_opts) = &options.openapi
-    {
-        let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
-            source: match &openapi_opts.source {
-                husako_openapi::OpenApiSource::Url {
-                    base_url,
-                    bearer_token,
-                } => husako_openapi::OpenApiSource::Url {
-                    base_url: base_url.clone(),
-                    bearer_token: bearer_token.clone(),
+    // 3. Generate k8s types
+    // Priority: --skip-k8s → CLI flags → husako.toml [schemas] → skip
+    if !options.skip_k8s {
+        let specs = if let Some(openapi_opts) = &options.openapi {
+            // Legacy CLI mode
+            let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
+                source: match &openapi_opts.source {
+                    husako_openapi::OpenApiSource::Url {
+                        base_url,
+                        bearer_token,
+                    } => husako_openapi::OpenApiSource::Url {
+                        base_url: base_url.clone(),
+                        bearer_token: bearer_token.clone(),
+                    },
+                    husako_openapi::OpenApiSource::Directory(p) => {
+                        husako_openapi::OpenApiSource::Directory(p.clone())
+                    }
                 },
-                husako_openapi::OpenApiSource::Directory(p) => {
-                    husako_openapi::OpenApiSource::Directory(p.clone())
-                }
-            },
-            cache_dir: options.project_root.join(".husako/cache"),
-            offline: openapi_opts.offline,
-        })?;
+                cache_dir: options.project_root.join(".husako/cache"),
+                offline: openapi_opts.offline,
+            })?;
+            Some(client.fetch_all_specs()?)
+        } else if let Some(config) = &options.config
+            && !config.schemas.is_empty()
+        {
+            // Config-driven mode
+            let cache_dir = options.project_root.join(".husako/cache");
+            Some(schema_source::resolve_all(
+                config,
+                &options.project_root,
+                &cache_dir,
+            )?)
+        } else {
+            None
+        };
 
-        let specs = client.fetch_all_specs()?;
+        if let Some(specs) = specs {
+            let gen_options = husako_dts::GenerateOptions { specs };
+            let result = husako_dts::generate(&gen_options)?;
 
-        let gen_options = husako_dts::GenerateOptions { specs };
-
-        let result = husako_dts::generate(&gen_options)?;
-
-        for (rel_path, content) in &result.files {
-            write_file(&types_dir.join(rel_path), content)?;
+            for (rel_path, content) in &result.files {
+                write_file(&types_dir.join(rel_path), content)?;
+            }
         }
     }
 
@@ -445,6 +463,7 @@ mod tests {
             project_root: root.clone(),
             openapi: None,
             skip_k8s: true,
+            config: None,
         };
         init(&opts).unwrap();
 
@@ -488,6 +507,7 @@ mod tests {
             project_root: root.clone(),
             openapi: None,
             skip_k8s: true,
+            config: None,
         };
         init(&opts).unwrap();
 

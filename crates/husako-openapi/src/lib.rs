@@ -1,5 +1,8 @@
 mod cache;
+pub mod crd;
 mod fetch;
+pub mod kubeconfig;
+pub mod release;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,6 +22,12 @@ pub enum OpenApiError {
     NotFound(String),
     #[error("no cached data available for offline use")]
     NoCachedData,
+    #[error("CRD parse error: {0}")]
+    Crd(String),
+    #[error("kubeconfig error: {0}")]
+    Kubeconfig(String),
+    #[error("GitHub release error: {0}")]
+    Release(String),
 }
 
 pub enum OpenApiSource {

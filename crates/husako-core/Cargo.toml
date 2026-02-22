@@ -15,7 +15,5 @@ husako-sdk = { path = "../husako-sdk" }
 husako-yaml = { path = "../husako-yaml" }
 regex-lite = "0.1"
 serde_json.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
+thiserror.workspace = true
