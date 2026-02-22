@@ -1,5 +1,178 @@
 use crate::HusakoError;
 
+// TODO: use urlencoding instead
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    out
+}
+
+// --- ArtifactHub search types ---
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ArtifactHubPackage {
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub repository: ArtifactHubRepo,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ArtifactHubRepo {
+    pub name: String,
+}
+
+pub struct ArtifactHubSearchResult {
+    pub packages: Vec<ArtifactHubPackage>,
+    pub has_more: bool,
+}
+
+pub const ARTIFACTHUB_PAGE_SIZE: usize = 20;
+
+/// Search ArtifactHub for Helm charts matching the query.
+pub fn search_artifacthub(
+    query: &str,
+    offset: usize,
+) -> Result<ArtifactHubSearchResult, HusakoError> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("husako")
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
+
+    let encoded_query = percent_encode(query);
+    let limit = ARTIFACTHUB_PAGE_SIZE + 1;
+    let url = format!(
+        "https://artifacthub.io/api/v1/packages/search?ts_query_web={encoded_query}&kind=0&limit={limit}&offset={offset}"
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| HusakoError::GenerateIo(format!("ArtifactHub search: {e}")))?;
+
+    let mut packages: Vec<ArtifactHubPackage> = resp
+        .json::<serde_json::Value>()
+        .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub search: {e}")))?
+        .get("packages")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(vec![]))
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+
+    let has_more = packages.len() > ARTIFACTHUB_PAGE_SIZE;
+    packages.truncate(ARTIFACTHUB_PAGE_SIZE);
+
+    Ok(ArtifactHubSearchResult { packages, has_more })
+}
+
+/// Discover the N most recent stable Kubernetes release versions (major.minor).
+pub fn discover_recent_releases(limit: usize) -> Result<Vec<String>, HusakoError> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("husako")
+        .build()
+        .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
+
+    let resp = client
+        .get("https://api.github.com/repos/kubernetes/kubernetes/tags?per_page=100")
+        .send()
+        .map_err(|e| HusakoError::GenerateIo(format!("GitHub API: {e}")))?;
+
+    let tags: Vec<serde_json::Value> = resp
+        .json()
+        .map_err(|e| HusakoError::GenerateIo(format!("parse tags: {e}")))?;
+
+    let mut versions: Vec<semver::Version> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for tag in &tags {
+        let Some(name) = tag["name"].as_str() else {
+            continue;
+        };
+        let stripped = name.strip_prefix('v').unwrap_or(name);
+        if stripped.contains('-') {
+            continue;
+        }
+        if let Ok(v) = semver::Version::parse(stripped) {
+            let key = format!("{}.{}", v.major, v.minor);
+            if seen.insert(key) {
+                versions.push(v);
+            }
+        }
+    }
+
+    versions.sort_by(|a, b| b.cmp(a));
+    versions.truncate(limit);
+
+    Ok(versions
+        .iter()
+        .map(|v| format!("{}.{}", v.major, v.minor))
+        .collect())
+}
+
+/// Discover available versions for a chart from a Helm registry.
+pub fn discover_registry_versions(
+    repo: &str,
+    chart: &str,
+    limit: usize,
+) -> Result<Vec<String>, HusakoError> {
+    let url = format!("{}/index.yaml", repo.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("husako")
+        .build()
+        .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| HusakoError::GenerateIo(format!("fetch registry index: {e}")))?;
+
+    let text = resp
+        .text()
+        .map_err(|e| HusakoError::GenerateIo(format!("read registry index: {e}")))?;
+
+    let index: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
+        .map_err(|e| HusakoError::GenerateIo(format!("parse registry index: {e}")))?;
+
+    let entries = index
+        .get("entries")
+        .and_then(|e| e.get(chart))
+        .and_then(|e| e.as_sequence())
+        .ok_or_else(|| {
+            HusakoError::GenerateIo(format!("chart '{chart}' not found in registry index"))
+        })?;
+
+    let mut versions: Vec<semver::Version> = Vec::new();
+    for entry in entries {
+        let Some(version_str) = entry.get("version").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if let Ok(v) = semver::Version::parse(version_str)
+            && v.pre.is_empty()
+        {
+            versions.push(v);
+        }
+    }
+
+    versions.sort_by(|a, b| b.cmp(a));
+    versions.truncate(limit);
+
+    Ok(versions.iter().map(|v| v.to_string()).collect())
+}
+
 /// Discover the latest stable Kubernetes release version from GitHub API.
 pub fn discover_latest_release() -> Result<String, HusakoError> {
     let client = reqwest::blocking::Client::builder()
@@ -179,6 +352,90 @@ pub fn versions_match(current: &str, latest: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifacthub_package_deserialize() {
+        let json = serde_json::json!({
+            "name": "postgresql",
+            "version": "16.4.0",
+            "description": "PostgreSQL object-relational database",
+            "repository": { "name": "bitnami" }
+        });
+        let pkg: ArtifactHubPackage = serde_json::from_value(json).unwrap();
+        assert_eq!(pkg.name, "postgresql");
+        assert_eq!(pkg.version, "16.4.0");
+        assert_eq!(
+            pkg.description.as_deref(),
+            Some("PostgreSQL object-relational database")
+        );
+        assert_eq!(pkg.repository.name, "bitnami");
+    }
+
+    #[test]
+    fn artifacthub_package_missing_description() {
+        let json = serde_json::json!({
+            "name": "test",
+            "version": "1.0.0",
+            "repository": { "name": "org" }
+        });
+        let pkg: ArtifactHubPackage = serde_json::from_value(json).unwrap();
+        assert!(pkg.description.is_none());
+    }
+
+    #[test]
+    fn artifacthub_has_more_detection() {
+        // Simulate 21 results → has_more = true
+        let packages: Vec<ArtifactHubPackage> = (0..21)
+            .map(|i| ArtifactHubPackage {
+                name: format!("pkg-{i}"),
+                version: "1.0.0".to_string(),
+                description: None,
+                repository: ArtifactHubRepo {
+                    name: "org".to_string(),
+                },
+            })
+            .collect();
+        let has_more = packages.len() > ARTIFACTHUB_PAGE_SIZE;
+        assert!(has_more);
+
+        // Simulate 15 results → has_more = false
+        let packages: Vec<ArtifactHubPackage> = (0..15)
+            .map(|i| ArtifactHubPackage {
+                name: format!("pkg-{i}"),
+                version: "1.0.0".to_string(),
+                description: None,
+                repository: ArtifactHubRepo {
+                    name: "org".to_string(),
+                },
+            })
+            .collect();
+        let has_more = packages.len() > ARTIFACTHUB_PAGE_SIZE;
+        assert!(!has_more);
+    }
+
+    #[test]
+    fn artifacthub_display_formatting() {
+        let pkg = ArtifactHubPackage {
+            name: "postgresql".to_string(),
+            version: "16.4.0".to_string(),
+            description: Some("A very long description that should be truncated when displayed in the selection prompt for the user".to_string()),
+            repository: ArtifactHubRepo {
+                name: "bitnami".to_string(),
+            },
+        };
+        let package_id = format!("{}/{}", pkg.repository.name, pkg.name);
+        assert_eq!(package_id, "bitnami/postgresql");
+
+        // Truncate description at 50 chars
+        let desc = pkg.description.as_deref().unwrap_or("");
+        let truncated = if desc.len() > 50 {
+            format!("{}...", &desc[..50])
+        } else {
+            desc.to_string()
+        };
+        assert!(truncated.ends_with("..."));
+        assert!(truncated.len() <= 53);
+    }
 
     #[test]
     fn versions_match_exact() {

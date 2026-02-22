@@ -3,6 +3,8 @@ use std::sync::Arc;
 use husako_core::progress::{ProgressReporter, TaskHandle};
 use indicatif::{ProgressBar, ProgressStyle};
 
+use crate::style;
+
 /// Progress reporter that uses `indicatif` spinners.
 pub struct IndicatifReporter;
 
@@ -38,12 +40,14 @@ impl TaskHandle for IndicatifTaskHandle {
     fn finish_ok(&self, message: &str) {
         self.pb
             .set_style(ProgressStyle::with_template("{msg}").unwrap());
-        self.pb.finish_with_message(format!("\u{2713} {message}"));
+        self.pb
+            .finish_with_message(format!("{} {message}", style::check_mark()));
     }
 
     fn finish_err(&self, message: &str) {
         self.pb
             .set_style(ProgressStyle::with_template("{msg}").unwrap());
-        self.pb.finish_with_message(format!("\u{2717} {message}"));
+        self.pb
+            .finish_with_message(format!("{} {message}", style::cross_mark()));
     }
 }
