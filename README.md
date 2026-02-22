@@ -56,18 +56,24 @@ cd my-app
 
 This generates a starter `entry.ts` and `.gitignore`.
 
-### 2. Initialize types
+### 2. Generate types
 
 Connect to a running cluster to generate typed builders for every resource kind:
 
 ```
-husako init --api-server https://localhost:6443
+husako generate --api-server https://localhost:6443
+```
+
+Or use the short alias:
+
+```
+husako gen --api-server https://localhost:6443
 ```
 
 Skip Kubernetes type generation:
 
 ```
-husako init --skip-k8s
+husako generate --skip-k8s
 ```
 
 This writes a `.husako/` directory with `.d.ts` type definitions and `tsconfig.json`. Your editor picks these up for autocomplete.
@@ -120,7 +126,7 @@ husako render entry.ts | kubectl apply -f -
 | Command | Description |
 | --- | --- |
 | `husako new <dir>` | Create a new project from a template |
-| `husako init` | Generate type definitions and `tsconfig.json` |
+| `husako generate` (alias: `gen`) | Generate type definitions and `tsconfig.json` |
 | `husako render <file>` | Compile TypeScript and emit YAML |
 
 ### `husako new`
@@ -129,7 +135,7 @@ husako render entry.ts | kubectl apply -f -
 | --- | --- | --- |
 | `-t, --template` | `simple` | Template name: `simple`, `project`, or `multi-env` |
 
-### `husako init`
+### `husako generate` (alias: `gen`)
 
 | Flag | Description |
 | --- | --- |
@@ -203,7 +209,7 @@ husako render my-app/staging/main.ts
 
 ## How it works
 
-husako runs entirely offline after `husako init`. The TypeScript source is stripped of types by [oxc](https://oxc.rs), then executed in an embedded [QuickJS](https://bellard.org/quickjs/) runtime. The runtime captures the array passed to `husako.build()`, validates it against a strict JSON contract (no `undefined`, no functions, no cycles), and emits multi-document YAML. There is no Node.js dependency and no network access at render time.
+husako runs entirely offline after `husako generate`. The TypeScript source is stripped of types by [oxc](https://oxc.rs), then executed in an embedded [QuickJS](https://bellard.org/quickjs/) runtime. The runtime captures the array passed to `husako.build()`, validates it against a strict JSON contract (no `undefined`, no functions, no cycles), and emits multi-document YAML. There is no Node.js dependency and no network access at render time.
 
 ## Project structure
 

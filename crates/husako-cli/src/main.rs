@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use husako_core::{HusakoError, RenderOptions, ScaffoldOptions, TemplateName};
+use husako_core::{GenerateOptions, HusakoError, RenderOptions, ScaffoldOptions, TemplateName};
 use husako_runtime_qjs::RuntimeError;
 
 #[derive(Parser)]
@@ -36,8 +36,9 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Initialize project: generate type definitions and tsconfig.json
-    Init {
+    /// Generate type definitions and tsconfig.json
+    #[command(alias = "gen")]
+    Generate {
         /// Kubernetes API server URL (e.g. https://localhost:6443)
         #[arg(long)]
         api_server: Option<String>,
@@ -123,7 +124,7 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Init {
+        Commands::Generate {
             api_server,
             spec_dir,
             skip_k8s,
@@ -162,14 +163,14 @@ fn main() -> ExitCode {
                 None
             };
 
-            let options = husako_core::InitOptions {
+            let options = GenerateOptions {
                 project_root,
                 openapi,
                 skip_k8s,
                 config,
             };
 
-            match husako_core::init(&options) {
+            match husako_core::generate(&options) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -192,7 +193,7 @@ fn main() -> ExitCode {
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  cd {}", directory.display());
-                    eprintln!("  husako init");
+                    eprintln!("  husako generate");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -269,6 +270,6 @@ fn exit_code(err: &HusakoError) -> u8 {
         HusakoError::Dts(_) => 5,
         HusakoError::OpenApi(_) => 6,
         HusakoError::Config(_) => 2,
-        HusakoError::InitIo(_) => 1,
+        HusakoError::GenerateIo(_) => 1,
     }
 }

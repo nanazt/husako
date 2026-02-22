@@ -2,7 +2,7 @@
 
 ## Context
 
-husako had no project-level config file. Schema sources were specified via CLI flags on every `husako init` invocation (`--api-server`, `--spec-dir`), and `husako render` required the full file path to an entry file. This made workflows verbose and non-reproducible.
+husako had no project-level config file. Schema sources were specified via CLI flags on every `husako generate` invocation (`--api-server`, `--spec-dir`), and `husako render` required the full file path to an entry file. This made workflows verbose and non-reproducible.
 
 This plan adds `husako.toml` — a project config file (like Cargo.toml) that provides:
 1. **Entry aliases**: `husako render dev-1` instead of `husako render env/dev-1.ts`
@@ -10,14 +10,14 @@ This plan adds `husako.toml` — a project config file (like Cargo.toml) that pr
 
 ## Design Decisions
 
-- `husako.toml` is created by `husako new` only (not `husako init`)
+- `husako.toml` is created by `husako new` only (not `husako generate`)
 - Entry aliases are explicit mappings (not pattern-based)
 - **Unified source model**: All schema entries require explicit `source` key (no magic defaults)
 - 4 source types: `release`, `cluster`, `git`, `file`
 - **Cluster config**: `[cluster]` for single, `[clusters.*]` for multiple — separated from `[schemas]`
 - **Kubeconfig auto-detection**: Credentials from `~/.kube/` files (no subdirectories), matched by server URL
 - CRD sources parse Kubernetes CRD YAML manifests (`spec.versions[].schema.openAPIV3Schema`)
-- `husako.toml` is the source of truth for `husako init`; CLI flags become overrides
+- `husako.toml` is the source of truth for `husako generate`; CLI flags become overrides
 - **No lock file**: Pinned sources (release+version, git+tag) are already deterministic. Mutable sources (cluster) are intentionally mutable.
 
 ## TOML Format
@@ -74,7 +74,7 @@ schema_source::resolve_all(config)
                     husako_dts::generate()
 ```
 
-**`init()` priority**:
+**`generate()` priority**:
 1. `--skip-k8s` → skip all schema generation
 2. CLI `--api-server`/`--spec-dir` → legacy mode (backward compat)
 3. `husako.toml` `[schemas]` → config-driven mode via `schema_source::resolve_all()`
@@ -204,9 +204,9 @@ Each `husako new` template includes `husako.toml` with appropriate `[entries]` a
 ### Modified
 - `Cargo.toml` — workspace deps (`toml`, `serde_yaml_ng`) + members
 - `crates/husako-cli/Cargo.toml` — add `husako-config` dep
-- `crates/husako-cli/src/main.rs` — load config, resolve aliases, pass to `InitOptions`
+- `crates/husako-cli/src/main.rs` — load config, resolve aliases, pass to `GenerateOptions`
 - `crates/husako-core/Cargo.toml` — add `husako-config` + `tempfile` deps
-- `crates/husako-core/src/lib.rs` — `schema_source` module, `InitOptions.config`, config-driven `init()`
+- `crates/husako-core/src/lib.rs` — `schema_source` module, `GenerateOptions.config`, config-driven `generate()`
 - `crates/husako-openapi/Cargo.toml` — add `serde_yaml_ng`
 - `crates/husako-openapi/src/lib.rs` — `pub mod crd, kubeconfig, release` + error variants
 - `crates/husako-sdk/src/lib.rs` — template config constants

@@ -24,8 +24,8 @@ pub enum HusakoError {
     Config(#[from] husako_config::ConfigError),
     #[error("{0}")]
     Validation(String),
-    #[error("init I/O error: {0}")]
-    InitIo(String),
+    #[error("generate I/O error: {0}")]
+    GenerateIo(String),
 }
 
 pub struct RenderOptions {
@@ -138,7 +138,7 @@ pub fn load_schema_store(project_root: &Path) -> Option<validate::SchemaStore> {
     validate::load_schema_store(project_root)
 }
 
-pub struct InitOptions {
+pub struct GenerateOptions {
     pub project_root: PathBuf,
     /// CLI override for OpenAPI source (legacy mode).
     pub openapi: Option<husako_openapi::FetchOptions>,
@@ -147,7 +147,7 @@ pub struct InitOptions {
     pub config: Option<husako_config::HusakoConfig>,
 }
 
-pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
+pub fn generate(options: &GenerateOptions) -> Result<(), HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
 
     // 1. Write static husako.d.ts
@@ -213,11 +213,12 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
 
 fn write_file(path: &std::path::Path, content: &str) -> Result<(), HusakoError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| HusakoError::InitIo(format!("create dir {}: {e}", parent.display())))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            HusakoError::GenerateIo(format!("create dir {}: {e}", parent.display()))
+        })?;
     }
     std::fs::write(path, content)
-        .map_err(|e| HusakoError::InitIo(format!("write {}: {e}", path.display())))
+        .map_err(|e| HusakoError::GenerateIo(format!("write {}: {e}", path.display())))
 }
 
 fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
@@ -230,8 +231,9 @@ fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
     });
 
     let config = if tsconfig_path.exists() {
-        let content = std::fs::read_to_string(&tsconfig_path)
-            .map_err(|e| HusakoError::InitIo(format!("read {}: {e}", tsconfig_path.display())))?;
+        let content = std::fs::read_to_string(&tsconfig_path).map_err(|e| {
+            HusakoError::GenerateIo(format!("read {}: {e}", tsconfig_path.display()))
+        })?;
 
         match serde_json::from_str::<serde_json::Value>(&content) {
             Ok(mut root) => {
@@ -269,10 +271,10 @@ fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
     };
 
     let formatted = serde_json::to_string_pretty(&config)
-        .map_err(|e| HusakoError::InitIo(format!("serialize tsconfig.json: {e}")))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("serialize tsconfig.json: {e}")))?;
 
     std::fs::write(&tsconfig_path, formatted + "\n")
-        .map_err(|e| HusakoError::InitIo(format!("write {}: {e}", tsconfig_path.display())))
+        .map_err(|e| HusakoError::GenerateIo(format!("write {}: {e}", tsconfig_path.display())))
 }
 
 // --- husako new ---
@@ -320,11 +322,11 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
     // Reject non-empty existing directories
     if dir.exists() {
         let is_empty = std::fs::read_dir(dir)
-            .map_err(|e| HusakoError::InitIo(format!("read dir {}: {e}", dir.display())))?
+            .map_err(|e| HusakoError::GenerateIo(format!("read dir {}: {e}", dir.display())))?
             .next()
             .is_none();
         if !is_empty {
-            return Err(HusakoError::InitIo(format!(
+            return Err(HusakoError::GenerateIo(format!(
                 "directory '{}' is not empty",
                 dir.display()
             )));
@@ -333,7 +335,7 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
 
     // Create directory
     std::fs::create_dir_all(dir)
-        .map_err(|e| HusakoError::InitIo(format!("create dir {}: {e}", dir.display())))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("create dir {}: {e}", dir.display())))?;
 
     // Write .gitignore (shared across all templates)
     write_file(&dir.join(".gitignore"), husako_sdk::TEMPLATE_GITIGNORE)?;
@@ -455,17 +457,17 @@ mod tests {
     }
 
     #[test]
-    fn init_skip_k8s_writes_static_dts() {
+    fn generate_skip_k8s_writes_static_dts() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
 
-        let opts = InitOptions {
+        let opts = GenerateOptions {
             project_root: root.clone(),
             openapi: None,
             skip_k8s: true,
             config: None,
         };
-        init(&opts).unwrap();
+        generate(&opts).unwrap();
 
         // Check static .d.ts files exist
         assert!(root.join(".husako/types/husako.d.ts").exists());
@@ -482,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn init_updates_existing_tsconfig() {
+    fn generate_updates_existing_tsconfig() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
 
@@ -503,13 +505,13 @@ mod tests {
         )
         .unwrap();
 
-        let opts = InitOptions {
+        let opts = GenerateOptions {
             project_root: root.clone(),
             openapi: None,
             skip_k8s: true,
             config: None,
         };
-        init(&opts).unwrap();
+        generate(&opts).unwrap();
 
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
@@ -617,7 +619,7 @@ mod tests {
             template: TemplateName::Simple,
         };
         let err = scaffold(&opts).unwrap_err();
-        assert!(matches!(err, HusakoError::InitIo(_)));
+        assert!(matches!(err, HusakoError::GenerateIo(_)));
         assert!(err.to_string().contains("not empty"));
     }
 

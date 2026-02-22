@@ -529,14 +529,14 @@ export class ConfigMap extends _ResourceBuilder {
     // --- Milestone 8: Dynamic resources ---
 
     #[test]
-    fn k8s_import_without_init_fails() {
+    fn k8s_import_without_generate_fails() {
         let js = r#"
             import { build } from "husako";
             import { Deployment } from "k8s/apps/v1";
             build([new Deployment()]);
         "#;
         let err = execute(js, &test_options()).unwrap_err();
-        assert!(err.to_string().contains("husako init"));
+        assert!(err.to_string().contains("husako generate"));
     }
 
     #[test]

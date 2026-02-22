@@ -677,15 +677,15 @@ build([{ _render() { return {
         .success();
 }
 
-// --- Milestone 5: Type Generation + husako init ---
+// --- Milestone 5: Type Generation + husako generate ---
 
 #[test]
-fn init_skip_k8s() {
+fn generate_skip_k8s() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
     husako_at(root)
-        .args(["init", "--skip-k8s"])
+        .args(["generate", "--skip-k8s"])
         .assert()
         .success();
 
@@ -814,7 +814,7 @@ fn write_schema_store(root: &Path) {
 }
 
 #[test]
-fn init_spec_dir() {
+fn generate_spec_dir() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -824,7 +824,7 @@ fn init_spec_dir() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -852,7 +852,7 @@ fn init_spec_dir() {
 }
 
 #[test]
-fn init_updates_existing_tsconfig() {
+fn generate_updates_existing_tsconfig() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -874,7 +874,7 @@ fn init_updates_existing_tsconfig() {
     .unwrap();
 
     husako_at(root)
-        .args(["init", "--skip-k8s"])
+        .args(["generate", "--skip-k8s"])
         .assert()
         .success();
 
@@ -1136,7 +1136,7 @@ build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { n
 }
 
 #[test]
-fn init_generates_schema_json() {
+fn generate_creates_schema_json() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -1145,7 +1145,7 @@ fn init_generates_schema_json() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1172,7 +1172,7 @@ fn new_simple_creates_project() {
         .assert()
         .success()
         .stderr(predicates::str::contains("Created 'simple' project"))
-        .stderr(predicates::str::contains("husako init"));
+        .stderr(predicates::str::contains("husako generate"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1320,7 +1320,7 @@ fn new_then_render_multi_env() {
 // --- Milestone 8 (Dynamic K8s Resources): New tests ---
 
 #[test]
-fn render_k8s_import_without_init() {
+fn render_k8s_import_without_generate() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -1339,11 +1339,11 @@ build([deployment()]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .code(4)
-        .stderr(predicates::str::contains("husako init"));
+        .stderr(predicates::str::contains("husako generate"));
 }
 
 #[test]
-fn init_generates_js_modules() {
+fn generate_creates_js_modules() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
@@ -1352,7 +1352,7 @@ fn init_generates_js_modules() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1369,13 +1369,13 @@ fn render_with_generated_modules() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    // Generate via husako init
+    // Generate via husako generate
     let spec_dir = root.join("specs");
     std::fs::create_dir_all(&spec_dir).unwrap();
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 

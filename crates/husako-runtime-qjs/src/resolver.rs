@@ -26,7 +26,7 @@ impl rquickjs::loader::Resolver for HusakoK8sResolver {
             return Err(Error::new_resolving_message(
                 base,
                 name,
-                "k8s modules require 'husako init' to be run first".to_string(),
+                "k8s modules require 'husako generate' to be run first".to_string(),
             ));
         };
 
@@ -39,7 +39,7 @@ impl rquickjs::loader::Resolver for HusakoK8sResolver {
                 base,
                 name,
                 format!(
-                    "module '{}' not found. Run 'husako init' to generate k8s modules",
+                    "module '{}' not found. Run 'husako generate' to generate k8s modules",
                     name
                 ),
             ))

@@ -312,14 +312,14 @@ Acceptance:
 
 - integration test using local mock HTTP server proves cache reuse + offline mode
 
-### Milestone 5 — Type generation + `husako init`
+### Milestone 5 — Type generation + `husako generate`
 
 Deliver:
 
 - generate `.d.ts` for:
   - `"husako"` module
   - `"k8s/<group>/<version>"` modules
-- `husako init` writes/updates `tsconfig.json` paths to `.husako/types/`
+- `husako generate` writes/updates `tsconfig.json` paths to `.husako/types/`
 
 Acceptance:
 
@@ -431,8 +431,8 @@ If binary size matters:
 
 ### M13b+M13c: Schema source resolution (**DONE**)
 
-- `husako init` reads `[schemas]` from `husako.toml` (config-driven mode)
-- Init priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip
+- `husako generate` reads `[schemas]` from `husako.toml` (config-driven mode)
+- Generate priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip
 - `source = "file"`: CRD YAML → OpenAPI JSON converter (`crd.rs`), nested schema extraction, reverse-domain naming
 - `source = "cluster"`: kubeconfig auto-detection from `~/.kube/` files, bearer token extraction, matched by server URL
 - `source = "release"`: download OpenAPI specs from kubernetes/kubernetes GitHub releases, tag-based deterministic cache
@@ -441,6 +441,16 @@ If binary size matters:
 - 28 new tests, total 270
 
 See `.claude/plans/m13-husako-toml.md` for detailed design.
+
+## 14) Milestone 14 — Rename `init` → `generate` (**DONE**)
+
+- Renamed `init` subcommand to `generate` with `gen` alias
+- `InitOptions` → `GenerateOptions`, `init()` → `generate()`, `HusakoError::InitIo` → `GenerateIo`
+- Updated error messages: `"husako init"` → `"husako generate"` in resolver hints
+- Updated all integration tests, E2E tests, documentation (CLAUDE.md, README.md)
+- `husako init` now shows "unrecognized subcommand"
+
+See `.claude/plans/m14-rename-generate.md` for detailed design.
 
 ---
 

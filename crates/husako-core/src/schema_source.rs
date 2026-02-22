@@ -46,7 +46,7 @@ fn resolve_file(path: &str, project_root: &Path) -> Result<HashMap<String, Value
     let resolved = project_root.join(path);
 
     if !resolved.exists() {
-        return Err(HusakoError::InitIo(format!(
+        return Err(HusakoError::GenerateIo(format!(
             "schema source path not found: {}",
             resolved.display()
         )));
@@ -56,7 +56,7 @@ fn resolve_file(path: &str, project_root: &Path) -> Result<HashMap<String, Value
         read_crd_directory(&resolved)?
     } else {
         std::fs::read_to_string(&resolved)
-            .map_err(|e| HusakoError::InitIo(format!("read {}: {e}", resolved.display())))?
+            .map_err(|e| HusakoError::GenerateIo(format!("read {}: {e}", resolved.display())))?
     };
 
     let openapi = husako_openapi::crd::crd_yaml_to_openapi(&yaml)?;
@@ -69,7 +69,7 @@ fn resolve_file(path: &str, project_root: &Path) -> Result<HashMap<String, Value
 fn read_crd_directory(dir: &Path) -> Result<String, HusakoError> {
     let mut parts = Vec::new();
     let entries = std::fs::read_dir(dir)
-        .map_err(|e| HusakoError::InitIo(format!("read dir {}: {e}", dir.display())))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("read dir {}: {e}", dir.display())))?;
 
     let mut paths: Vec<_> = entries
         .filter_map(|e| e.ok())
@@ -83,12 +83,12 @@ fn read_crd_directory(dir: &Path) -> Result<String, HusakoError> {
 
     for path in paths {
         let content = std::fs::read_to_string(&path)
-            .map_err(|e| HusakoError::InitIo(format!("read {}: {e}", path.display())))?;
+            .map_err(|e| HusakoError::GenerateIo(format!("read {}: {e}", path.display())))?;
         parts.push(content);
     }
 
     if parts.is_empty() {
-        return Err(HusakoError::InitIo(format!(
+        return Err(HusakoError::GenerateIo(format!(
             "no .yaml/.yml files found in {}",
             dir.display()
         )));
@@ -104,7 +104,7 @@ fn crd_openapi_to_specs(openapi: &Value) -> Result<HashMap<String, Value>, Husak
     let schemas = openapi
         .pointer("/components/schemas")
         .and_then(Value::as_object)
-        .ok_or_else(|| HusakoError::InitIo("invalid CRD OpenAPI output".to_string()))?;
+        .ok_or_else(|| HusakoError::GenerateIo("invalid CRD OpenAPI output".to_string()))?;
 
     // Group schemas by their discovery key (derived from GVK)
     let mut grouped: HashMap<String, serde_json::Map<String, Value>> = HashMap::new();
@@ -185,19 +185,20 @@ fn resolve_cluster(
     cluster_name: Option<&str>,
     cache_dir: &Path,
 ) -> Result<HashMap<String, Value>, HusakoError> {
-    let server = if let Some(name) = cluster_name {
-        config
-            .clusters
-            .get(name)
-            .map(|c| &c.server)
-            .ok_or_else(|| HusakoError::InitIo(format!("cluster '{name}' not found in config")))?
-    } else {
-        config
-            .cluster
-            .as_ref()
-            .map(|c| &c.server)
-            .ok_or_else(|| HusakoError::InitIo("no [cluster] section in config".to_string()))?
-    };
+    let server =
+        if let Some(name) = cluster_name {
+            config
+                .clusters
+                .get(name)
+                .map(|c| &c.server)
+                .ok_or_else(|| {
+                    HusakoError::GenerateIo(format!("cluster '{name}' not found in config"))
+                })?
+        } else {
+            config.cluster.as_ref().map(|c| &c.server).ok_or_else(|| {
+                HusakoError::GenerateIo("no [cluster] section in config".to_string())
+            })?
+        };
 
     let creds = husako_openapi::kubeconfig::resolve_credentials(server)?;
 
@@ -236,8 +237,8 @@ fn resolve_git(
     }
 
     // Clone repo at specific tag
-    let temp_dir =
-        tempfile::tempdir().map_err(|e| HusakoError::InitIo(format!("create temp dir: {e}")))?;
+    let temp_dir = tempfile::tempdir()
+        .map_err(|e| HusakoError::GenerateIo(format!("create temp dir: {e}")))?;
 
     let status = std::process::Command::new("git")
         .args(["clone", "--depth", "1", "--branch", tag, repo])
@@ -245,10 +246,10 @@ fn resolve_git(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .status()
-        .map_err(|e| HusakoError::InitIo(format!("git clone failed: {e}")))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("git clone failed: {e}")))?;
 
     if !status.success() {
-        return Err(HusakoError::InitIo(format!(
+        return Err(HusakoError::GenerateIo(format!(
             "git clone {repo} at tag {tag} failed (exit {})",
             status.code().unwrap_or(-1)
         )));
@@ -257,7 +258,7 @@ fn resolve_git(
     // Read CRD YAML files
     let crd_dir = temp_dir.path().join(path);
     if !crd_dir.exists() {
-        return Err(HusakoError::InitIo(format!(
+        return Err(HusakoError::GenerateIo(format!(
             "path '{path}' not found in repository"
         )));
     }
@@ -268,7 +269,7 @@ fn resolve_git(
 
     // Cache the converted specs
     std::fs::create_dir_all(&git_cache)
-        .map_err(|e| HusakoError::InitIo(format!("create cache dir: {e}")))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("create cache dir: {e}")))?;
     for (key, spec) in &specs {
         let filename = key.replace('/', "__") + ".json";
         let _ = std::fs::write(
@@ -283,18 +284,18 @@ fn resolve_git(
 fn load_git_cache(cache_dir: &Path) -> Result<HashMap<String, Value>, HusakoError> {
     let mut specs = HashMap::new();
     let entries = std::fs::read_dir(cache_dir)
-        .map_err(|e| HusakoError::InitIo(format!("read cache dir: {e}")))?;
+        .map_err(|e| HusakoError::GenerateIo(format!("read cache dir: {e}")))?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| HusakoError::InitIo(format!("read entry: {e}")))?;
+        let entry = entry.map_err(|e| HusakoError::GenerateIo(format!("read entry: {e}")))?;
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "json") {
             let filename = path.file_stem().unwrap().to_string_lossy();
             let key = filename.replace("__", "/");
             let data = std::fs::read_to_string(&path)
-                .map_err(|e| HusakoError::InitIo(format!("read {}: {e}", path.display())))?;
+                .map_err(|e| HusakoError::GenerateIo(format!("read {}: {e}", path.display())))?;
             let spec: Value = serde_json::from_str(&data)
-                .map_err(|e| HusakoError::InitIo(format!("parse {}: {e}", path.display())))?;
+                .map_err(|e| HusakoError::GenerateIo(format!("parse {}: {e}", path.display())))?;
             specs.insert(key, spec);
         }
     }

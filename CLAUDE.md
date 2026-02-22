@@ -151,7 +151,7 @@ Project-level configuration file created by `husako new`. Supports:
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
-The `Init` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip.
+The `Generate` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip.
 
 ## Design Documents
 

@@ -46,9 +46,9 @@ fn e2e_render_deployment_from_real_specs() {
     let spec_dir = root.join("specs");
     copy_fixture("k8s", &spec_dir);
 
-    // Run husako init with the real specs
+    // Run husako generate with the real specs
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -104,9 +104,9 @@ fn e2e_render_cnpg_cluster() {
     let spec_dir = root.join("specs");
     copy_fixture("crds/cnpg", &spec_dir);
 
-    // Run husako init
+    // Run husako generate
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -155,7 +155,7 @@ fn e2e_render_cert_manager_certificate() {
     copy_fixture("crds/cert-manager", &spec_dir);
 
     husako_at(root)
-        .args(["init", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
