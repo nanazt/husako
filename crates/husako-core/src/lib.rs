@@ -249,6 +249,9 @@ fn write_tsconfig(project_root: &std::path::Path) -> Result<(), HusakoError> {
                     .and_then(|co| co.as_object_mut());
 
                 if let Some(co) = compiler_options {
+                    co.entry("baseUrl")
+                        .or_insert_with(|| serde_json::json!("."));
+
                     let paths = co.entry("paths").or_insert_with(|| serde_json::json!({}));
                     if let Some(paths_obj) = paths.as_object_mut()
                         && let Some(husako_obj) = husako_paths.as_object()
@@ -407,6 +410,7 @@ fn new_tsconfig(husako_paths: serde_json::Value) -> serde_json::Value {
             "strict": true,
             "module": "ESNext",
             "moduleResolution": "bundler",
+            "baseUrl": ".",
             "paths": husako_paths
         }
     })
