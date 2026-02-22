@@ -12,6 +12,7 @@ husako-openapi = { path = "../husako-openapi" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs" }
 clap.workspace = true
 dialoguer.workspace = true
+fuzzy-matcher.workspace = true
 console.workspace = true
 indicatif.workspace = true
 

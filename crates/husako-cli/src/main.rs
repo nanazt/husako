@@ -1,5 +1,9 @@
 mod interactive;
 mod progress;
+mod search_select;
+mod style;
+mod text_input;
+mod theme;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -13,6 +17,10 @@ use crate::progress::IndicatifReporter;
 #[derive(Parser)]
 #[command(name = "husako", version)]
 struct Cli {
+    /// Skip confirmation prompts
+    #[arg(long, short = 'y', global = true)]
+    yes: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -203,7 +211,7 @@ fn main() -> ExitCode {
             let resolved = match resolve_entry(&file, &project_root) {
                 Ok(p) => p,
                 Err(msg) => {
-                    eprintln!("error: {msg}");
+                    eprintln!("{} {msg}", style::error_prefix());
                     return ExitCode::from(2);
                 }
             };
@@ -211,7 +219,11 @@ fn main() -> ExitCode {
             let source = match std::fs::read_to_string(&resolved) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: could not read {}: {e}", resolved.display());
+                    eprintln!(
+                        "{} could not read {}: {e}",
+                        style::error_prefix(),
+                        resolved.display()
+                    );
                     return ExitCode::from(1);
                 }
             };
@@ -219,7 +231,11 @@ fn main() -> ExitCode {
             let abs_file = match resolved.canonicalize() {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("error: could not resolve {}: {e}", resolved.display());
+                    eprintln!(
+                        "{} could not resolve {}: {e}",
+                        style::error_prefix(),
+                        resolved.display()
+                    );
                     return ExitCode::from(1);
                 }
             };
@@ -242,7 +258,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -277,7 +293,7 @@ fn main() -> ExitCode {
             let config = match husako_config::load(&project_root) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     return ExitCode::from(2);
                 }
             };
@@ -292,7 +308,7 @@ fn main() -> ExitCode {
             match husako_core::generate(&options, &progress) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -308,7 +324,12 @@ fn main() -> ExitCode {
 
             match husako_core::scaffold(&options) {
                 Ok(()) => {
-                    eprintln!("Created '{}' project in {}", template, directory.display());
+                    eprintln!(
+                        "{} Created '{}' project in {}",
+                        style::check_mark(),
+                        template,
+                        directory.display()
+                    );
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  cd {}", directory.display());
@@ -316,7 +337,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -332,14 +353,17 @@ fn main() -> ExitCode {
 
             match husako_core::init(&options) {
                 Ok(()) => {
-                    eprintln!("Created '{template}' project in current directory");
+                    eprintln!(
+                        "{} Created '{template}' project in current directory",
+                        style::check_mark()
+                    );
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  husako generate");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -356,11 +380,28 @@ fn main() -> ExitCode {
                 match interactive::prompt_clean() {
                     Ok(result) => result,
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        eprintln!("{} {e}", style::error_prefix());
                         return ExitCode::from(1);
                     }
                 }
             };
+
+            if !cli.yes {
+                let targets = match (do_cache, do_types) {
+                    (true, true) => "cache and types",
+                    (true, false) => "cache",
+                    (false, true) => "types",
+                    _ => unreachable!(),
+                };
+                match interactive::confirm(&format!("Remove {targets}?")) {
+                    Ok(true) => {}
+                    Ok(false) => return ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("{} {e}", style::error_prefix());
+                        return ExitCode::from(1);
+                    }
+                }
+            }
 
             let options = husako_core::CleanOptions {
                 project_root,
@@ -372,13 +413,15 @@ fn main() -> ExitCode {
                 Ok(result) => {
                     if result.cache_removed {
                         eprintln!(
-                            "Removed .husako/cache/ ({})",
+                            "{} Removed .husako/cache/ ({})",
+                            style::check_mark(),
                             format_size(result.cache_size)
                         );
                     }
                     if result.types_removed {
                         eprintln!(
-                            "Removed .husako/types/ ({})",
+                            "{} Removed .husako/types/ ({})",
+                            style::check_mark(),
                             format_size(result.types_size)
                         );
                     }
@@ -388,7 +431,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -402,17 +445,17 @@ fn main() -> ExitCode {
                     let show_charts = !resources || charts;
 
                     if show_resources && !deps.resources.is_empty() {
-                        eprintln!("Resources:");
+                        eprintln!("{}", style::bold("Resources:"));
                         for dep in &deps.resources {
                             eprintln!(
                                 "  {:<16} {:<12} {:<10}{}",
-                                dep.name,
+                                style::dep_name(&dep.name),
                                 dep.source_type,
                                 dep.version.as_deref().unwrap_or("-"),
                                 if dep.details.is_empty() {
                                     String::new()
                                 } else {
-                                    format!("  {}", dep.details)
+                                    format!("  {}", style::dim(&dep.details))
                                 }
                             );
                         }
@@ -422,17 +465,17 @@ fn main() -> ExitCode {
                         if show_resources && !deps.resources.is_empty() {
                             eprintln!();
                         }
-                        eprintln!("Charts:");
+                        eprintln!("{}", style::bold("Charts:"));
                         for dep in &deps.charts {
                             eprintln!(
                                 "  {:<16} {:<12} {:<10}{}",
-                                dep.name,
+                                style::dep_name(&dep.name),
                                 dep.source_type,
                                 dep.version.as_deref().unwrap_or("-"),
                                 if dep.details.is_empty() {
                                     String::new()
                                 } else {
-                                    format!("  {}", dep.details)
+                                    format!("  {}", style::dim(&dep.details))
                                 }
                             );
                         }
@@ -445,7 +488,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -466,11 +509,34 @@ fn main() -> ExitCode {
         } => {
             let project_root = cwd();
 
-            let target = if let (Some(dep_name), Some(src)) = (name, source) {
+            let target = if let Some(src) = source {
                 // Non-interactive mode
                 if chart {
+                    // For charts, derive name from chart_name or package if not provided
+                    let dep_name = name
+                        .or_else(|| chart_name.clone())
+                        .or_else(|| {
+                            package
+                                .as_deref()
+                                .and_then(|p| p.rsplit('/').next())
+                                .map(String::from)
+                        });
+                    let Some(dep_name) = dep_name else {
+                        eprintln!(
+                            "{} name is required (provide as positional arg, or use --chart-name / --package)",
+                            style::error_prefix()
+                        );
+                        return ExitCode::from(2);
+                    };
                     build_chart_target(dep_name, src, version, repo, tag, path, chart_name, package)
                 } else {
+                    let Some(dep_name) = name else {
+                        eprintln!(
+                            "{} name is required for resource dependencies",
+                            style::error_prefix()
+                        );
+                        return ExitCode::from(2);
+                    };
                     build_resource_target(dep_name, src, version, repo, tag, path)
                 }
             } else {
@@ -485,16 +551,20 @@ fn main() -> ExitCode {
                             husako_core::AddTarget::Resource { name, .. } => (name, "resources"),
                             husako_core::AddTarget::Chart { name, .. } => (name, "charts"),
                         };
-                        eprintln!("Added '{dep_name}' to [{section}]");
+                        eprintln!(
+                            "{} Added {} to [{section}]",
+                            style::check_mark(),
+                            style::dep_name(dep_name)
+                        );
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        eprintln!("{} {e}", style::error_prefix());
                         ExitCode::from(exit_code(&e))
                     }
                 },
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(1)
                 }
             }
@@ -502,8 +572,8 @@ fn main() -> ExitCode {
         Commands::Remove { name } => {
             let project_root = cwd();
 
-            let dep_name = if let Some(n) = name {
-                n
+            let (dep_name, from_cli) = if let Some(n) = name {
+                (n, true)
             } else {
                 // Interactive mode: list deps and let user choose
                 match husako_core::list_dependencies(&project_root) {
@@ -517,27 +587,44 @@ fn main() -> ExitCode {
                         }
 
                         match interactive::prompt_remove(&items) {
-                            Ok(n) => n,
+                            Ok(n) => (n, false),
                             Err(e) => {
-                                eprintln!("error: {e}");
+                                eprintln!("{} {e}", style::error_prefix());
                                 return ExitCode::from(1);
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        eprintln!("{} {e}", style::error_prefix());
                         return ExitCode::from(exit_code(&e));
                     }
                 }
             };
 
+            // Confirm removal only in CLI mode (not interactive, user already chose)
+            if from_cli && !cli.yes {
+                match interactive::confirm(&format!("Remove '{dep_name}'?")) {
+                    Ok(true) => {}
+                    Ok(false) => return ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("{} {e}", style::error_prefix());
+                        return ExitCode::from(1);
+                    }
+                }
+            }
+
             match husako_core::remove_dependency(&project_root, &dep_name) {
                 Ok(result) => {
-                    eprintln!("Removed '{}' from [{}]", result.name, result.section);
+                    eprintln!(
+                        "{} Removed {} from [{}]",
+                        style::check_mark(),
+                        style::dep_name(&result.name),
+                        result.section
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -561,16 +648,25 @@ fn main() -> ExitCode {
                     );
                     for entry in &entries {
                         let latest = entry.latest.as_deref().unwrap_or("?");
-                        let mark = if entry.up_to_date { " \u{2713}" } else { "" };
+                        let mark = if entry.up_to_date {
+                            format!(" {}", style::check_mark())
+                        } else {
+                            String::new()
+                        };
                         eprintln!(
                             "{:<16} {:<10} {:<12} {:<10} {:<10}{}",
-                            entry.name, entry.kind, entry.source_type, entry.current, latest, mark,
+                            style::dep_name(&entry.name),
+                            entry.kind,
+                            entry.source_type,
+                            entry.current,
+                            latest,
+                            mark,
                         );
                     }
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -599,15 +695,24 @@ fn main() -> ExitCode {
                     for entry in &result.updated {
                         let prefix = if dry_run { "Would update" } else { "Updated" };
                         eprintln!(
-                            "{prefix} {}: {} \u{2192} {} ({})",
-                            entry.name, entry.old_version, entry.new_version, entry.kind
+                            "{} {prefix} {}: {} {} {} ({})",
+                            style::check_mark(),
+                            style::dep_name(&entry.name),
+                            entry.old_version,
+                            style::arrow_mark(),
+                            entry.new_version,
+                            entry.kind
                         );
                     }
                     for name in &result.skipped {
-                        eprintln!("{name}: up to date");
+                        eprintln!(
+                            "{} {}: up to date",
+                            style::check_mark(),
+                            style::dep_name(name)
+                        );
                     }
                     for (name, err) in &result.failed {
-                        eprintln!("{name}: {err}");
+                        eprintln!("{} {}: {err}", style::cross_mark(), style::dep_name(name));
                     }
                     if result.updated.is_empty()
                         && result.skipped.is_empty()
@@ -618,7 +723,7 @@ fn main() -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -631,7 +736,11 @@ fn main() -> ExitCode {
             if let Some(dep_name) = name {
                 match husako_core::dependency_detail(&project_root, &dep_name) {
                     Ok(detail) => {
-                        eprintln!("{} ({})", detail.info.name, detail.info.source_type);
+                        eprintln!(
+                            "{} ({})",
+                            style::dep_name(&detail.info.name),
+                            detail.info.source_type
+                        );
                         if let Some(ref v) = detail.info.version {
                             eprintln!("  Version:    {v}");
                         }
@@ -660,7 +769,7 @@ fn main() -> ExitCode {
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        eprintln!("{} {e}", style::error_prefix());
                         ExitCode::from(exit_code(&e))
                     }
                 }
@@ -679,11 +788,11 @@ fn main() -> ExitCode {
                         eprintln!();
 
                         if !summary.resources.is_empty() {
-                            eprintln!("Resources ({}):", summary.resources.len());
+                            eprintln!("{}", style::bold(&format!("Resources ({}):", summary.resources.len())));
                             for dep in &summary.resources {
                                 eprintln!(
                                     "  {:<16} {:<12} {}",
-                                    dep.name,
+                                    style::dep_name(&dep.name),
                                     dep.source_type,
                                     dep.version.as_deref().unwrap_or("-")
                                 );
@@ -692,11 +801,11 @@ fn main() -> ExitCode {
                         }
 
                         if !summary.charts.is_empty() {
-                            eprintln!("Charts ({}):", summary.charts.len());
+                            eprintln!("{}", style::bold(&format!("Charts ({}):", summary.charts.len())));
                             for dep in &summary.charts {
                                 eprintln!(
                                     "  {:<16} {:<12} {}",
-                                    dep.name,
+                                    style::dep_name(&dep.name),
                                     dep.source_type,
                                     dep.version.as_deref().unwrap_or("-")
                                 );
@@ -717,7 +826,7 @@ fn main() -> ExitCode {
                         ExitCode::SUCCESS
                     }
                     Err(e) => {
-                        eprintln!("error: {e}");
+                        eprintln!("{} {e}", style::error_prefix());
                         ExitCode::from(exit_code(&e))
                     }
                 }
@@ -729,51 +838,64 @@ fn main() -> ExitCode {
             match husako_core::debug_project(&project_root) {
                 Ok(report) => {
                     match report.config_ok {
-                        Some(true) => eprintln!("\u{2713} husako.toml found and valid"),
-                        Some(false) => eprintln!("\u{2717} husako.toml has errors"),
-                        None => eprintln!("\u{2717} husako.toml not found"),
+                        Some(true) => {
+                            eprintln!("{} husako.toml found and valid", style::check_mark())
+                        }
+                        Some(false) => {
+                            eprintln!("{} husako.toml has errors", style::cross_mark())
+                        }
+                        None => eprintln!("{} husako.toml not found", style::cross_mark()),
                     }
 
                     if report.types_exist {
                         eprintln!(
-                            "\u{2713} .husako/types/ exists ({} type files)",
+                            "{} .husako/types/ exists ({} type files)",
+                            style::check_mark(),
                             report.type_file_count
                         );
                     } else {
-                        eprintln!("\u{2717} .husako/types/ directory not found");
+                        eprintln!("{} .husako/types/ directory not found", style::cross_mark());
                     }
 
                     if report.tsconfig_ok {
                         if report.tsconfig_has_paths {
-                            eprintln!("\u{2713} tsconfig.json has husako path mappings");
+                            eprintln!(
+                                "{} tsconfig.json has husako path mappings",
+                                style::check_mark()
+                            );
                         } else {
-                            eprintln!("\u{2717} tsconfig.json is missing husako path mappings");
+                            eprintln!(
+                                "{} tsconfig.json is missing husako path mappings",
+                                style::cross_mark()
+                            );
                         }
                     } else {
-                        eprintln!("\u{2717} tsconfig.json not found or invalid");
+                        eprintln!("{} tsconfig.json not found or invalid", style::cross_mark());
                     }
 
                     if report.stale {
                         eprintln!(
-                            "\u{2717} Types may be stale (husako.toml newer than .husako/types/)"
+                            "{} Types may be stale (husako.toml newer than .husako/types/)",
+                            style::cross_mark()
                         );
                     }
 
                     if report.cache_size > 0 {
                         eprintln!(
-                            "\u{2713} .husako/cache/ exists ({})",
+                            "{} .husako/cache/ exists ({})",
+                            style::check_mark(),
                             format_size(report.cache_size)
                         );
                     }
 
                     for suggestion in &report.suggestions {
-                        eprintln!("  \u{2192} {suggestion}");
+                        eprintln!("  {} {suggestion}", style::arrow_mark());
                     }
 
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
@@ -784,7 +906,7 @@ fn main() -> ExitCode {
             let resolved = match resolve_entry(&file, &project_root) {
                 Ok(p) => p,
                 Err(msg) => {
-                    eprintln!("error: {msg}");
+                    eprintln!("{} {msg}", style::error_prefix());
                     return ExitCode::from(2);
                 }
             };
@@ -792,7 +914,11 @@ fn main() -> ExitCode {
             let source = match std::fs::read_to_string(&resolved) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: could not read {}: {e}", resolved.display());
+                    eprintln!(
+                        "{} could not read {}: {e}",
+                        style::error_prefix(),
+                        resolved.display()
+                    );
                     return ExitCode::from(1);
                 }
             };
@@ -800,7 +926,11 @@ fn main() -> ExitCode {
             let abs_file = match resolved.canonicalize() {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("error: could not resolve {}: {e}", resolved.display());
+                    eprintln!(
+                        "{} could not resolve {}: {e}",
+                        style::error_prefix(),
+                        resolved.display()
+                    );
                     return ExitCode::from(1);
                 }
             };
@@ -819,16 +949,20 @@ fn main() -> ExitCode {
 
             match husako_core::validate_file(&source, &filename, &options) {
                 Ok(result) => {
-                    eprintln!("\u{2713} {} compiles successfully", file);
+                    eprintln!("{} {} compiles successfully", style::check_mark(), file);
                     eprintln!(
-                        "\u{2713} husako.build() called with {} resources",
+                        "{} husako.build() called with {} resources",
+                        style::check_mark(),
                         result.resource_count
                     );
-                    eprintln!("\u{2713} All resources pass schema validation");
+                    eprintln!(
+                        "{} All resources pass schema validation",
+                        style::check_mark()
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    eprintln!("error: {e}");
+                    eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
             }
