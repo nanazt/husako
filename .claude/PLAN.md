@@ -429,18 +429,18 @@ If binary size matters:
 - Template TOML files for all 3 templates (`simple`, `project`, `multi-env`)
 - 24 new tests (15 unit + 9 integration), total 242
 
-### M13b: CRD YAML parsing + file/cluster sources (planned)
+### M13b+M13c: Schema source resolution (**DONE**)
 
-- `husako init` reads `[schemas]` from `husako.toml`
-- `source = "file"`: parse CRD YAML manifests (`spec.versions[].schema.openAPIV3Schema`)
-- `source = "cluster"`: kubeconfig auto-detection from `~/.kube/` files, matched by server URL
+- `husako init` reads `[schemas]` from `husako.toml` (config-driven mode)
+- Init priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip
+- `source = "file"`: CRD YAML → OpenAPI JSON converter (`crd.rs`), nested schema extraction, reverse-domain naming
+- `source = "cluster"`: kubeconfig auto-detection from `~/.kube/` files, bearer token extraction, matched by server URL
+- `source = "release"`: download OpenAPI specs from kubernetes/kubernetes GitHub releases, tag-based deterministic cache
+- `source = "git"`: shallow clone at tag, extract CRD YAML, convert and cache
+- Schema orchestrator (`schema_source.rs`): dispatches all 4 source types, groups CRD schemas by GVK into discovery-keyed specs
+- 28 new tests, total 270
 
-### M13c: K8s GitHub releases + git source (planned)
-
-- `source = "release"`: download OpenAPI specs from kubernetes/kubernetes GitHub releases
-- `source = "git"`: clone repo at tag, extract CRD YAML from specified path
-
-See `.claude/plans/logical-skipping-flask.md` for detailed design.
+See `.claude/plans/m13-husako-toml.md` for detailed design.
 
 ---
 

@@ -37,7 +37,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`), captures `husako.build()` output via Rust-side sink
 3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar
 4. **Emitter** (`husako-yaml`): Converts validated `serde_json::Value` to YAML or JSON output
-5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs
+5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; kubeconfig credential resolution; GitHub release spec download
 6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs
 7. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
 8. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, schema dependencies)
@@ -50,14 +50,20 @@ crates/
 │   └── src/main.rs
 ├── husako-config/         # husako.toml parser (entry aliases, schema deps, cluster config)
 │   └── src/lib.rs
-├── husako-core/           # Pipeline orchestration + validation
-│   └── src/lib.rs
+├── husako-core/           # Pipeline orchestration + validation + schema source resolution
+│   └── src/
+│       ├── lib.rs
+│       └── schema_source.rs
 ├── husako-compile-oxc/    # TS → JS compilation via oxc
 │   └── src/lib.rs
 ├── husako-runtime-qjs/    # QuickJS runner + module loader + build output capture
 │   └── src/lib.rs
-├── husako-openapi/        # OpenAPI v3 fetch + disk cache
-│   └── src/lib.rs
+├── husako-openapi/        # OpenAPI v3 fetch + disk cache + CRD/kubeconfig/release
+│   └── src/
+│       ├── lib.rs
+│       ├── crd.rs          # CRD YAML → OpenAPI JSON conversion
+│       ├── kubeconfig.rs   # Bearer token extraction from ~/.kube/
+│       └── release.rs      # GitHub k8s release spec download + cache
 ├── husako-dts/            # OpenAPI → .d.ts + _validation.json generation
 │   └── src/lib.rs
 ├── husako-yaml/           # JSON → YAML/JSON emitter
@@ -145,14 +151,18 @@ Project-level configuration file created by `husako new`. Supports:
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
+The `Init` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [schemas]` → skip.
+
 ## Design Documents
 
 Read `.claude/*.md` before making changes to related areas. Key documents:
 
 - `.claude/builder-spec.md` — Authoritative reference for the builder DSL rules
-- `.claude/plans/logical-skipping-flask.md` — `husako.toml` config design (M13a/M13b/M13c)
+- `.claude/plans/m13-husako-toml.md` — `husako.toml` config design (M13a/M13b/M13c)
 
 ## Plan Details
 
 Always check `.claude/PLAN.md` before proceeding.
 Before implementing a plan, write the plan document first.
+
+Plan files live in `.claude/plans/` and follow the naming convention `mN-<topic>.md` (e.g., `m13-husako-toml.md`). The `N` matches the milestone number in `PLAN.md`.
