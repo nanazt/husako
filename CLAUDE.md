@@ -53,27 +53,37 @@ crates/
 │   └── src/lib.rs
 ├── husako-core/           # Pipeline orchestration + validation + schema source resolution
 │   └── src/
-│       ├── lib.rs
-│       └── schema_source.rs
+│       ├── lib.rs              # generate(), render(), scaffold(), JSONC tsconfig handling
+│       ├── quantity.rs         # Kubernetes quantity grammar validation
+│       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
+│       └── validate.rs         # JSON Schema validation engine
 ├── husako-compile-oxc/    # TS → JS compilation via oxc
 │   └── src/lib.rs
 ├── husako-runtime-qjs/    # QuickJS runner + module loader + build output capture
-│   └── src/lib.rs
+│   └── src/
+│       ├── lib.rs              # QuickJS runtime, build() capture
+│       ├── loader.rs           # Module loader (compile + resolve chain)
+│       └── resolver.rs         # Import resolvers (builtin, k8s/*, helm/*, file)
 ├── husako-openapi/        # OpenAPI v3 fetch + disk cache + CRD/kubeconfig/release
 │   └── src/
 │       ├── lib.rs
-│       ├── crd.rs          # CRD YAML → OpenAPI JSON conversion
-│       ├── kubeconfig.rs   # Bearer token extraction from ~/.kube/
-│       └── release.rs      # GitHub k8s release spec download + cache
+│       ├── crd.rs              # CRD YAML → OpenAPI JSON conversion
+│       ├── kubeconfig.rs       # Bearer token extraction from ~/.kube/
+│       └── release.rs          # GitHub k8s release spec download + cache
 ├── husako-helm/           # Helm chart values.schema.json resolution (file, registry, artifacthub, git)
 │   └── src/
-│       ├── lib.rs
-│       ├── file.rs         # Local file source
-│       ├── registry.rs     # HTTP Helm repository source
-│       ├── artifacthub.rs  # ArtifactHub API source
-│       └── git.rs          # Git repository source
+│       ├── lib.rs              # Dispatch + cache_hash
+│       ├── file.rs             # Local file source
+│       ├── registry.rs         # HTTP Helm repository source
+│       ├── artifacthub.rs      # ArtifactHub API source
+│       └── git.rs              # Git repository source
 ├── husako-dts/            # OpenAPI → .d.ts + _validation.json generation; JSON Schema → TS for Helm
-│   └── src/lib.rs
+│   └── src/
+│       ├── lib.rs              # OpenAPI → .d.ts + .js generation
+│       ├── emitter.rs          # Code emitter (builders, interfaces, factory functions)
+│       ├── json_schema.rs      # JSON Schema → .d.ts + .js for Helm chart values
+│       ├── schema.rs           # Schema classification and extraction
+│       └── schema_store.rs     # _schema.json generation for validation
 ├── husako-yaml/           # JSON → YAML/JSON emitter
 │   └── src/lib.rs
 └── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
@@ -143,6 +153,7 @@ cargo test -p husako-core test_name
 
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
+- `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
 
 ## Writing Docs
 
@@ -160,7 +171,7 @@ Project-level configuration file created by `husako new`. Supports:
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
-The `Generate` command priority chain: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip.
+The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
 
 ## Design Documents
 

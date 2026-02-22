@@ -267,7 +267,8 @@ fn write_tsconfig(
             HusakoError::GenerateIo(format!("read {}: {e}", tsconfig_path.display()))
         })?;
 
-        match serde_json::from_str::<serde_json::Value>(&content) {
+        let stripped = strip_jsonc(&content);
+        match serde_json::from_str::<serde_json::Value>(&stripped) {
             Ok(mut root) => {
                 // Merge paths into existing compilerOptions
                 let compiler_options = root
@@ -434,6 +435,80 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
     }
 
     Ok(())
+}
+
+/// Strip JSONC features (comments and trailing commas) to produce valid JSON.
+///
+/// tsconfig.json supports JSONC format: `//` line comments, `/* */` block comments,
+/// and trailing commas before `}` or `]`. This function strips those so `serde_json`
+/// can parse the result.
+fn strip_jsonc(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Inside a string literal — copy verbatim (handles escaped quotes)
+        if chars[i] == '"' {
+            out.push('"');
+            i += 1;
+            while i < len {
+                if chars[i] == '\\' && i + 1 < len {
+                    out.push(chars[i]);
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else if chars[i] == '"' {
+                    out.push('"');
+                    i += 1;
+                    break;
+                } else {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            }
+            continue;
+        }
+
+        // Line comment
+        if chars[i] == '/' && i + 1 < len && chars[i + 1] == '/' {
+            i += 2;
+            while i < len && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Block comment
+        if chars[i] == '/' && i + 1 < len && chars[i + 1] == '*' {
+            i += 2;
+            while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            if i + 1 < len {
+                i += 2; // skip */
+            }
+            continue;
+        }
+
+        // Trailing comma: comma followed (ignoring whitespace) by } or ]
+        if chars[i] == ',' {
+            let mut j = i + 1;
+            while j < len && chars[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < len && (chars[j] == '}' || chars[j] == ']') {
+                // Skip the comma, keep whitespace for formatting
+                i += 1;
+                continue;
+            }
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
 }
 
 fn new_tsconfig(husako_paths: serde_json::Value) -> serde_json::Value {
@@ -755,5 +830,110 @@ mod tests {
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
         assert!(parsed["compilerOptions"]["paths"]["helm/*"].is_null());
+    }
+
+    #[test]
+    fn strip_jsonc_line_comments() {
+        let input = r#"{
+  // This is a comment
+  "key": "value" // inline comment
+}"#;
+        let stripped = strip_jsonc(input);
+        let parsed: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(parsed["key"], "value");
+    }
+
+    #[test]
+    fn strip_jsonc_block_comments() {
+        let input = r#"{
+  /* block comment */
+  "key": "value",
+  "other": /* inline block */ "data"
+}"#;
+        let stripped = strip_jsonc(input);
+        let parsed: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(parsed["key"], "value");
+        assert_eq!(parsed["other"], "data");
+    }
+
+    #[test]
+    fn strip_jsonc_trailing_commas() {
+        let input = r#"{
+  "a": 1,
+  "b": [1, 2, 3,],
+}"#;
+        let stripped = strip_jsonc(input);
+        let parsed: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(parsed["a"], 1);
+        assert_eq!(parsed["b"][2], 3);
+    }
+
+    #[test]
+    fn strip_jsonc_preserves_strings_with_slashes() {
+        let input = r#"{"url": "https://example.com", "path": "a//b"}"#;
+        let stripped = strip_jsonc(input);
+        let parsed: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(parsed["url"], "https://example.com");
+        assert_eq!(parsed["path"], "a//b");
+    }
+
+    #[test]
+    fn strip_jsonc_tsc_init_style() {
+        // Simulates the style of tsconfig.json produced by `tsc --init`
+        let input = r#"{
+  "compilerOptions": {
+    /* Visit https://aka.ms/tsconfig to read more */
+    "target": "es2016",
+    // "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+  }
+}"#;
+        let stripped = strip_jsonc(input);
+        let parsed: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(parsed["compilerOptions"]["target"], "es2016");
+        assert_eq!(parsed["compilerOptions"]["strict"], true);
+        // Commented-out module should not appear
+        assert!(parsed["compilerOptions"]["module"].is_null());
+    }
+
+    #[test]
+    fn generate_updates_jsonc_tsconfig() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        // Pre-create tsconfig.json with JSONC features (comments + trailing comma)
+        std::fs::write(
+            root.join("tsconfig.json"),
+            r#"{
+  "compilerOptions": {
+    // TypeScript options
+    "strict": true,
+    "target": "ES2022",
+  }
+}"#,
+        )
+        .unwrap();
+
+        let opts = GenerateOptions {
+            project_root: root.clone(),
+            openapi: None,
+            skip_k8s: true,
+            config: None,
+        };
+        generate(&opts).unwrap();
+
+        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+
+        // Original fields preserved
+        assert_eq!(parsed["compilerOptions"]["target"], "ES2022");
+        assert_eq!(parsed["compilerOptions"]["strict"], true);
+
+        // husako paths added
+        assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
+        assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
     }
 }
