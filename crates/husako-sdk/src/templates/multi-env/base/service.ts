@@ -1,8 +1,8 @@
-import { service } from "k8s/core/v1";
+import { Service } from "k8s/core/v1";
 import { metadata } from "husako";
 
 export function nginxService(ns: string) {
-  return service()
+  return Service()
     .metadata(
       metadata().name("nginx").namespace(ns).label("app", "nginx").label("env", ns)
     )

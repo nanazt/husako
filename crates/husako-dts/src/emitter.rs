@@ -6,8 +6,13 @@ use crate::schema::{PropertyInfo, SchemaInfo, TsType, has_complex_property};
 /// Properties to skip when generating spec property methods on resource builders.
 const RESOURCE_SPEC_SKIP: &[&str] = &["status", "apiVersion", "kind", "metadata"];
 
-/// Convert a class name to its factory function name (first char lowercased).
+/// Resource factory function name matches the class name (PascalCase).
 fn to_factory_name(class_name: &str) -> String {
+    class_name.to_string()
+}
+
+/// Schema builder factory function name (first char lowercased).
+fn to_schema_factory_name(class_name: &str) -> String {
     let mut chars = class_name.chars();
     match chars.next() {
         None => String::new(),
@@ -156,10 +161,9 @@ pub fn emit_builder_class(
     }
     let _ = writeln!(
         out,
-        "export class {} extends _ResourceBuilder {{",
+        "export interface {} extends _ResourceBuilder {{",
         schema.ts_name
     );
-    let _ = writeln!(out, "  constructor();");
 
     // Emit typed .spec() override if there is a spec property with a Ref type
     if let Some(spec_type) = find_spec_type(schema) {
@@ -215,8 +219,8 @@ fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
 
     let _ = writeln!(out, "}}");
 
-    // Factory function declaration
-    let factory = to_factory_name(&schema.ts_name);
+    // Factory function declaration (lowercase for schema builders)
+    let factory = to_schema_factory_name(&schema.ts_name);
     let _ = writeln!(out, "export function {factory}(): {};", schema.ts_name);
 
     out
@@ -236,8 +240,8 @@ fn emit_schema_builder_js(schema: &SchemaInfo) -> String {
 
     let _ = writeln!(out, "}}");
 
-    // Factory function
-    let factory = to_factory_name(&schema.ts_name);
+    // Factory function (lowercase for schema builders)
+    let factory = to_schema_factory_name(&schema.ts_name);
     let _ = writeln!(
         out,
         "export function {factory}() {{ return new {}(); }}\n",
@@ -446,11 +450,7 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
             } else {
                 format!("{}/{}", gvk.group, gvk.version)
             };
-            let _ = writeln!(
-                out,
-                "export class {} extends _ResourceBuilder {{",
-                schema.ts_name
-            );
+            let _ = writeln!(out, "class _{} extends _ResourceBuilder {{", schema.ts_name);
             let _ = writeln!(
                 out,
                 "  constructor() {{ super(\"{api_version}\", \"{}\"); }}",
@@ -480,11 +480,11 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
 
             let _ = writeln!(out, "}}");
 
-            // Factory function
+            // Factory function (only export)
             let factory = to_factory_name(&schema.ts_name);
             let _ = writeln!(
                 out,
-                "export function {factory}() {{ return new {}(); }}\n",
+                "export function {factory}() {{ return new _{}(); }}\n",
                 schema.ts_name
             );
         }

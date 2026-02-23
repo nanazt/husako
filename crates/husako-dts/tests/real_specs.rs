@@ -130,19 +130,19 @@ fn generate_from_real_k8s_specs() {
     // DTS content checks
     let apps_dts = &result.files["k8s/apps/v1.d.ts"];
     assert!(
-        apps_dts.contains("class Deployment extends _ResourceBuilder"),
-        "Deployment builder class missing in apps/v1.d.ts"
+        apps_dts.contains("interface Deployment extends _ResourceBuilder"),
+        "Deployment builder interface missing in apps/v1.d.ts"
     );
     assert!(
-        apps_dts.contains("export function deployment"),
-        "deployment() factory missing in apps/v1.d.ts"
+        apps_dts.contains("export function Deployment"),
+        "Deployment() factory missing in apps/v1.d.ts"
     );
 
     // JS content checks
     let apps_js = &result.files["k8s/apps/v1.js"];
     assert!(
-        apps_js.contains("class Deployment"),
-        "Deployment class missing in apps/v1.js"
+        apps_js.contains("class _Deployment"),
+        "Deployment internal class missing in apps/v1.js"
     );
 }
 
@@ -161,12 +161,12 @@ fn generate_from_cert_manager() {
 
     let dts = &result.files["k8s/cert-manager.io/v1.d.ts"];
     assert!(
-        dts.contains("class Certificate"),
-        "Certificate class missing in cert-manager DTS"
+        dts.contains("interface Certificate"),
+        "Certificate interface missing in cert-manager DTS"
     );
     assert!(
-        dts.contains("class Issuer"),
-        "Issuer class missing in cert-manager DTS"
+        dts.contains("interface Issuer"),
+        "Issuer interface missing in cert-manager DTS"
     );
 }
 
@@ -218,8 +218,8 @@ fn generate_from_cnpg() {
 
     let dts = &result.files["k8s/postgresql.cnpg.io/v1.d.ts"];
     assert!(
-        dts.contains("class Cluster"),
-        "Cluster class missing in cnpg DTS"
+        dts.contains("interface Cluster"),
+        "Cluster interface missing in cnpg DTS"
     );
 }
 

@@ -408,7 +408,7 @@ fn emit_chart_js(schemas: &[ExtractedSchema]) -> String {
     out
 }
 
-/// Convert a class name to its factory function name (first char lowercased).
+/// Schema builder factory function name (first char lowercased).
 fn to_factory_name(class_name: &str) -> String {
     let mut chars = class_name.chars();
     match chars.next() {

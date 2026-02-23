@@ -30,7 +30,7 @@ fn write_k8s_modules(root: &Path) {
 
 import { _ResourceBuilder } from "husako/_base";
 
-export class Deployment extends _ResourceBuilder {
+class _Deployment extends _ResourceBuilder {
   constructor() { super("apps/v1", "Deployment"); }
   replicas(v) { return this._setSpec("replicas", v); }
   selector(v) { return this._setSpec("selector", v); }
@@ -39,9 +39,9 @@ export class Deployment extends _ResourceBuilder {
   containers(v) { return this._setDeep("template.spec.containers", v); }
   initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
-export function deployment() { return new Deployment(); }
+export function Deployment() { return new _Deployment(); }
 
-export class StatefulSet extends _ResourceBuilder {
+class _StatefulSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "StatefulSet"); }
   replicas(v) { return this._setSpec("replicas", v); }
   selector(v) { return this._setSpec("selector", v); }
@@ -49,16 +49,16 @@ export class StatefulSet extends _ResourceBuilder {
   containers(v) { return this._setDeep("template.spec.containers", v); }
   initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
-export function statefulSet() { return new StatefulSet(); }
+export function StatefulSet() { return new _StatefulSet(); }
 
-export class DaemonSet extends _ResourceBuilder {
+class _DaemonSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "DaemonSet"); }
   selector(v) { return this._setSpec("selector", v); }
   template(v) { return this._setSpec("template", v); }
   containers(v) { return this._setDeep("template.spec.containers", v); }
   initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
-export function daemonSet() { return new DaemonSet(); }
+export function DaemonSet() { return new _DaemonSet(); }
 "#,
     )
     .unwrap();
@@ -71,23 +71,23 @@ export function daemonSet() { return new DaemonSet(); }
 
 import { _ResourceBuilder, _SchemaBuilder } from "husako/_base";
 
-export class Namespace extends _ResourceBuilder {
+class _Namespace extends _ResourceBuilder {
   constructor() { super("v1", "Namespace"); }
 }
-export function namespace() { return new Namespace(); }
+export function Namespace() { return new _Namespace(); }
 
-export class Service extends _ResourceBuilder {
+class _Service extends _ResourceBuilder {
   constructor() { super("v1", "Service"); }
   selector(v) { return this._setSpec("selector", v); }
   ports(v) { return this._setSpec("ports", v); }
   type(v) { return this._setSpec("type", v); }
 }
-export function service() { return new Service(); }
+export function Service() { return new _Service(); }
 
-export class ConfigMap extends _ResourceBuilder {
+class _ConfigMap extends _ResourceBuilder {
   constructor() { super("v1", "ConfigMap"); }
 }
-export function configMap() { return new ConfigMap(); }
+export function ConfigMap() { return new _ConfigMap(); }
 
 export class Container extends _SchemaBuilder {
   name(v) { return this._set("name", v); }
@@ -124,7 +124,6 @@ export class LabelSelector extends _SchemaBuilder {
   matchExpressions(v) { return this._set("matchExpressions", v); }
 }
 export function labelSelector() { return new LabelSelector(); }
-export { labelSelector as selector };
 "#,
     )
     .unwrap();
@@ -223,14 +222,14 @@ export function appMetadata(appName: string) {
     std::fs::create_dir_all(root.join("deployments")).unwrap();
     std::fs::write(
         root.join("deployments/nginx.ts"),
-        r#"import { deployment } from "k8s/apps/v1";
+        r#"import { Deployment } from "k8s/apps/v1";
 import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { labelSelector } from "k8s/_common";
 import { appMetadata } from "../lib";
-export const nginx = deployment()
+export const nginx = Deployment()
   .metadata(appMetadata("nginx"))
   .replicas(1)
-  .selector(selector().matchLabels({ app: "nginx" }))
+  .selector(labelSelector().matchLabels({ app: "nginx" }))
   .containers([container().name("nginx").image("nginx:1.25")]);
 "#,
     )
@@ -282,14 +281,14 @@ export function appMetadata(appName: string) {
     std::fs::create_dir_all(root.join("deployments")).unwrap();
     std::fs::write(
         root.join("deployments/nginx.ts"),
-        r#"import { deployment } from "k8s/apps/v1";
+        r#"import { Deployment } from "k8s/apps/v1";
 import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { labelSelector } from "k8s/_common";
 import { appMetadata } from "../lib";
-export const nginx = deployment()
+export const nginx = Deployment()
   .metadata(appMetadata("nginx"))
   .replicas(1)
-  .selector(selector().matchLabels({ app: "nginx" }))
+  .selector(labelSelector().matchLabels({ app: "nginx" }))
   .containers([container().name("nginx").image("nginx:1.25")]);
 "#,
     )
@@ -393,7 +392,7 @@ fn render_canonical() {
     let (dir, entry) = project_with_k8s(
         r#"
 import * as husako from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 import { name, namespace, label, cpu, memory, requests, limits } from "husako";
 
 const nginx_metadata = name("nginx")
@@ -404,7 +403,7 @@ const nginx_metadata = name("nginx")
 const another_labels_1 = label("key3", "value3").label("key4", "value4");
 const another_labels_2 = label("key5", "value5").label("key6", "value6");
 
-const nginx = deployment()
+const nginx = Deployment()
   .metadata(husako.merge([nginx_metadata, another_labels_1, another_labels_2]))
   .resources(
     requests(cpu(1).memory("2Gi")).limits(cpu("500m").memory(1))
@@ -434,7 +433,7 @@ fn render_canonical_snapshot() {
     let (dir, entry) = project_with_k8s(
         r#"
 import * as husako from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 import { name, namespace, label, cpu, memory, requests, limits } from "husako";
 
 const nginx_metadata = name("nginx")
@@ -445,7 +444,7 @@ const nginx_metadata = name("nginx")
 const another_labels_1 = label("key3", "value3").label("key4", "value4");
 const another_labels_2 = label("key5", "value5").label("key6", "value6");
 
-const nginx = deployment()
+const nginx = Deployment()
   .metadata(husako.merge([nginx_metadata, another_labels_1, another_labels_2]))
   .resources(
     requests(cpu(1).memory("2Gi")).limits(cpu("500m").memory(1))
@@ -468,12 +467,12 @@ fn metadata_fragment_reuse() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, label } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 const base = label("env", "dev");
 const a = base.label("team", "a");
 const b = base.label("team", "b");
-const da = deployment().metadata(a);
-const db = deployment().metadata(b);
+const da = Deployment().metadata(a);
+const db = Deployment().metadata(b);
 build([da, db]);
 "#,
     );
@@ -495,9 +494,9 @@ fn merge_labels_deep() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name, label, merge } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 const m = merge([name("test"), label("a", "1"), label("b", "2"), label("c", "3")]);
-const d = deployment().metadata(m);
+const d = Deployment().metadata(m);
 build([d]);
 "#,
     );
@@ -516,8 +515,8 @@ fn cpu_normalization() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, cpu, requests } from "husako";
-import { deployment } from "k8s/apps/v1";
-const d = deployment().resources(requests(cpu(0.5)));
+import { Deployment } from "k8s/apps/v1";
+const d = Deployment().resources(requests(cpu(0.5)));
 build([d]);
 "#,
     );
@@ -533,8 +532,8 @@ fn memory_normalization() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, memory, requests } from "husako";
-import { deployment } from "k8s/apps/v1";
-const d = deployment().resources(requests(memory(4)));
+import { Deployment } from "k8s/apps/v1";
+const d = Deployment().resources(requests(memory(4)));
 build([d]);
 "#,
     );
@@ -550,8 +549,8 @@ fn k8s_core_v1_namespace() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { namespace } from "k8s/core/v1";
-const ns = namespace().metadata(name("my-ns"));
+import { Namespace } from "k8s/core/v1";
+const ns = Namespace().metadata(name("my-ns"));
 build([ns]);
 "#,
     );
@@ -837,14 +836,14 @@ fn generate_spec_dir() {
     assert!(root.join(".husako/types/k8s/apps/v1.d.ts").exists());
     assert!(root.join(".husako/types/k8s/apps/v1.js").exists());
 
-    // .d.ts should contain Deployment builder
+    // .d.ts should contain Deployment builder (interface + factory)
     let apps_v1 = std::fs::read_to_string(root.join(".husako/types/k8s/apps/v1.d.ts")).unwrap();
-    assert!(apps_v1.contains("class Deployment"));
+    assert!(apps_v1.contains("interface Deployment"));
     assert!(apps_v1.contains("_ResourceBuilder"));
 
-    // .js should contain Deployment class
+    // .js should contain internal class + factory function
     let apps_v1_js = std::fs::read_to_string(root.join(".husako/types/k8s/apps/v1.js")).unwrap();
-    assert!(apps_v1_js.contains("class Deployment"));
+    assert!(apps_v1_js.contains("class _Deployment"));
     assert!(apps_v1_js.contains("\"apps/v1\""));
 
     // tsconfig.json should exist
@@ -1329,8 +1328,8 @@ fn render_k8s_import_without_generate() {
         &entry,
         r#"
 import { build } from "husako";
-import { deployment } from "k8s/apps/v1";
-build([deployment()]);
+import { Deployment } from "k8s/apps/v1";
+build([Deployment()]);
 "#,
     )
     .unwrap();
@@ -1360,7 +1359,7 @@ fn generate_creates_js_modules() {
     assert!(root.join(".husako/types/k8s/apps/v1.js").exists());
 
     let js = std::fs::read_to_string(root.join(".husako/types/k8s/apps/v1.js")).unwrap();
-    assert!(js.contains("class Deployment"));
+    assert!(js.contains("class _Deployment"));
     assert!(js.contains("_ResourceBuilder"));
 }
 
@@ -1385,8 +1384,8 @@ fn render_with_generated_modules() {
         &entry,
         r#"
 import { build, name } from "husako";
-import { deployment } from "k8s/apps/v1";
-const d = deployment().metadata(name("test"));
+import { Deployment } from "k8s/apps/v1";
+const d = Deployment().metadata(name("test"));
 build([d]);
 "#,
     )
@@ -1406,8 +1405,8 @@ fn generic_spec_setter() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { namespace } from "k8s/core/v1";
-const ns = namespace()
+import { Namespace } from "k8s/core/v1";
+const ns = Namespace()
     .metadata(name("my-ns"))
     .spec({ finalizers: ["kubernetes"] });
 build([ns]);
@@ -1427,8 +1426,8 @@ fn generic_set_configmap() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { configMap } from "k8s/core/v1";
-const cm = configMap()
+import { ConfigMap } from "k8s/core/v1";
+const cm = ConfigMap()
     .metadata(name("my-config"))
     .set("data", { key1: "val1", key2: "val2" });
 build([cm]);
@@ -1450,13 +1449,13 @@ fn builder_spec_property_methods() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, metadata } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
-const d = deployment()
+import { labelSelector } from "k8s/_common";
+const d = Deployment()
     .metadata(metadata().name("nginx").label("app", "nginx"))
     .replicas(3)
-    .selector(selector().matchLabels({ app: "nginx" }))
+    .selector(labelSelector().matchLabels({ app: "nginx" }))
     .containers([
         container().name("nginx").image("nginx:1.25")
     ]);
@@ -1480,9 +1479,9 @@ fn builder_set_deep_merges() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 import { container } from "k8s/core/v1";
-const d = deployment()
+const d = Deployment()
     .metadata(name("nginx"))
     .replicas(2)
     .containers([container().name("nginx").image("nginx:1.25")])
@@ -1509,9 +1508,9 @@ fn builder_spec_overrides_spec_parts() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 // .spec() should override any _specParts set via .replicas()
-const d = deployment()
+const d = Deployment()
     .metadata(name("nginx"))
     .replicas(3)
     .spec({ replicas: 5, selector: {} });
@@ -1534,14 +1533,14 @@ fn builder_spec_parts_and_resources_merge() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name, cpu, memory, requests, limits } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { labelSelector } from "k8s/_common";
 // _specParts (from .replicas/.containers) and _resources should merge
-const d = deployment()
+const d = Deployment()
     .metadata(name("nginx"))
     .replicas(2)
-    .selector(selector().matchLabels({ app: "nginx" }))
+    .selector(labelSelector().matchLabels({ app: "nginx" }))
     .containers([
         container().name("nginx").image("nginx:1.25")
             .resources(requests(cpu("250m").memory("128Mi")).limits(cpu("500m").memory("256Mi")))
@@ -1569,8 +1568,8 @@ fn builder_copy_on_write_isolation() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { deployment } from "k8s/apps/v1";
-const base = deployment().metadata(name("base")).replicas(1);
+import { Deployment } from "k8s/apps/v1";
+const base = Deployment().metadata(name("base")).replicas(1);
 const a = base.replicas(3);
 const b = base.replicas(5);
 build([a, b]);
@@ -1593,8 +1592,8 @@ fn builder_service_spec_properties() {
     let (dir, entry) = project_with_k8s(
         r#"
 import { build, name } from "husako";
-import { service } from "k8s/core/v1";
-const svc = service()
+import { Service } from "k8s/core/v1";
+const svc = Service()
     .metadata(name("nginx"))
     .selector({ app: "nginx" })
     .ports([{ port: 80, targetPort: 8080 }])

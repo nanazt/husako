@@ -22,14 +22,13 @@ export interface DeploymentSpec {
 }
 
 /** Deployment enables declarative updates. */
-export class Deployment extends _ResourceBuilder {
-  constructor();
+export interface Deployment extends _ResourceBuilder {
   /** Set the resource specification. */
   spec(value: DeploymentSpec): this;
   replicas(value: number): this;
   selector(value: LabelSelector): this;
 }
-export function deployment(): Deployment;
+export function Deployment(): Deployment;
 
 export class DeploymentSpec extends _SchemaBuilder {
   replicas(value: number): this;

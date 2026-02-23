@@ -1083,19 +1083,15 @@ fn select_k8s_version() -> Result<String, Option<String>> {
             let mut has_more = versions.len() == 10;
             let mut next_offset: usize = 10;
 
-            let result = search_select::run(
-                "Kubernetes version:",
-                &mut items,
-                &mut has_more,
-                || {
+            let result =
+                search_select::run("Kubernetes version:", &mut items, &mut has_more, || {
                     let new_versions =
                         husako_core::version_check::discover_recent_releases(10, next_offset)
                             .map_err(|e| e.to_string())?;
                     let more = new_versions.len() == 10;
                     next_offset += 10;
                     Ok((new_versions, more))
-                },
-            );
+                });
 
             match result {
                 Ok(Some(idx)) => {

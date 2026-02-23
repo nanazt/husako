@@ -44,7 +44,15 @@ where
 
     // --- Initial version fetch with loading screen ---
     let mut rendered = render(
-        &term, &name_input, default_name, name_error.as_deref(), &[], 0, 0, 0, true,
+        &term,
+        &name_input,
+        default_name,
+        name_error.as_deref(),
+        &[],
+        0,
+        0,
+        0,
+        true,
     )?;
 
     let initial_versions =

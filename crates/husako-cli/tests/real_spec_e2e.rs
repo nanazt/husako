@@ -65,9 +65,9 @@ fn e2e_render_deployment_from_real_specs() {
         &entry,
         r#"
 import { build, name, label } from "husako";
-import { deployment } from "k8s/apps/v1";
+import { Deployment } from "k8s/apps/v1";
 
-const d = deployment()
+const d = Deployment()
     .metadata(name("nginx"), label("app", "nginx"))
     .spec({
         replicas: 3,
@@ -126,9 +126,9 @@ fn e2e_render_cnpg_cluster() {
         &entry,
         r#"
 import { build, name } from "husako";
-import { cluster } from "k8s/postgresql.cnpg.io/v1";
+import { Cluster } from "k8s/postgresql.cnpg.io/v1";
 
-const c = cluster()
+const c = Cluster()
     .metadata(name("my-pg"))
     .spec({ instances: 3, storage: { size: "10Gi" } });
 
@@ -173,9 +173,9 @@ fn e2e_render_cert_manager_certificate() {
         &entry,
         r#"
 import { build, name } from "husako";
-import { certificate } from "k8s/cert-manager.io/v1";
+import { Certificate } from "k8s/cert-manager.io/v1";
 
-const cert = certificate()
+const cert = Certificate()
     .metadata(name("my-cert"))
     .spec({
         secretName: "my-cert-tls",

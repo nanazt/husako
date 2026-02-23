@@ -3,7 +3,6 @@ source: crates/husako-dts/src/emitter.rs
 expression: output
 ---
 /** Namespace provides a scope for Names. */
-export class Namespace extends _ResourceBuilder {
-  constructor();
+export interface Namespace extends _ResourceBuilder {
 }
-export function namespace(): Namespace;
+export function Namespace(): Namespace;

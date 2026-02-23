@@ -6,19 +6,19 @@ expression: output
 
 import { _ResourceBuilder, _SchemaBuilder } from "husako/_base";
 
-export class Deployment extends _ResourceBuilder {
+class _Deployment extends _ResourceBuilder {
   constructor() { super("apps/v1", "Deployment"); }
   replicas(v) { return this._setSpec("replicas", v); }
   template(v) { return this._setSpec("template", v); }
   containers(v) { return this._setDeep("template.spec.containers", v); }
   initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
 }
-export function deployment() { return new Deployment(); }
+export function Deployment() { return new _Deployment(); }
 
-export class StatefulSet extends _ResourceBuilder {
+class _StatefulSet extends _ResourceBuilder {
   constructor() { super("apps/v1", "StatefulSet"); }
 }
-export function statefulSet() { return new StatefulSet(); }
+export function StatefulSet() { return new _StatefulSet(); }
 
 export class DeploymentSpec extends _SchemaBuilder {
   replicas(v) { return this._set("replicas", v); }

@@ -393,7 +393,11 @@ pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError
 
 /// Discover recent stable tags from a git repository.
 /// Returns up to `limit` stable semver tags, sorted newest first.
-pub fn discover_git_tags(repo: &str, limit: usize, offset: usize) -> Result<Vec<String>, HusakoError> {
+pub fn discover_git_tags(
+    repo: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<String>, HusakoError> {
     let output = std::process::Command::new("git")
         .args(["ls-remote", "--tags", "--sort=-v:refname", repo])
         .output()

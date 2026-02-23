@@ -398,10 +398,7 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
         TemplateName::MultiEnv => husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
     };
     let config_content = config_content.replace("%K8S_VERSION%", &options.k8s_version);
-    write_file(
-        &dir.join(husako_config::CONFIG_FILENAME),
-        &config_content,
-    )?;
+    write_file(&dir.join(husako_config::CONFIG_FILENAME), &config_content)?;
 
     match options.template {
         TemplateName::Simple => {
@@ -496,10 +493,7 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
         TemplateName::MultiEnv => husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
     };
     let config_content = config_content.replace("%K8S_VERSION%", &options.k8s_version);
-    write_file(
-        &dir.join(husako_config::CONFIG_FILENAME),
-        &config_content,
-    )?;
+    write_file(&dir.join(husako_config::CONFIG_FILENAME), &config_content)?;
 
     match options.template {
         TemplateName::Simple => {

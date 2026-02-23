@@ -288,12 +288,11 @@ fn prompt_artifacthub_manual() -> Result<AddTarget, String> {
         .map_err(|e| e.to_string())?;
 
     let default_name = package.rsplit('/').next().unwrap_or(&package);
-    let result =
-        crate::name_version_select::run(default_name, is_valid_name, |limit, offset| {
-            husako_core::version_check::discover_artifacthub_versions(&package, limit, offset)
-                .map_err(|e| e.to_string())
-        })?
-        .ok_or_else(|| "cancelled".to_string())?;
+    let result = crate::name_version_select::run(default_name, is_valid_name, |limit, offset| {
+        husako_core::version_check::discover_artifacthub_versions(&package, limit, offset)
+            .map_err(|e| e.to_string())
+    })?
+    .ok_or_else(|| "cancelled".to_string())?;
 
     Ok(AddTarget::Chart {
         name: result.name,

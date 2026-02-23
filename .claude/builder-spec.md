@@ -9,17 +9,17 @@ This document defines the rules for the husako builder DSL. All user-facing code
 Users write Kubernetes resources using **builder chains**. No `new` keyword, no plain object literals for resource structure.
 
 ```typescript
-import { deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { Deployment } from "k8s/apps/v1";
+import { Container } from "k8s/core/v1";
+import { Selector } from "k8s/_common";
 import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const nginx = deployment()
+const nginx = Deployment()
   .metadata(metadata().name("nginx").label("app", "nginx"))
   .replicas(3)
-  .selector(selector().matchLabels({ app: "nginx" }))
+  .selector(Selector().matchLabels({ app: "nginx" }))
   .containers([
-    container()
+    Container()
       .name("nginx")
       .image("nginx:1.25")
       .resources(
@@ -33,7 +33,7 @@ build([nginx]);
 
 **Rules:**
 
-- Every builder class exports a lowercase factory function: `Deployment` class → `deployment()` function.
+- Every builder exports a PascalCase factory function: `Deployment()`, `Container()`, `LabelSelector()`.
 - `metadata()` is the entry point for metadata chains. `metadata().name("x").label("k", "v")`.
 - `name()`, `label()`, `namespace()`, `annotation()` remain as shorthand aliases for `metadata().name()` etc.
 - Plain objects are allowed only as leaf values where no builder exists (e.g., `matchLabels`, `nodeSelector`).
@@ -93,8 +93,8 @@ Hand-crafted builders in the `"husako"` module for common cross-cutting concerns
 
 | Source | Exports |
 |--------|---------|
-| `k8s/<group>/<version>` | Resource builder factories (`deployment`, `statefulSet`) + schema builder factories (`container`, `podSpec`) |
-| `k8s/_common` | Common type builder factories (`selector`, `objectMeta`) for `io.k8s.apimachinery.*` schemas |
+| `k8s/<group>/<version>` | Resource builder factories (`Deployment`, `StatefulSet`) + schema builder factories (`Container`, `PodSpec`) |
+| `k8s/_common` | Common type builder factories (`LabelSelector`, `ObjectMeta`) for `io.k8s.apimachinery.*` schemas |
 | `"husako"` | `metadata`, `cpu`, `memory`, `requests`, `limits`, `merge`, `build` |
 | `"husako"` (aliases) | `name`, `label`, `namespace`, `annotation` — shorthand for `metadata().name()` etc. |
 
@@ -105,7 +105,7 @@ Hand-crafted builders in the `"husako"` module for common cross-cutting concerns
 Every chainable method returns a **new** builder instance. The original is never mutated.
 
 ```typescript
-const base = deployment().metadata(metadata().name("base")).replicas(1);
+const base = Deployment().metadata(metadata().name("base")).replicas(1);
 const prod = base.replicas(3);   // base is unchanged, still replicas=1
 const dev  = base.replicas(1);   // independent from prod
 ```
@@ -183,9 +183,9 @@ The emitter decides which OpenAPI schemas get builder classes.
 **Condition:** schema has `x-kubernetes-group-version-kind` extension.
 
 Generated output:
-- Class extending `_ResourceBuilder` with `constructor(apiVersion, kind)`
+- Internal class extending `_ResourceBuilder` with `constructor(apiVersion, kind)`
 - Per-spec-property methods from the spec schema (calls `_setSpec`)
-- Factory function (lowercase class name)
+- PascalCase factory function (only export)
 
 **Skip list for spec property methods:** `status`, `apiVersion`, `kind`, `metadata`
 
@@ -194,9 +194,9 @@ Generated output:
 **Condition:** schema has NO GVK AND has at least one property with `Ref` or `Array(Ref)` type.
 
 Generated output:
-- Class extending `_SchemaBuilder`
+- Internal class extending `_SchemaBuilder`
 - Per-property chainable methods (calls `_set`)
-- Factory function (lowercase class name)
+- PascalCase factory function (only export)
 
 ### Deep-path shortcuts
 
@@ -210,16 +210,35 @@ Generated methods:
 
 ### Factory function naming
 
-Class name with first character lowercased:
+PascalCase, matching the type name:
 
-| Class | Factory |
-|-------|---------|
-| `Deployment` | `deployment()` |
-| `Container` | `container()` |
-| `LabelSelector` | `labelSelector()` |
-| `PodTemplateSpec` | `podTemplateSpec()` |
+| Type | Factory |
+|------|---------|
+| `Deployment` | `Deployment()` |
+| `Container` | `Container()` |
+| `LabelSelector` | `LabelSelector()` |
+| `PodTemplateSpec` | `PodTemplateSpec()` |
 
-Convenience aliases (e.g., `selector` for `labelSelector`) may be added per module.
+### Generated code structure
+
+In `.d.ts`, factory functions use TypeScript declaration merging (interface + function):
+
+```typescript
+export interface Deployment extends _ResourceBuilder {
+  replicas(value: number): this;
+}
+export function Deployment(): Deployment;
+```
+
+In `.js`, the class is internal (prefixed with `_`) and only the factory is exported:
+
+```javascript
+class _Deployment extends _ResourceBuilder {
+  constructor() { super("apps/v1", "Deployment"); }
+  replicas(v) { return this._setSpec("replicas", v); }
+}
+export function Deployment() { return new _Deployment(); }
+```
 
 ---
 
@@ -258,22 +277,22 @@ build(input: { _render(): any } | { _render(): any }[]): void
 Builders are immutable, so any builder instance can be stored and reused as a template.
 
 ```typescript
-import { deployment } from "k8s/apps/v1";
-import { container, podTemplate } from "k8s/core/v1";
+import { Deployment } from "k8s/apps/v1";
+import { Container, PodTemplateSpec } from "k8s/core/v1";
 import { metadata, build } from "husako";
 
-const webPod = podTemplate()
+const webPod = PodTemplateSpec()
   .metadata(metadata().label("tier", "web"))
   .containers([
-    container().name("web").image("nginx:1.25")
+    Container().name("web").image("nginx:1.25")
   ]);
 
-const prod = deployment()
+const prod = Deployment()
   .metadata(metadata().name("web-prod"))
   .replicas(5)
   .template(webPod);
 
-const staging = deployment()
+const staging = Deployment()
   .metadata(metadata().name("web-staging"))
   .replicas(1)
   .template(webPod);

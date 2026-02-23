@@ -258,10 +258,10 @@ mod tests {
         assert!(result.files.contains_key("k8s/postgresql.cnpg.io/v1.js"));
 
         let dts = &result.files["k8s/postgresql.cnpg.io/v1.d.ts"];
-        assert!(dts.contains("class Cluster"));
+        assert!(dts.contains("interface Cluster"));
 
         let js = &result.files["k8s/postgresql.cnpg.io/v1.js"];
-        assert!(js.contains("class Cluster"));
+        assert!(js.contains("class _Cluster"));
         assert!(js.contains("\"postgresql.cnpg.io/v1\""));
     }
 }

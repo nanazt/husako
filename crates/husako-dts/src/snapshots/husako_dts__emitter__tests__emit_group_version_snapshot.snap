@@ -17,10 +17,9 @@ export interface DeploymentSpec {
   replicas?: number;
 }
 
-export class Deployment extends _ResourceBuilder {
-  constructor();
+export interface Deployment extends _ResourceBuilder {
   /** Set the resource specification. */
   spec(value: DeploymentSpec): this;
   replicas(value: number): this;
 }
-export function deployment(): Deployment;
+export function Deployment(): Deployment;
