@@ -225,11 +225,7 @@ fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
 fn emit_schema_builder_js(schema: &SchemaInfo) -> String {
     let mut out = String::new();
 
-    let _ = writeln!(
-        out,
-        "class _{} extends _SchemaBuilder {{",
-        schema.ts_name
-    );
+    let _ = writeln!(out, "class _{} extends _SchemaBuilder {{", schema.ts_name);
 
     emit_property_methods_js_set(&mut out, &schema.properties, &[]);
 

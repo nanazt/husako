@@ -2,6 +2,7 @@
 name = "husako-sdk"
 version.workspace = true
 edition.workspace = true
+description = "Builtin JS runtime sources and base type definitions for husako"
 license.workspace = true
 repository.workspace = true
 

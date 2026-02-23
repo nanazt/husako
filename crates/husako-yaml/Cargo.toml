@@ -2,6 +2,7 @@
 name = "husako-yaml"
 version.workspace = true
 edition.workspace = true
+description = "JSON to YAML/JSON emitter for husako"
 license.workspace = true
 repository.workspace = true
 

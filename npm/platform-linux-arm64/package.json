@@ -1,0 +1,19 @@
+{
+  "name": "@husako/linux-arm64",
+  "version": "0.1.0",
+  "description": "husako binary for Linux arm64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nanazt/husako"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}

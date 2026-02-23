@@ -1,0 +1,13 @@
+[plugin]
+name = "flux"
+version = "0.1.0"
+description = "Flux CD integration for husako"
+
+[resources]
+flux-source = { source = "git", repo = "https://github.com/fluxcd/source-controller", tag = "v1.8.0", path = "config/crd/bases" }
+flux-helm = { source = "git", repo = "https://github.com/fluxcd/helm-controller", tag = "v1.5.0", path = "config/crd/bases" }
+flux-kustomize = { source = "git", repo = "https://github.com/fluxcd/kustomize-controller", tag = "v1.8.0", path = "config/crd/bases" }
+
+[modules]
+"flux" = "modules/index.js"
+"flux/source" = "modules/source.js"

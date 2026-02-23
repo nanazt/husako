@@ -1,0 +1,19 @@
+{
+  "name": "@husako/darwin-arm64",
+  "version": "0.1.0",
+  "description": "husako binary for macOS arm64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nanazt/husako"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}

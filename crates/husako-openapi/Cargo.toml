@@ -2,6 +2,7 @@
 name = "husako-openapi"
 version.workspace = true
 edition.workspace = true
+description = "OpenAPI v3 spec fetcher and cache for husako"
 license.workspace = true
 repository.workspace = true
 

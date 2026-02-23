@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use husako_config::{HusakoConfig, PluginManifest, PluginSource};
 
-use crate::progress::ProgressReporter;
 use crate::HusakoError;
+use crate::progress::ProgressReporter;
 
 /// Installed plugin data collected during `install_plugins`.
 #[derive(Debug)]
@@ -38,22 +38,20 @@ pub fn install_plugins(
         let task = progress.start_task(&format!("Installing plugin {name}..."));
 
         match install_plugin(name, source, project_root, &plugin_dir) {
-            Ok(()) => {
-                match husako_config::load_plugin_manifest(&plugin_dir) {
-                    Ok(manifest) => {
-                        task.finish_ok(&format!("{name}: installed (v{})", manifest.plugin.version));
-                        installed.push(InstalledPlugin {
-                            name: name.clone(),
-                            manifest,
-                            dir: plugin_dir,
-                        });
-                    }
-                    Err(e) => {
-                        task.finish_err(&format!("{name}: invalid manifest: {e}"));
-                        return Err(HusakoError::Config(e));
-                    }
+            Ok(()) => match husako_config::load_plugin_manifest(&plugin_dir) {
+                Ok(manifest) => {
+                    task.finish_ok(&format!("{name}: installed (v{})", manifest.plugin.version));
+                    installed.push(InstalledPlugin {
+                        name: name.clone(),
+                        manifest,
+                        dir: plugin_dir,
+                    });
                 }
-            }
+                Err(e) => {
+                    task.finish_err(&format!("{name}: invalid manifest: {e}"));
+                    return Err(HusakoError::Config(e));
+                }
+            },
             Err(e) => {
                 task.finish_err(&format!("{name}: {e}"));
                 return Err(e);
@@ -101,9 +99,7 @@ fn install_git(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoErr
             &target_dir.to_string_lossy(),
         ])
         .output()
-        .map_err(|e| {
-            HusakoError::GenerateIo(format!("plugin '{name}': git clone failed: {e}"))
-        })?;
+        .map_err(|e| HusakoError::GenerateIo(format!("plugin '{name}': git clone failed: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -131,11 +127,8 @@ fn install_path(name: &str, source_dir: &Path, target_dir: &Path) -> Result<(), 
         )));
     }
 
-    copy_dir_recursive(source_dir, target_dir).map_err(|e| {
-        HusakoError::GenerateIo(format!(
-            "plugin '{name}': copy failed: {e}"
-        ))
-    })
+    copy_dir_recursive(source_dir, target_dir)
+        .map_err(|e| HusakoError::GenerateIo(format!("plugin '{name}': copy failed: {e}")))
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
@@ -156,18 +149,21 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
 
 /// Merge plugin resource presets into the config's resources map.
 /// Plugin resources are added with a namespaced key `<plugin>/<resource>` to avoid collisions.
-pub fn merge_plugin_presets(
-    config: &mut HusakoConfig,
-    plugins: &[InstalledPlugin],
-) {
+pub fn merge_plugin_presets(config: &mut HusakoConfig, plugins: &[InstalledPlugin]) {
     for plugin in plugins {
         for (res_name, res_source) in &plugin.manifest.resources {
             let key = format!("{}:{}", plugin.name, res_name);
-            config.resources.entry(key).or_insert_with(|| res_source.clone());
+            config
+                .resources
+                .entry(key)
+                .or_insert_with(|| res_source.clone());
         }
         for (chart_name, chart_source) in &plugin.manifest.charts {
             let key = format!("{}:{}", plugin.name, chart_name);
-            config.charts.entry(key).or_insert_with(|| chart_source.clone());
+            config
+                .charts
+                .entry(key)
+                .or_insert_with(|| chart_source.clone());
         }
     }
 }
@@ -175,9 +171,7 @@ pub fn merge_plugin_presets(
 /// Build plugin module path mappings for tsconfig.json.
 ///
 /// Returns a map of import specifier → `.d.ts` path (relative to project root).
-pub fn plugin_tsconfig_paths(
-    plugins: &[InstalledPlugin],
-) -> HashMap<String, String> {
+pub fn plugin_tsconfig_paths(plugins: &[InstalledPlugin]) -> HashMap<String, String> {
     let mut paths = HashMap::new();
     for plugin in plugins {
         for (specifier, rel_path) in &plugin.manifest.modules {
@@ -191,10 +185,7 @@ pub fn plugin_tsconfig_paths(
 }
 
 /// Remove a plugin from `.husako/plugins/`.
-pub fn remove_plugin(
-    project_root: &Path,
-    name: &str,
-) -> Result<bool, HusakoError> {
+pub fn remove_plugin(project_root: &Path, name: &str) -> Result<bool, HusakoError> {
     let plugin_dir = project_root.join(".husako/plugins").join(name);
     if plugin_dir.exists() {
         std::fs::remove_dir_all(&plugin_dir).map_err(|e| {
@@ -207,9 +198,7 @@ pub fn remove_plugin(
 }
 
 /// List installed plugins from `.husako/plugins/`.
-pub fn list_plugins(
-    project_root: &Path,
-) -> Vec<InstalledPlugin> {
+pub fn list_plugins(project_root: &Path) -> Vec<InstalledPlugin> {
     let plugins_dir = project_root.join(".husako/plugins");
     if !plugins_dir.is_dir() {
         return Vec::new();
@@ -444,14 +433,8 @@ version = "0.1.0"
         }];
 
         let paths = plugin_tsconfig_paths(&plugins);
-        assert_eq!(
-            paths["flux"],
-            ".husako/plugins/flux/modules/index.d.ts"
-        );
-        assert_eq!(
-            paths["flux/helm"],
-            ".husako/plugins/flux/modules/helm.d.ts"
-        );
+        assert_eq!(paths["flux"], ".husako/plugins/flux/modules/index.d.ts");
+        assert_eq!(paths["flux/helm"], ".husako/plugins/flux/modules/helm.d.ts");
     }
 
     #[test]

@@ -2,12 +2,13 @@
 name = "husako-helm"
 version.workspace = true
 edition.workspace = true
+description = "Helm chart values schema resolver for husako"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
 flate2.workspace = true
-husako-config = { path = "../husako-config" }
+husako-config = { path = "../husako-config", version = "0.1.0" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

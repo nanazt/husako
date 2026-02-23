@@ -2,12 +2,13 @@
 name = "husako-runtime-qjs"
 version.workspace = true
 edition.workspace = true
+description = "QuickJS runtime for husako"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-husako-compile-oxc = { path = "../husako-compile-oxc" }
-husako-sdk = { path = "../husako-sdk" }
+husako-compile-oxc = { path = "../husako-compile-oxc", version = "0.1.0" }
+husako-sdk = { path = "../husako-sdk", version = "0.1.0" }
 rquickjs.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

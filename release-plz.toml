@@ -1,0 +1,13 @@
+[workspace]
+publish = true
+publish_allow_dirty = true
+semver_check = true
+git_release_enable = false
+git_tag_enable = false
+
+[[package]]
+name = "husako"
+git_release_enable = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_name = "husako v{{ version }}"
