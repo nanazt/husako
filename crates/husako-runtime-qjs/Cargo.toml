@@ -7,8 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-husako-compile-oxc = { path = "../husako-compile-oxc", version = "0.1.0" }
-husako-sdk = { path = "../husako-sdk", version = "0.1.0" }
+husako-compile-oxc = { path = "../husako-compile-oxc", version = "0.1.1" }
+husako-sdk = { path = "../husako-sdk", version = "0.1.1" }
 rquickjs.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

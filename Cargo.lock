@@ -869,7 +869,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "husako"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -891,7 +891,7 @@ dependencies = [
 
 [[package]]
 name = "husako-compile-oxc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "oxc_allocator",
  "oxc_codegen",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "husako-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tempfile",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "husako-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "husako-compile-oxc",
  "husako-config",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "husako-dts"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "husako-core",
  "insta",
@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "husako-helm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "husako-config",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "husako-openapi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mockito",
  "reqwest",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "husako-runtime-qjs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "husako-compile-oxc",
  "husako-sdk",
@@ -987,11 +987,11 @@ dependencies = [
 
 [[package]]
 name = "husako-sdk"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "husako-yaml"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde_json",
  "serde_yaml_ng",

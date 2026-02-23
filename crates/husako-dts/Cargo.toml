@@ -11,6 +11,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-husako-core = { path = "../husako-core", version = "0.1.0" }
+husako-core = { path = "../husako-core", version = "0.1.1" }
 insta.workspace = true
 serde_json = { workspace = true }

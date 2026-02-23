@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 flate2.workspace = true
-husako-config = { path = "../husako-config", version = "0.1.0" }
+husako-config = { path = "../husako-config", version = "0.1.1" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
