@@ -1,0 +1,281 @@
+# Architecture Deep-Dive
+
+Implementation details not covered by CLAUDE.md, builder-spec.md, or cli-design.md.
+
+## 1. Schema Classification & Code Generation
+
+### Location classification (`husako-dts/src/schema.rs`)
+
+Every OpenAPI schema name is classified into one of three locations:
+
+1. **Common** — name starts with `io.k8s.apimachinery.` → emitted to `_common.d.ts`/`_common.js`
+2. **GroupVersion** — name starts with `io.k8s.api.` → strip prefix, split into `[group, version, Type]`, emitted to per-module files (e.g., `apps/v1.d.ts`)
+3. **Other** — everything else (CRDs, non-standard schemas)
+
+### CRD reclassification
+
+After initial classification, schemas with `location == Other` AND a populated `gvk` field (from `x-kubernetes-group-version-kind`) are reclassified into `GroupVersion` using the GVK's group (defaulting to `"core"` if empty) and version. This ensures CRDs whose schema names (e.g., `io.cnpg.postgresql.v1.Cluster`) don't match the `io.k8s.api.*` pattern still land in the correct module.
+
+### Type mapping decision order (`ts_type_from_schema`)
+
+1. `$ref` → `TsType::Ref(short_name)` (last segment after `#/components/schemas/`)
+2. `x-kubernetes-int-or-string: true` → `TsType::IntOrString`
+3. `type` field:
+   - `"string"` → `String`
+   - `"integer"` | `"number"` → `Number`
+   - `"boolean"` → `Boolean`
+   - `"array"` → `Array(items_type)` (recurse into `items`)
+   - `"object"` + `additionalProperties` → `Map(val_type)`
+   - `"object"` + `properties` only → `Any` (inline objects handled by extraction, not this level)
+   - `"object"` with neither → `Map(Any)`
+4. No recognized type → `Any`
+
+### Builder generation heuristic
+
+A schema gets a `_SchemaBuilder` subclass when it has at least one property whose type is `Ref(_)` or `Array(Ref(_))`. Schemas with only primitives, maps, or arrays of primitives get plain interfaces.
+
+Properties skipped during builder method generation: `status`, `apiVersion`, `kind`, `metadata`.
+
+### Pod template shortcut
+
+When a schema has a `template` property referencing `PodTemplateSpec`, the builder gains `.containers()` and `.initContainers()` deep-path methods via `_setDeep`.
+
+### DTS emission order per group-version
+
+1. Common type imports (from `_common`)
+2. Spec interfaces for builder-bearing schemas
+3. `_ResourceBuilder` subclasses (schemas with GVK)
+4. `_SchemaBuilder` subclasses (schemas without GVK but with complex properties)
+5. Plain interfaces
+
+A `.js` file is emitted only if the module has at least one GVK schema or one schema meeting the builder heuristic.
+
+## 2. CRD YAML → OpenAPI Conversion
+
+**Module:** `husako-openapi/src/crd.rs`
+
+### Algorithm
+
+1. Parse multi-document YAML (`serde_yaml_ng::Deserializer`).
+2. Filter documents by `apiVersion == "apiextensions.k8s.io/v1"` AND `kind == "CustomResourceDefinition"`. Non-CRDs are silently skipped.
+3. Error if zero CRDs found.
+4. For each CRD, extract `spec.group`, `spec.names.kind`, `spec.versions[]`.
+5. Compute prefix via `reverse_domain(group)` — `"cert-manager.io"` → `"io.cert-manager"`.
+6. For each version with `schema.openAPIV3Schema`:
+   - Base name: `"{prefix}.{version}"` (e.g., `"io.cert-manager.v1"`)
+   - Extract nested schemas recursively
+   - Build resource schema with injected `apiVersion`, `kind`, `metadata` ($ref to ObjectMeta), `x-kubernetes-group-version-kind`
+
+### Nested schema extraction
+
+Inline CRD schemas are converted to `$ref` graphs:
+
+- A property is extractable if it has `type == "object"` AND a `properties` key (not just `additionalProperties`).
+- Extracted schemas get PascalCase names: property `issuerRef` on `Certificate` → `CertificateIssuerRef`.
+- The original property is replaced with a `$ref`, preserving its `description`.
+- Arrays with extractable `items` are also extracted.
+- Recursion continues into extracted schemas.
+
+### Naming conventions
+
+- Top-level: `{base}.{Kind}` (e.g., `io.cert-manager.v1.Certificate`)
+- Spec: `{base}.{Kind}Spec`
+- Nested: `{base}.{Context}{PascalCase(propName)}`
+- `to_pascal_case`: splits on `_` and `-`, capitalizes first letter, preserves camelCase within segments
+
+### Domain reversal
+
+`reverse_domain` splits on `.` and reverses: `"postgresql.cnpg.io"` → `"io.cnpg.postgresql"`.
+
+Output is wrapped in `{"components": {"schemas": {...}}}` matching OpenAPI v3 format.
+
+## 3. Validation Engine
+
+**Module:** `husako-core/src/validate.rs`
+
+### Walk order per node (`validate_value`)
+
+1. **Depth guard** — return if `depth > 64`
+2. **Null skip** — `null` treated as "not set"
+3. **`$ref` resolution** — resolve and recurse (depth + 1), return
+4. **`allOf`** — validate against each sub-schema (depth + 1 per sub), return
+5. **`x-kubernetes-int-or-string`** — accept Number or String, reject else, return
+6. **Format dispatch** — if `format == "quantity"`, delegate to `validate_quantity()`, return
+7. **Type check** — verify value matches schema's `type`, return on mismatch
+8. **Enum check** — string membership in `enum` array, return on mismatch
+9. **Numeric bounds** — `minimum`/`maximum` (additive, both can error)
+10. **Pattern check** — `regex_lite::Regex`, skip silently on compile failure
+11. **Recurse** — object properties + additionalProperties, array items
+
+### Not handled
+
+`oneOf`, `anyOf`, `x-kubernetes-validation` (CEL), unknown field rejection.
+
+### Schema store
+
+- Version `2` required (both producer and consumer). `from_json()` returns `None` for any other version.
+- GVK index key format: `"{apiVersion}:{kind}"` (e.g., `"apps/v1:Deployment"`).
+
+### Fallback chain
+
+1. SchemaStore available + GVK matches → full schema validation
+2. SchemaStore available + GVK not found → quantity heuristic only
+3. No SchemaStore → quantity heuristic only
+
+The heuristic checks `resources.requests/*` and `resources.limits/*` paths.
+
+## 4. JSON Schema Codegen for Helm
+
+**Module:** `husako-dts/src/json_schema.rs`
+
+Differences from the OpenAPI codegen path (`husako-dts/src/lib.rs`):
+
+| Aspect | OpenAPI path | JSON Schema path |
+|--------|-------------|-----------------|
+| `$ref` prefix | `#/components/schemas/` | `#/$defs/` or `#/definitions/` |
+| `enum` on strings | preserves values | simplified to `TsType::String` |
+| `oneOf`/`anyOf` | not handled | collapsed to `TsType::Any` |
+| `additionalProperties: true` (boolean) | not handled | `Map(Any)` |
+| Inline objects with properties | left as `Any` (CRD converter handles extraction) | extracted during codegen into named `Ref` schemas |
+| PascalCase splitting | `_` and `-` | `_`, `-`, and `.` |
+
+### Dual type resolution
+
+- `resolve_json_schema_type()` — for builder classes, produces `Ref("Image")`
+- `resolve_json_schema_type_for_spec()` — for Spec interfaces, produces `Ref("ImageSpec")` when a matching `*Spec` schema exists
+
+### Output structure
+
+- Root always becomes `Values`/`ValuesSpec`/`values()`.
+- Nested objects produce `{Name}Spec` interface + `{Name}` builder.
+- Factory functions use first-char-lowercase: `Values` → `values()`.
+
+### Emission order
+
+1. `_SchemaBuilder` import (if builders exist)
+2. Spec interfaces
+3. Builder classes
+4. Plain interfaces
+
+## 5. Version Discovery
+
+**Module:** `husako-core/src/version_check.rs`
+
+### Per-source discovery
+
+**`release`** — GitHub API `kubernetes/kubernetes` tags:
+- Filter: strip `v` prefix, skip tags with `-` (pre-release), parse `semver::Version`
+- Returns `"{major}.{minor}"` format (no patch) — matches config's version format
+- Pagination: fetches 100 tags per page
+
+**`registry`** — Helm repo `index.yaml`:
+- HTTP GET `{repo}/index.yaml`, navigate `entries[chart]`
+- Filter: parseable semver with empty pre-release
+- Returns full semver (e.g., `"4.12.1"`)
+
+**`artifacthub`** — REST API:
+- Endpoint: `https://artifacthub.io/api/v1/packages/helm/{package}`
+- `available_versions` array, filter `prerelease == true` OR non-empty pre-release segment
+- 10-second request timeout
+
+**`git`** — `git ls-remote --tags`:
+- Parse tab-separated output, strip `refs/tags/` and `^{}` suffix
+- Strip `v` for semver parsing, filter stable
+- Returns original tag string (preserving `v` prefix)
+
+**`file`/`cluster`** — skipped (no version concept).
+
+### Version comparison (`versions_match`)
+
+1. Exact string match
+2. Strip `v` prefix from both
+3. If current has ≤1 dot (major.minor format): prefix match (`"1.35"` matches `"1.35.0"`)
+4. Otherwise: exact match after `v` stripping
+
+### Search pagination
+
+ArtifactHub search requests `PAGE_SIZE + 1` (21) results to detect `has_more`, truncates to 20 before returning.
+
+## 6. TOML Write-Back
+
+**Module:** `husako-config/src/edit.rs`
+
+Uses `toml_edit::DocumentMut` (CST-based editing) to preserve comments, whitespace, and formatting across edits.
+
+### Entry format
+
+All dependency entries use inline tables:
+```toml
+kubernetes = { source = "release", version = "1.35" }
+```
+
+Constructed via `source_to_inline_table()` (resources) and `chart_source_to_inline_table()` (charts).
+
+### Version update logic (`update_version_in_item`)
+
+Tries `"version"` key first, then `"tag"` key (for git sources). Works on both inline tables and standard tables.
+
+### Lazy loading
+
+The TOML document is only loaded from disk if at least one entry needs updating, avoiding unnecessary I/O for up-to-date projects.
+
+### Remove operations
+
+`table.remove(name)` on the section's table-like interface. `remove_dependency` tries resources first, then charts — first match wins.
+
+## 7. Cache Structure
+
+```
+.husako/
+├── cache/
+│   ├── release/{tag}/              # e.g., v1.35.0/
+│   │   ├── _manifest.json          # [(discovery_key, filename)] pairs
+│   │   └── apis__apps__v1_openapi.json
+│   ├── git/{hash}/                 # djb2 hash of repo URL (16-char hex)
+│   │   └── {tag}/
+│   │       └── apis__cert-manager.io__v1.json
+│   └── helm/
+│       ├── registry/{hash}/        # djb2("{repo}/{chart}")
+│       │   └── {version}.json
+│       ├── artifacthub/{hash}/     # djb2(package)
+│       │   └── {version}.json
+│       └── git/{hash}/             # djb2("{repo}/{path}")
+│           └── {tag}.json
+└── types/
+    ├── k8s/                        # generated .d.ts + .js per group-version
+    └── helm/                       # generated .d.ts + .js per chart
+```
+
+### Hash function
+
+djb2: `hash = hash.wrapping_mul(33).wrapping_add(byte)` from seed 5381, formatted as 16-char zero-padded hex. Used identically in `husako-helm` and `husako-core/schema_source.rs`.
+
+### Release cache specifics
+
+- Cache key is the git tag, making it deterministic for pinned versions.
+- Discovery paths use `__` as separator: `apis/apps/v1` → `apis__apps__v1_openapi.json`.
+- `_manifest.json` enables fast reload; directory scanning is the fallback.
+
+### Invalidation model
+
+No explicit invalidation. Pinned sources (release+version, git+tag, chart+version) are deterministic by design. File and cluster sources are not cached (intentionally mutable).
+
+## 8. Critical Invariants
+
+1. **CRD reclassification must precede group-version partitioning** — otherwise CRD schemas stay in `Other` and are never emitted to module files.
+
+2. **`_schema.json` version 2** — both the producer (`schema_store.rs`) and consumer (`validate.rs`) must agree on version 2. `from_json()` returns `None` for any other version.
+
+3. **`HusakoK8sResolver` handles both `k8s/*` and `helm/*`** — despite the name, this single resolver maps both prefixes to `.husako/types/*.js` files.
+
+4. **tsconfig.json paths must include `husako` and `k8s/*`** — optionally `helm/*` when charts are configured. Missing paths break IDE autocomplete.
+
+5. **Schema filename ↔ discovery key** — uses `__` → `/` replacement (e.g., `apis__apps__v1` ↔ `apis/apps/v1`).
+
+6. **Module resolution chain order** — `BuiltinResolver` → `HusakoK8sResolver` → `HusakoFileResolver`. Each returns `None` for unhandled imports.
+
+7. **Generate priority** — `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip. Charts from `[charts]` are always generated when configured.
+
+8. **Render precedence** — `_spec` > `_specParts` > `_resources`. Calling `.spec({...})` clears `_specParts`.
+
+9. **Dependency list sorting** — `list_dependencies()` and `check_outdated()` iterate in sorted order by name for deterministic output.

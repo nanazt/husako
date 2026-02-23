@@ -175,15 +175,12 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags 
 
 ## Design Documents
 
-Read `.claude/*.md` before making changes to related areas. Key documents:
+Read `.claude/*.md` before making changes to related areas:
 
-- `.claude/builder-spec.md` — Authoritative reference for the builder DSL rules
-- `.claude/plans/m13-husako-toml.md` — `husako.toml` config design (M13a/M13b/M13c)
-- `.claude/plans/m15-helm-values-schema.md` — Helm values schema type generation (M15a/M15b/M15c)
+- `.claude/builder-spec.md` — Builder DSL rules
+- `.claude/cli-design.md` — CLI visual design system
+- `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching)
 
-## Plan Details
+## Plans
 
-Always check `.claude/PLAN.md` before proceeding.
-Before implementing a plan, write the plan document first.
-
-Plan files live in `.claude/plans/` and follow the naming convention `mN-<topic>.md` (e.g., `m13-husako-toml.md`). The `N` matches the milestone number in `PLAN.md`.
+When implementing non-trivial features, write a plan document first in `.claude/plans/`.
