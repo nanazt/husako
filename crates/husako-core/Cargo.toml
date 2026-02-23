@@ -1,20 +1,20 @@
 [package]
 name = "husako-core"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "Core pipeline orchestration for husako"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-husako-compile-oxc = { path = "../husako-compile-oxc", version = "0.1.0" }
-husako-config = { path = "../husako-config", version = "0.1.0" }
-husako-dts = { path = "../husako-dts", version = "0.1.0" }
-husako-helm = { path = "../husako-helm", version = "0.1.0" }
-husako-openapi = { path = "../husako-openapi", version = "0.1.0" }
-husako-runtime-qjs = { path = "../husako-runtime-qjs", version = "0.1.0" }
-husako-sdk = { path = "../husako-sdk", version = "0.1.0" }
-husako-yaml = { path = "../husako-yaml", version = "0.1.0" }
+husako-compile-oxc = { path = "../husako-compile-oxc", version = "0" }
+husako-config = { path = "../husako-config", version = "0" }
+husako-dts = { path = "../husako-dts", version = "0" }
+husako-helm = { path = "../husako-helm", version = "0" }
+husako-openapi = { path = "../husako-openapi", version = "0" }
+husako-runtime-qjs = { path = "../husako-runtime-qjs", version = "0" }
+husako-sdk = { path = "../husako-sdk", version = "0" }
+husako-yaml = { path = "../husako-yaml", version = "0" }
 regex-lite = "0.1"
 reqwest.workspace = true
 semver.workspace = true

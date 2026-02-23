@@ -206,12 +206,12 @@ gaji build   # compile TS → YAML
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
 | `check.yml` | PRs + push to `master` | fmt, clippy, tests |
-| `version.yml` | Push to `master` | release-plz: release PR + crates.io publish |
+| `version.yml` | Manual (`workflow_dispatch`) + `v*` tag | release-plz: publish changed crates + GitHub Release |
 | `distribute.yml` | `v*` tag | Cross-platform binaries, GitHub release assets, npm publish |
 | `audit.yml` | Weekly | `cargo audit` |
 | `sync-workflows.yml` | `workflows/**` changed | Regenerate YAML from TS sources |
 
-Release flow: merge PR to `master` → release-plz creates release PR → merge release PR → crates.io publish + git tag → binary builds + npm publish.
+Release flow: merge PR to `master` → trigger "Version" workflow manually → release-plz publishes changed crates to crates.io + creates GitHub Release → push `v*` tag → binary builds + npm publish.
 
 Key files: `release-plz.toml`, `gaji.config.ts`, `npm/` (package structure), `scripts/sync-versions.sh`.
 

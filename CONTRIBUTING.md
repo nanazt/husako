@@ -6,8 +6,7 @@
 2. **Open a PR** to `master` — this triggers quality gates automatically
 3. **Quality gates** (`lint` and `test`) must pass before merge
 4. **Squash merge** — the only merge strategy allowed, keeps `master` linear
-5. **Release PR** — release-plz creates a PR with version bumps and changelog when changes land on `master`
-6. **Release** — merging the release PR publishes crates, creates a git tag, and triggers binary distribution
+5. **Release** — trigger the "Version" workflow manually (`gh workflow run version.yml`); release-plz publishes changed crates to crates.io and creates a GitHub Release; push a `v*` tag to trigger binary distribution
 
 ## Building
 
@@ -45,7 +44,7 @@ Source files live in `workflows/`, output goes to `.github/workflows/`. Do not e
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
 | `check.yml` | PRs and pushes to `master` | Format check, clippy, tests |
-| `version.yml` | Push to `master` | release-plz creates release PR and publishes crates |
+| `version.yml` | Manual (`workflow_dispatch`) + `v*` tag | release-plz publishes changed crates and creates GitHub Release |
 | `distribute.yml` | `v*` tag | Cross-platform binary builds, GitHub release assets, npm publish |
 | `audit.yml` | Weekly (Monday) | `cargo audit` security scan |
 | `sync-workflows.yml` | Push to `master` changing `workflows/**` | Regenerates workflow YAML |
