@@ -39,11 +39,18 @@ Every builder exports a PascalCase factory function — `Deployment()`, `Service
 
 ## Install
 
-Build from source (requires Rust 1.85+):
+Build from source:
 
 ```
 cargo install --git https://github.com/nanazt/husako husako-cli
 ```
+
+## Requirements
+
+- **Rust 1.85+** — to build from source
+- **git** — used by `husako generate` and `husako add` for git-based schema and chart sources
+
+TypeScript/Node.js is not required. husako embeds its own TypeScript compiler and JavaScript runtime.
 
 ## Getting started
 
