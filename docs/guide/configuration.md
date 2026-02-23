@@ -17,7 +17,7 @@ cert-manager = { source = "git", repo = "https://github.com/cert-manager/cert-ma
 ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
 
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+flux = { source = "path", path = "plugins/flux" }
 ```
 
 ---
@@ -153,7 +153,7 @@ local-chart = { source = "file", path = "./charts/my-chart/values.schema.json" }
 
 ```toml
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+flux = { source = "path", path = "plugins/flux" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 

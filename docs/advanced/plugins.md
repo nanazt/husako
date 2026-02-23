@@ -29,7 +29,7 @@ husako plugin add <name> --path <local-dir>
 
 ```toml
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+flux = { source = "path", path = "plugins/flux" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
