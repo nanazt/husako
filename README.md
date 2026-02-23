@@ -39,11 +39,19 @@ Every builder exports a PascalCase factory function — `Deployment()`, `Service
 
 ## Install
 
-Build from source:
+**npm** (recommended):
 
 ```
-cargo install --git https://github.com/nanazt/husako husako-cli
+npm install -g husako
 ```
+
+**Cargo** (from source):
+
+```
+cargo install husako
+```
+
+Or download prebuilt binaries from [GitHub Releases](https://github.com/nanazt/husako/releases).
 
 ## Requirements
 

@@ -2,6 +2,7 @@
 name = "husako-dts"
 version.workspace = true
 edition.workspace = true
+description = "TypeScript type definition generator for husako"
 license.workspace = true
 repository.workspace = true
 
@@ -10,6 +11,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-husako-core = { path = "../husako-core" }
+husako-core = { path = "../husako-core", version = "0.1.0" }
 insta.workspace = true
 serde_json = { workspace = true }

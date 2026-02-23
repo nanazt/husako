@@ -177,6 +177,27 @@ The `Render` command resolves the file argument as: direct path → entry alias 
 
 The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
 
+## CI/CD
+
+Workflows are authored in TypeScript using [gaji](https://github.com/dodok8/gaji) and compiled to YAML. Source files in `workflows/`, output in `.github/workflows/`.
+
+```bash
+gaji dev     # generate types
+gaji build   # compile TS → YAML
+```
+
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| `check.yml` | PRs + push to `master` | fmt, clippy, tests |
+| `version.yml` | Push to `master` | release-plz: release PR + crates.io publish |
+| `distribute.yml` | `v*` tag | Cross-platform binaries, GitHub release assets, npm publish |
+| `audit.yml` | Weekly | `cargo audit` |
+| `sync-workflows.yml` | `workflows/**` changed | Regenerate YAML from TS sources |
+
+Release flow: push to `master` → release-plz creates release PR → merge PR → crates.io publish + git tag → binary builds + npm publish.
+
+Key files: `release-plz.toml`, `gaji.config.ts`, `npm/` (package structure), `scripts/sync-versions.sh`.
+
 ## Design Documents
 
 Read `.claude/*.md` before making changes to related areas:

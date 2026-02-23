@@ -2,14 +2,15 @@
 name = "husako"
 version.workspace = true
 edition.workspace = true
+description = "Type-safe Kubernetes resource authoring in TypeScript"
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-husako-config = { path = "../husako-config" }
-husako-core = { path = "../husako-core" }
-husako-openapi = { path = "../husako-openapi" }
-husako-runtime-qjs = { path = "../husako-runtime-qjs" }
+husako-config = { path = "../husako-config", version = "0.1.0" }
+husako-core = { path = "../husako-core", version = "0.1.0" }
+husako-openapi = { path = "../husako-openapi", version = "0.1.0" }
+husako-runtime-qjs = { path = "../husako-runtime-qjs", version = "0.1.0" }
 clap.workspace = true
 crossterm.workspace = true
 dialoguer.workspace = true
@@ -19,7 +20,7 @@ indicatif.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
-husako-dts = { path = "../husako-dts" }
+husako-dts = { path = "../husako-dts", version = "0.1.0" }
 predicates = "3"
 insta.workspace = true
 serde_json.workspace = true

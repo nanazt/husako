@@ -2,6 +2,7 @@
 name = "husako-compile-oxc"
 version.workspace = true
 edition.workspace = true
+description = "TypeScript to JavaScript compiler via oxc for husako"
 license.workspace = true
 repository.workspace = true
 

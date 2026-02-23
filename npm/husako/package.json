@@ -1,0 +1,23 @@
+{
+  "name": "husako",
+  "version": "0.1.0",
+  "description": "Type-safe Kubernetes resource authoring in TypeScript",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nanazt/husako"
+  },
+  "bin": {
+    "husako": "bin/husako.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "optionalDependencies": {
+    "@husako/linux-x64": "0.1.0",
+    "@husako/linux-arm64": "0.1.0",
+    "@husako/darwin-x64": "0.1.0",
+    "@husako/darwin-arm64": "0.1.0",
+    "@husako/win32-x64": "0.1.0"
+  }
+}
