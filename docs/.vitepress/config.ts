@@ -1,7 +1,11 @@
 import { defineConfig } from 'vitepress'
 
+// VITEPRESS_BASE is set by CI when building versioned archives (e.g. /husako/v0.1.0/).
+// Defaults to /husako/ for the latest (master) build.
+const base = (process.env.VITEPRESS_BASE ?? '/husako/') as `/${string}/`
+
 export default defineConfig({
-  base: '/husako/',
+  base,
   title: 'husako',
   description: 'Type-safe Kubernetes resource authoring in TypeScript',
   lang: 'en',
@@ -20,6 +24,15 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Reference', link: '/reference/cli' },
       { text: 'Advanced', link: '/advanced/plugins' },
+      // Version switcher — add a new entry here when cutting a release:
+      // { text: 'vX.Y.Z', link: 'https://nanazt.github.io/husako/vX.Y.Z/' }
+      {
+        text: 'master',
+        items: [
+          { text: 'master (latest)', link: 'https://nanazt.github.io/husako/' },
+          // v0.1.0: { text: 'v0.1.0', link: 'https://nanazt.github.io/husako/v0.1.0/' },
+        ],
+      },
     ],
 
     sidebar: [
