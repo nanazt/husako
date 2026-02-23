@@ -4,7 +4,7 @@ layout: home
 hero:
   name: husako
   text: Kubernetes resources in TypeScript
-  tagline: Type safety, autocomplete, and real language features — instead of templating hacks on top of YAML.
+  tagline: Type safety, autocomplete, and the full TypeScript language — instead of templating hacks on top of YAML.
   actions:
     - theme: brand
       text: Get Started
@@ -18,7 +18,7 @@ features:
     details: Every resource kind generates a typed builder class. Your editor catches mistakes before kubectl does.
   - title: No Node.js Required
     details: husako embeds its own TypeScript compiler (oxc) and JavaScript runtime (QuickJS). No npm, no Node, no surprises.
-  - title: A Real Language
+  - title: Resources as Code
     details: Use functions, variables, loops, and imports to compose resources. Share common metadata, parameterize environments, reuse pod templates across deployments.
   - title: Extensible
     details: Add Helm chart type generation, CRDs from any source, and community plugins for tools like Flux CD.
