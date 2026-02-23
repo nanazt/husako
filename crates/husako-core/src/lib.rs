@@ -365,6 +365,7 @@ impl fmt::Display for TemplateName {
 pub struct ScaffoldOptions {
     pub directory: PathBuf,
     pub template: TemplateName,
+    pub k8s_version: String,
 }
 
 pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
@@ -391,19 +392,22 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
     // Write .gitignore (shared across all templates)
     write_file(&dir.join(".gitignore"), husako_sdk::TEMPLATE_GITIGNORE)?;
 
+    let config_content = match options.template {
+        TemplateName::Simple => husako_sdk::TEMPLATE_SIMPLE_CONFIG,
+        TemplateName::Project => husako_sdk::TEMPLATE_PROJECT_CONFIG,
+        TemplateName::MultiEnv => husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
+    };
+    let config_content = config_content.replace("%K8S_VERSION%", &options.k8s_version);
+    write_file(
+        &dir.join(husako_config::CONFIG_FILENAME),
+        &config_content,
+    )?;
+
     match options.template {
         TemplateName::Simple => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_SIMPLE_CONFIG,
-            )?;
             write_file(&dir.join("entry.ts"), husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
         }
         TemplateName::Project => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_PROJECT_CONFIG,
-            )?;
             write_file(
                 &dir.join("env/dev.ts"),
                 husako_sdk::TEMPLATE_PROJECT_ENV_DEV,
@@ -422,10 +426,6 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
             )?;
         }
         TemplateName::MultiEnv => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
-            )?;
             write_file(
                 &dir.join("base/nginx.ts"),
                 husako_sdk::TEMPLATE_MULTI_ENV_BASE_NGINX,
@@ -458,6 +458,7 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
 pub struct InitOptions {
     pub directory: PathBuf,
     pub template: TemplateName,
+    pub k8s_version: String,
 }
 
 pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
@@ -489,22 +490,25 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
         write_file(&gitignore_path, husako_sdk::TEMPLATE_GITIGNORE)?;
     }
 
+    let config_content = match options.template {
+        TemplateName::Simple => husako_sdk::TEMPLATE_SIMPLE_CONFIG,
+        TemplateName::Project => husako_sdk::TEMPLATE_PROJECT_CONFIG,
+        TemplateName::MultiEnv => husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
+    };
+    let config_content = config_content.replace("%K8S_VERSION%", &options.k8s_version);
+    write_file(
+        &dir.join(husako_config::CONFIG_FILENAME),
+        &config_content,
+    )?;
+
     match options.template {
         TemplateName::Simple => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_SIMPLE_CONFIG,
-            )?;
             let entry_path = dir.join("entry.ts");
             if !entry_path.exists() {
                 write_file(&entry_path, husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
             }
         }
         TemplateName::Project => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_PROJECT_CONFIG,
-            )?;
             let files = [
                 ("env/dev.ts", husako_sdk::TEMPLATE_PROJECT_ENV_DEV),
                 (
@@ -522,10 +526,6 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
             }
         }
         TemplateName::MultiEnv => {
-            write_file(
-                &dir.join(husako_config::CONFIG_FILENAME),
-                husako_sdk::TEMPLATE_MULTI_ENV_CONFIG,
-            )?;
             let files = [
                 ("base/nginx.ts", husako_sdk::TEMPLATE_MULTI_ENV_BASE_NGINX),
                 (
@@ -1740,12 +1740,46 @@ mod tests {
         let opts = ScaffoldOptions {
             directory: dir.clone(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         scaffold(&opts).unwrap();
 
         assert!(dir.join(".gitignore").exists());
         assert!(dir.join("husako.toml").exists());
         assert!(dir.join("entry.ts").exists());
+    }
+
+    #[test]
+    fn scaffold_replaces_k8s_version_placeholder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("my-app");
+
+        let opts = ScaffoldOptions {
+            directory: dir.clone(),
+            template: TemplateName::Simple,
+            k8s_version: "1.32".to_string(),
+        };
+        scaffold(&opts).unwrap();
+
+        let config = std::fs::read_to_string(dir.join("husako.toml")).unwrap();
+        assert!(config.contains("version = \"1.32\""));
+        assert!(!config.contains("%K8S_VERSION%"));
+    }
+
+    #[test]
+    fn init_replaces_k8s_version_placeholder() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let opts = InitOptions {
+            directory: tmp.path().to_path_buf(),
+            template: TemplateName::Simple,
+            k8s_version: "1.33".to_string(),
+        };
+        init(&opts).unwrap();
+
+        let config = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert!(config.contains("version = \"1.33\""));
+        assert!(!config.contains("%K8S_VERSION%"));
     }
 
     #[test]
@@ -1756,6 +1790,7 @@ mod tests {
         let opts = ScaffoldOptions {
             directory: dir.clone(),
             template: TemplateName::Project,
+            k8s_version: "1.35".to_string(),
         };
         scaffold(&opts).unwrap();
 
@@ -1775,6 +1810,7 @@ mod tests {
         let opts = ScaffoldOptions {
             directory: dir.clone(),
             template: TemplateName::MultiEnv,
+            k8s_version: "1.35".to_string(),
         };
         scaffold(&opts).unwrap();
 
@@ -1797,6 +1833,7 @@ mod tests {
         let opts = ScaffoldOptions {
             directory: dir,
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         let err = scaffold(&opts).unwrap_err();
         assert!(matches!(err, HusakoError::GenerateIo(_)));
@@ -1812,6 +1849,7 @@ mod tests {
         let opts = ScaffoldOptions {
             directory: dir.clone(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         scaffold(&opts).unwrap();
 
@@ -2015,6 +2053,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         init(&opts).unwrap();
 
@@ -2030,6 +2069,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Project,
+            k8s_version: "1.35".to_string(),
         };
         init(&opts).unwrap();
 
@@ -2045,6 +2085,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         let err = init(&opts).unwrap_err();
         assert!(err.to_string().contains("already exists"));
@@ -2058,6 +2099,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         init(&opts).unwrap();
 
@@ -2073,6 +2115,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         init(&opts).unwrap();
 
@@ -2089,6 +2132,7 @@ mod tests {
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
             template: TemplateName::Simple,
+            k8s_version: "1.35".to_string(),
         };
         init(&opts).unwrap();
 
