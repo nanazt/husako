@@ -1,6 +1,6 @@
 [package]
 name = "husako-yaml"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "JSON to YAML/JSON emitter for husako"
 license.workspace = true

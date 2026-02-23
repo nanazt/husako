@@ -122,13 +122,19 @@ pub enum ChartSource {
 
 /// A plugin dependency entry in `husako.toml`.
 /// `flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }`
+/// `flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }`
 /// `my-plugin = { source = "path", path = "./plugins/my-plugin" }`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "source")]
 pub enum PluginSource {
-    /// Clone from a git repository.
+    /// Clone from a git repository. If `path` is set, only that subdirectory is checked out
+    /// via sparse-checkout (useful for plugins bundled inside a monorepo).
     #[serde(rename = "git")]
-    Git { url: String },
+    Git {
+        url: String,
+        #[serde(default)]
+        path: Option<String>,
+    },
 
     /// Use a local directory.
     #[serde(rename = "path")]
@@ -590,11 +596,25 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
         assert_eq!(config.plugins.len(), 2);
         assert!(matches!(
             config.plugins["flux"],
-            PluginSource::Git { ref url } if url == "https://github.com/nanazt/husako-plugin-flux"
+            PluginSource::Git { ref url, path: None } if url == "https://github.com/nanazt/husako-plugin-flux"
         ));
         assert!(matches!(
             config.plugins["my-plugin"],
             PluginSource::Path { ref path } if path == "./plugins/my-plugin"
+        ));
+    }
+
+    #[test]
+    fn parse_plugin_git_with_path() {
+        let toml = r#"
+[plugins]
+flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert!(matches!(
+            config.plugins["flux"],
+            PluginSource::Git { ref url, path: Some(ref p) }
+                if url == "https://github.com/nanazt/husako" && p == "plugins/flux"
         ));
     }
 

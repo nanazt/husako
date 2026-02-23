@@ -6,6 +6,7 @@ const releasePlz = getAction("release-plz/action@v0.5");
 
 const release = new Job("ubuntu-latest", {
   permissions: { contents: "write", "id-token": "write" },
+  if: "github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')",
 }).steps((s) =>
   s
     .add(
@@ -22,31 +23,16 @@ const release = new Job("ubuntu-latest", {
     ),
 );
 
-const releasePr = new Job("ubuntu-latest", {
-  permissions: { contents: "write", "pull-requests": "write" },
-}).steps((s) =>
-  s
-    .add(
-      checkout({
-        with: { "fetch-depth": 0, "persist-credentials": false },
-      }),
-    )
-    .add(rustToolchain({}))
-    .add(
-      releasePlz({
-        with: { command: "release-pr" },
-        env: { GITHUB_TOKEN: "${{ secrets.PAT }}" },
-      }),
-    ),
-);
-
 new Workflow({
   name: "Version",
-  on: { push: { branches: ["master"] } },
+  on: {
+    workflow_dispatch: {},
+    push: { tags: ["v*"] },
+  },
   concurrency: {
     group: "release-plz-${{ github.ref }}",
     "cancel-in-progress": false,
   },
 })
-  .jobs((j) => j.add("release", release).add("release-pr", releasePr))
+  .jobs((j) => j.add("release", release))
   .build("version");

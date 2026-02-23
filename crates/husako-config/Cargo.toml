@@ -1,6 +1,6 @@
 [package]
 name = "husako-config"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "Project configuration parser for husako"
 license.workspace = true
