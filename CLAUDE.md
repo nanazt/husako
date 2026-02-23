@@ -27,7 +27,16 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 # Format
 cargo fmt --all --check   # check only
 cargo fmt --all           # apply
+
+# Tests
+cargo test --workspace --all-features
 ```
+
+Before committing, always run in this order:
+
+1. `cargo fmt --all` — fix formatting
+2. `cargo clippy --workspace --all-targets --all-features -- -D warnings` — fix all warnings
+3. `cargo test --workspace --all-features` — confirm tests pass
 
 ## Architecture
 
@@ -177,6 +186,14 @@ The `Render` command resolves the file argument as: direct path → entry alias 
 
 The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
 
+## Git Workflow
+
+`master` is a protected branch. Direct pushes are not allowed. All changes must go through a PR.
+
+- Create a feature branch, push it, then open a PR targeting `master`
+- PRs require 1 approving review and all CI checks to pass
+- Branches must be up to date with `master` before merging
+
 ## CI/CD
 
 Workflows are authored in TypeScript using [gaji](https://github.com/dodok8/gaji) and compiled to YAML. Source files in `workflows/`, output in `.github/workflows/`.
@@ -194,7 +211,7 @@ gaji build   # compile TS → YAML
 | `audit.yml` | Weekly | `cargo audit` |
 | `sync-workflows.yml` | `workflows/**` changed | Regenerate YAML from TS sources |
 
-Release flow: push to `master` → release-plz creates release PR → merge PR → crates.io publish + git tag → binary builds + npm publish.
+Release flow: merge PR to `master` → release-plz creates release PR → merge release PR → crates.io publish + git tag → binary builds + npm publish.
 
 Key files: `release-plz.toml`, `gaji.config.ts`, `npm/` (package structure), `scripts/sync-versions.sh`.
 
