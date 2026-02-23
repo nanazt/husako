@@ -251,6 +251,7 @@ gaji build   # compile TS → YAML
 | `distribute.yml` | `v*` tag | Cross-platform binaries, GitHub release assets, npm publish |
 | `audit.yml` | Weekly | `cargo audit` |
 | `sync-workflows.yml` | `workflows/**` changed | Regenerate YAML from TS sources |
+| `docs-deploy.yml` | Push to `master` on `docs/**` + manual | Build VitePress site, deploy to GitHub Pages (`nanazt.github.io/husako`) |
 
 Release flow: merge PR to `master` → trigger "Version" workflow manually → release-plz publishes changed crates to crates.io + creates GitHub Release → push `v*` tag → binary builds + npm publish.
 
