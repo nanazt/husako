@@ -1,8 +1,15 @@
-# Helm Integration
+# Helm Chart Values
 
-husako can generate TypeScript types from Helm chart `values.schema.json` files.
+husako generates TypeScript types from Helm chart `values.schema.json` files.
 
 This gives you autocomplete and type checking when composing Helm chart values in TypeScript.
+
+::: info Putting values to use
+husako generates the `Values` builder, but you need a resource builder that accepts a `values`
+field to actually deploy the chart. The [Flux CD plugin's `HelmRelease`](./plugins/flux) is
+currently the primary consumer. See the [Flux CD guide](./plugins/flux) for a complete
+end-to-end example combining `helm/*` imports with `HelmRelease`.
+:::
 
 ## Overview
 
@@ -24,7 +31,8 @@ You then import typed value builders from `"helm/<chart-name>"`.
 husako add --chart
 ```
 
-This prompts for the chart source type, searches ArtifactHub if selected, and helps you pick the name and version.
+This prompts for the chart source type, searches ArtifactHub if selected, and helps you pick
+the name and version.
 
 **Manual (`husako.toml`):**
 
@@ -43,19 +51,18 @@ After adding a chart dependency, run:
 husako generate
 ```
 
-This fetches `values.schema.json` for each chart in `[charts]` and writes typed builders to `.husako/types/helm/`.
+This fetches `values.schema.json` for each chart in `[charts]` and writes typed builders to
+`.husako/types/helm/`.
 
 ---
 
-## Using Helm values
+## Using the generated types
 
 Import the `Values` builder from `"helm/<chart-name>"` and use it to construct typed values:
 
 ```typescript
 import { Values } from "helm/ingress-nginx";
-import { metadata, build } from "husako";
 
-// Typed values for ingress-nginx
 const values = Values()
   .replicaCount(2)
   .controller({
@@ -64,10 +71,18 @@ const values = Values()
       requests: { cpu: "100m", memory: "90Mi" },
     },
   });
+```
 
-// Pass to a HelmRelease (e.g. with the Flux plugin)
+The `Values` type reflects the chart's `values.schema.json`. Your editor shows autocomplete
+and catches typos. When you call `._toJSON()` on a `Values` builder, it resolves to a plain
+object matching the chart's schema.
+
+To use this with a `HelmRelease`, pass the builder to `.values()`:
+
+```typescript
 import { HelmRelease } from "flux";
 import { HelmRepository } from "flux/source";
+import { Values } from "helm/ingress-nginx";
 
 const repo = HelmRepository("ingress-nginx-repo")
   .url("https://kubernetes.github.io/ingress-nginx");
@@ -76,14 +91,14 @@ const release = HelmRelease("ingress-nginx")
   .namespace("ingress")
   .chart("ingress-nginx", "4.11.0")
   .sourceRef(repo)
-  .values(values);
+  .values(
+    Values()
+      .replicaCount(2)
+      .controller({ service: { type: "LoadBalancer" } })
+  );
 
 build([repo, release]);
 ```
-
-The `Values` type has typed properties corresponding to the chart's `values.schema.json`.
-
-Your editor shows autocomplete and catches typos.
 
 ---
 
@@ -91,9 +106,8 @@ Your editor shows autocomplete and catches typos.
 
 ### registry
 
-Fetches from a Helm HTTP repository.
-
-Downloads `index.yaml`, finds the chart version, and extracts `values.schema.json` from the chart archive:
+Fetches from a Helm HTTP repository. Downloads `index.yaml`, finds the chart version, and
+extracts `values.schema.json` from the chart archive:
 
 ```toml
 [charts]
@@ -102,9 +116,7 @@ ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingr
 
 ### artifacthub
 
-Resolves the chart using the ArtifactHub API.
-
-Useful when you don't know the registry URL:
+Resolves the chart using the ArtifactHub API. Useful when you don't know the registry URL:
 
 ```toml
 [charts]
@@ -139,9 +151,8 @@ Useful for charts in the same repository.
 
 When using `husako add --chart` interactively, selecting ArtifactHub opens an inline search.
 
-Type to filter charts, use arrow keys to select, and press Enter to confirm.
-
-husako then fetches available versions and shows a selection list.
+Type to filter charts, use arrow keys to select, and press Enter to confirm. husako then
+fetches available versions and shows a selection list.
 
 The interactive flow:
 
@@ -159,9 +170,8 @@ The interactive flow:
 husako outdated
 ```
 
-For registry and ArtifactHub sources, husako queries upstream for newer versions and reports what's available.
-
-For git sources, it checks for newer tags.
+For registry and ArtifactHub sources, husako queries upstream for newer versions and reports
+what's available. For git sources, it checks for newer tags.
 
 ```
 husako update
