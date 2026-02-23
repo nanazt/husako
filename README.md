@@ -9,17 +9,17 @@ Inspired by [gaji](https://github.com/dodok8/gaji).
 ## Quick example
 
 ```typescript
-import { deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { Deployment } from "k8s/apps/v1";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const nginx = deployment()
+const nginx = Deployment()
   .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
-  .selector(selector().matchLabels({ app: "nginx" }))
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
   .containers([
-    container()
+    Container()
       .name("nginx")
       .image("nginx:1.25")
       .resources(
@@ -35,7 +35,7 @@ build([nginx]);
 $ husako render entry.ts
 ```
 
-Every builder exports a lowercase factory function — `deployment()`, `service()`, `container()`. Properties are chainable methods with full type safety and autocomplete. See [Getting started](#getting-started) below.
+Every builder exports a PascalCase factory function — `Deployment()`, `Service()`, `Container()`. Properties are chainable methods with full type safety and autocomplete. See [Getting started](#getting-started) below.
 
 ## Install
 
@@ -83,17 +83,17 @@ This writes a `.husako/` directory with `.d.ts` type definitions and `tsconfig.j
 With types initialized, you can use the typed builder API:
 
 ```typescript
-import { deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { selector } from "k8s/_common";
+import { Deployment } from "k8s/apps/v1";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { metadata, cpu, memory, requests, limits, build } from "husako";
 
-const nginx = deployment()
+const nginx = Deployment()
   .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
-  .selector(selector().matchLabels({ app: "nginx" }))
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
   .containers([
-    container()
+    Container()
       .name("nginx")
       .image("nginx:1.25")
       .resources(
@@ -105,7 +105,7 @@ const nginx = deployment()
 build([nginx]);
 ```
 
-Every builder exports a lowercase factory function — `deployment()`, `service()`, `container()`, etc. Properties are available as chainable methods. Workload resources get `.containers()` and `.initContainers()` shortcuts that reach into `template.spec`.
+Every builder exports a PascalCase factory function — `Deployment()`, `Service()`, `Container()`, etc. Properties are available as chainable methods. Workload resources get `.containers()` and `.initContainers()` shortcuts that reach into `template.spec`.
 
 `metadata()` is the entry point for metadata chains. Resource quantities have their own fragment builders — `cpu()`, `memory()`, `requests()`, `limits()` — that chain together and normalize values (e.g. `cpu(0.5)` becomes `"500m"`, `memory(2)` becomes `"2Gi"`).
 

@@ -20,8 +20,8 @@ class _StatefulSet extends _ResourceBuilder {
 }
 export function StatefulSet() { return new _StatefulSet(); }
 
-export class DeploymentSpec extends _SchemaBuilder {
+class _DeploymentSpec extends _SchemaBuilder {
   replicas(v) { return this._set("replicas", v); }
   template(v) { return this._set("template", v); }
 }
-export function deploymentSpec() { return new DeploymentSpec(); }
+export function DeploymentSpec() { return new _DeploymentSpec(); }

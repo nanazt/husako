@@ -344,7 +344,7 @@ fn emit_chart_builder_dts(out: &mut String, schema: &SchemaInfo) {
     }
     let _ = writeln!(
         out,
-        "export class {} extends _SchemaBuilder {{",
+        "export interface {} extends _SchemaBuilder {{",
         schema.ts_name
     );
     for prop in &schema.properties {
@@ -379,12 +379,12 @@ fn emit_chart_js(schemas: &[ExtractedSchema]) -> String {
         let _ = writeln!(out, "import {{ _SchemaBuilder }} from \"husako/_base\";\n");
     }
 
-    // Emit builder classes
+    // Emit builder classes (prefixed with _ to avoid collision with factory function)
     for schema in schemas {
         if !schema.info.ts_name.ends_with("Spec") && has_complex_property(&schema.info) {
             let _ = writeln!(
                 out,
-                "export class {} extends _SchemaBuilder {{",
+                "class _{} extends _SchemaBuilder {{",
                 schema.info.ts_name
             );
             for prop in &schema.info.properties {
@@ -399,7 +399,7 @@ fn emit_chart_js(schemas: &[ExtractedSchema]) -> String {
             let factory = to_factory_name(&schema.info.ts_name);
             let _ = writeln!(
                 out,
-                "export function {factory}() {{ return new {}(); }}\n",
+                "export function {factory}() {{ return new _{}(); }}\n",
                 schema.info.ts_name
             );
         }
@@ -408,13 +408,9 @@ fn emit_chart_js(schemas: &[ExtractedSchema]) -> String {
     out
 }
 
-/// Schema builder factory function name (first char lowercased).
+/// Schema builder factory function name (PascalCase, same as class name).
 fn to_factory_name(class_name: &str) -> String {
-    let mut chars = class_name.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
-    }
+    class_name.to_string()
 }
 
 #[cfg(test)]
@@ -451,16 +447,16 @@ mod tests {
         // DTS checks
         assert!(dts.contains("export interface ValuesSpec"));
         assert!(dts.contains("replicaCount?: number;"));
-        assert!(dts.contains("export class Values extends _SchemaBuilder"));
+        assert!(dts.contains("export interface Values extends _SchemaBuilder"));
         assert!(dts.contains("replicaCount(value: number): this;"));
         assert!(dts.contains("image(value: Image): this;"));
-        assert!(dts.contains("export function values(): Values;"));
+        assert!(dts.contains("export function Values(): Values;"));
         assert!(dts.contains("export interface ImageSpec"));
 
         // JS checks
-        assert!(js.contains("export class Values extends _SchemaBuilder"));
+        assert!(js.contains("class _Values extends _SchemaBuilder"));
         assert!(js.contains("replicaCount(v) { return this._set(\"replicaCount\", v); }"));
-        assert!(js.contains("export function values() { return new Values(); }"));
+        assert!(js.contains("export function Values() { return new _Values(); }"));
     }
 
     #[test]
@@ -487,10 +483,10 @@ mod tests {
         let (dts, js) = generate_chart_types("test", &schema).unwrap();
 
         // Controller should be a builder (has nested Image ref)
-        assert!(dts.contains("export class Controller extends _SchemaBuilder"));
-        assert!(dts.contains("export function controller(): Controller;"));
-        assert!(js.contains("export class Controller extends _SchemaBuilder"));
-        assert!(js.contains("export function controller() { return new Controller(); }"));
+        assert!(dts.contains("export interface Controller extends _SchemaBuilder"));
+        assert!(dts.contains("export function Controller(): Controller;"));
+        assert!(js.contains("class _Controller extends _SchemaBuilder"));
+        assert!(js.contains("export function Controller() { return new _Controller(); }"));
 
         // Image should be a plain interface (only primitive props)
         assert!(dts.contains("export interface ImageSpec"));
@@ -581,8 +577,8 @@ mod tests {
         let (dts, js) = generate_chart_types("test", &schema).unwrap();
 
         // AppConfig should be extracted as a builder (has nested Ref)
-        assert!(dts.contains("export class AppConfig extends _SchemaBuilder"));
-        assert!(js.contains("export class AppConfig extends _SchemaBuilder"));
+        assert!(dts.contains("export interface AppConfig extends _SchemaBuilder"));
+        assert!(js.contains("class _AppConfig extends _SchemaBuilder"));
     }
 
     #[test]

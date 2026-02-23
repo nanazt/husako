@@ -11,15 +11,6 @@ fn to_factory_name(class_name: &str) -> String {
     class_name.to_string()
 }
 
-/// Schema builder factory function name (first char lowercased).
-fn to_schema_factory_name(class_name: &str) -> String {
-    let mut chars = class_name.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_lowercase().to_string() + chars.as_str(),
-    }
-}
-
 /// Format a TsType into its TypeScript string representation.
 pub fn format_ts_type(ty: &TsType) -> String {
     match ty {
@@ -203,6 +194,8 @@ pub fn emit_builder_class(
 }
 
 /// Emit a `_SchemaBuilder` subclass declaration (.d.ts).
+/// Uses `interface` (not `class`) so the factory function with the same PascalCase
+/// name can coexist via TypeScript declaration merging.
 fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
     let mut out = String::new();
 
@@ -211,7 +204,7 @@ fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
     }
     let _ = writeln!(
         out,
-        "export class {} extends _SchemaBuilder {{",
+        "export interface {} extends _SchemaBuilder {{",
         schema.ts_name
     );
 
@@ -219,20 +212,22 @@ fn emit_schema_builder_class(schema: &SchemaInfo) -> String {
 
     let _ = writeln!(out, "}}");
 
-    // Factory function declaration (lowercase for schema builders)
-    let factory = to_schema_factory_name(&schema.ts_name);
+    // Factory function declaration (PascalCase, same as class name)
+    let factory = to_factory_name(&schema.ts_name);
     let _ = writeln!(out, "export function {factory}(): {};", schema.ts_name);
 
     out
 }
 
 /// Emit a `_SchemaBuilder` subclass implementation (.js).
+/// The class is prefixed with `_` (not exported) to avoid name collision with
+/// the PascalCase factory function.
 fn emit_schema_builder_js(schema: &SchemaInfo) -> String {
     let mut out = String::new();
 
     let _ = writeln!(
         out,
-        "export class {} extends _SchemaBuilder {{",
+        "class _{} extends _SchemaBuilder {{",
         schema.ts_name
     );
 
@@ -240,11 +235,11 @@ fn emit_schema_builder_js(schema: &SchemaInfo) -> String {
 
     let _ = writeln!(out, "}}");
 
-    // Factory function (lowercase for schema builders)
-    let factory = to_schema_factory_name(&schema.ts_name);
+    // Factory function (PascalCase, same as class name)
+    let factory = to_factory_name(&schema.ts_name);
     let _ = writeln!(
         out,
-        "export function {factory}() {{ return new {}(); }}\n",
+        "export function {factory}() {{ return new _{}(); }}\n",
         schema.ts_name
     );
     out

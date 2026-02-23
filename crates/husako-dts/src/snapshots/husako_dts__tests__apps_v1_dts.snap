@@ -30,8 +30,8 @@ export interface Deployment extends _ResourceBuilder {
 }
 export function Deployment(): Deployment;
 
-export class DeploymentSpec extends _SchemaBuilder {
+export interface DeploymentSpec extends _SchemaBuilder {
   replicas(value: number): this;
   selector(value: LabelSelector): this;
 }
-export function deploymentSpec(): DeploymentSpec;
+export function DeploymentSpec(): DeploymentSpec;

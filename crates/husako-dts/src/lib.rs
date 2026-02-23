@@ -188,15 +188,16 @@ mod tests {
 
         // apps/v1.d.ts should have Deployment builder and DeploymentSpec interface
         let apps_dts = &result.files["k8s/apps/v1.d.ts"];
-        assert!(apps_dts.contains("class Deployment"));
+        assert!(apps_dts.contains("interface Deployment"));
         assert!(apps_dts.contains("interface DeploymentSpec"));
         assert!(apps_dts.contains("_ResourceBuilder"));
 
-        // apps/v1.js should have Deployment class
+        // apps/v1.js should have Deployment builder and factory
         let apps_js = &result.files["k8s/apps/v1.js"];
-        assert!(apps_js.contains("class Deployment"));
+        assert!(apps_js.contains("class _Deployment"));
         assert!(apps_js.contains("_ResourceBuilder"));
         assert!(apps_js.contains("\"apps/v1\""));
+        assert!(apps_js.contains("export function Deployment()"));
     }
 
     #[test]

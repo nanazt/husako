@@ -1900,13 +1900,13 @@ mod tests {
         let dts = std::fs::read_to_string(root.join(".husako/types/helm/my-chart.d.ts")).unwrap();
         assert!(dts.contains("export interface ValuesSpec"));
         assert!(dts.contains("replicaCount"));
-        assert!(dts.contains("export class Values extends _SchemaBuilder"));
-        assert!(dts.contains("export function values(): Values;"));
+        assert!(dts.contains("export interface Values extends _SchemaBuilder"));
+        assert!(dts.contains("export function Values(): Values;"));
 
         // Check JS content
         let js = std::fs::read_to_string(root.join(".husako/types/helm/my-chart.js")).unwrap();
-        assert!(js.contains("export class Values extends _SchemaBuilder"));
-        assert!(js.contains("export function values()"));
+        assert!(js.contains("class _Values extends _SchemaBuilder"));
+        assert!(js.contains("export function Values()"));
 
         // Check tsconfig includes helm path
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();

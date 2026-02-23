@@ -1,6 +1,6 @@
 import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { metadata, cpu, memory, requests, limits } from "husako";
 
 export function nginx(ns: string, replicas: number, image: string) {
@@ -9,9 +9,9 @@ export function nginx(ns: string, replicas: number, image: string) {
       metadata().name("nginx").namespace(ns).label("app", "nginx").label("env", ns)
     )
     .replicas(replicas)
-    .selector(labelSelector().matchLabels({ app: "nginx" }))
+    .selector(LabelSelector().matchLabels({ app: "nginx" }))
     .containers([
-      container()
+      Container()
         .name("nginx")
         .image(image)
         .resources(

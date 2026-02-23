@@ -89,7 +89,7 @@ class _ConfigMap extends _ResourceBuilder {
 }
 export function ConfigMap() { return new _ConfigMap(); }
 
-export class Container extends _SchemaBuilder {
+class _Container extends _SchemaBuilder {
   name(v) { return this._set("name", v); }
   image(v) { return this._set("image", v); }
   ports(v) { return this._set("ports", v); }
@@ -99,14 +99,14 @@ export class Container extends _SchemaBuilder {
   args(v) { return this._set("args", v); }
   volumeMounts(v) { return this._set("volumeMounts", v); }
 }
-export function container() { return new Container(); }
+export function Container() { return new _Container(); }
 
-export class PodTemplateSpec extends _SchemaBuilder {
+class _PodTemplateSpec extends _SchemaBuilder {
   metadata(v) { return this._set("metadata", v); }
   spec(v) { return this._set("spec", v); }
 }
-export function podTemplateSpec() { return new PodTemplateSpec(); }
-export function podTemplate() { return new PodTemplateSpec(); }
+export function PodTemplateSpec() { return new _PodTemplateSpec(); }
+export function PodTemplate() { return new _PodTemplateSpec(); }
 "#,
     )
     .unwrap();
@@ -119,11 +119,11 @@ export function podTemplate() { return new PodTemplateSpec(); }
 
 import { _SchemaBuilder } from "husako/_base";
 
-export class LabelSelector extends _SchemaBuilder {
+class _LabelSelector extends _SchemaBuilder {
   matchLabels(v) { return this._set("matchLabels", v); }
   matchExpressions(v) { return this._set("matchExpressions", v); }
 }
-export function labelSelector() { return new LabelSelector(); }
+export function LabelSelector() { return new _LabelSelector(); }
 "#,
     )
     .unwrap();
@@ -223,14 +223,14 @@ export function appMetadata(appName: string) {
     std::fs::write(
         root.join("deployments/nginx.ts"),
         r#"import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { appMetadata } from "../lib";
 export const nginx = Deployment()
   .metadata(appMetadata("nginx"))
   .replicas(1)
-  .selector(labelSelector().matchLabels({ app: "nginx" }))
-  .containers([container().name("nginx").image("nginx:1.25")]);
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
+  .containers([Container().name("nginx").image("nginx:1.25")]);
 "#,
     )
     .unwrap();
@@ -282,14 +282,14 @@ export function appMetadata(appName: string) {
     std::fs::write(
         root.join("deployments/nginx.ts"),
         r#"import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { appMetadata } from "../lib";
 export const nginx = Deployment()
   .metadata(appMetadata("nginx"))
   .replicas(1)
-  .selector(labelSelector().matchLabels({ app: "nginx" }))
-  .containers([container().name("nginx").image("nginx:1.25")]);
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
+  .containers([Container().name("nginx").image("nginx:1.25")]);
 "#,
     )
     .unwrap();
@@ -1450,14 +1450,14 @@ fn builder_spec_property_methods() {
         r#"
 import { build, metadata } from "husako";
 import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 const d = Deployment()
     .metadata(metadata().name("nginx").label("app", "nginx"))
     .replicas(3)
-    .selector(labelSelector().matchLabels({ app: "nginx" }))
+    .selector(LabelSelector().matchLabels({ app: "nginx" }))
     .containers([
-        container().name("nginx").image("nginx:1.25")
+        Container().name("nginx").image("nginx:1.25")
     ]);
 build([d]);
 "#,
@@ -1480,12 +1480,12 @@ fn builder_set_deep_merges() {
         r#"
 import { build, name } from "husako";
 import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
+import { Container } from "k8s/core/v1";
 const d = Deployment()
     .metadata(name("nginx"))
     .replicas(2)
-    .containers([container().name("nginx").image("nginx:1.25")])
-    .initContainers([container().name("init").image("busybox")]);
+    .containers([Container().name("nginx").image("nginx:1.25")])
+    .initContainers([Container().name("init").image("busybox")]);
 build([d]);
 "#,
     );
@@ -1534,15 +1534,15 @@ fn builder_spec_parts_and_resources_merge() {
         r#"
 import { build, name, cpu, memory, requests, limits } from "husako";
 import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 // _specParts (from .replicas/.containers) and _resources should merge
 const d = Deployment()
     .metadata(name("nginx"))
     .replicas(2)
-    .selector(labelSelector().matchLabels({ app: "nginx" }))
+    .selector(LabelSelector().matchLabels({ app: "nginx" }))
     .containers([
-        container().name("nginx").image("nginx:1.25")
+        Container().name("nginx").image("nginx:1.25")
             .resources(requests(cpu("250m").memory("128Mi")).limits(cpu("500m").memory("256Mi")))
     ]);
 build([d]);

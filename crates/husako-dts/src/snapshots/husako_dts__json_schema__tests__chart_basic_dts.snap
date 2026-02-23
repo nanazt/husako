@@ -25,14 +25,14 @@ export interface ValuesSpec {
   service?: ServiceSpec;
 }
 
-export class Values extends _SchemaBuilder {
+export interface Values extends _SchemaBuilder {
   image(value: Image): this;
   labels(value: Record<string, string>): this;
   /** Number of replicas */
   replicaCount(value: number): this;
   service(value: Service): this;
 }
-export function values(): Values;
+export function Values(): Values;
 
 export interface Image {
   /** Container image repository */

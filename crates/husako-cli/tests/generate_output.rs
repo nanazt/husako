@@ -959,7 +959,7 @@ fn js_common_schema_builders_render() {
     // _common.js should be generated since LabelSelector has Array(Ref) matchExpressions
     let common_js = read_generated(root, ".husako/types/k8s/_common.js");
     assert!(
-        common_js.contains("class LabelSelector"),
+        common_js.contains("class _LabelSelector"),
         "LabelSelector _SchemaBuilder missing from _common.js"
     );
 
@@ -970,11 +970,11 @@ fn js_common_schema_builders_render() {
         r#"
 import { build, name } from "husako";
 import { Deployment } from "k8s/apps/v1";
-import { labelSelector } from "k8s/_common";
+import { LabelSelector } from "k8s/_common";
 
 const d = Deployment()
     .metadata(name("nginx"))
-    .selector(labelSelector().matchLabels({ app: "nginx" }));
+    .selector(LabelSelector().matchLabels({ app: "nginx" }));
 
 build([d]);
 "#,

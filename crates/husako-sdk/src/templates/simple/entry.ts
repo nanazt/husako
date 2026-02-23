@@ -1,14 +1,14 @@
 import { Deployment } from "k8s/apps/v1";
-import { container } from "k8s/core/v1";
-import { labelSelector } from "k8s/_common";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
 import { metadata, cpu, memory, requests, limits, build } from "husako";
 
 const nginx = Deployment()
   .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
-  .selector(labelSelector().matchLabels({ app: "nginx" }))
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
   .containers([
-    container()
+    Container()
       .name("nginx")
       .image("nginx:1.25")
       .resources(
