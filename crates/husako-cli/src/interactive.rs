@@ -107,11 +107,14 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
                 .next()
                 .unwrap_or("chart")
                 .trim_end_matches(".git");
-            let name = crate::text_input::run("Name", default_name, is_valid_name)?
+            let nv =
+                crate::name_version_select::run(default_name, is_valid_name, |limit, offset| {
+                    husako_core::version_check::discover_git_tags(&repo, limit, offset)
+                        .map_err(|e| e.to_string())
+                })?
                 .ok_or_else(|| "cancelled".to_string())?;
-            let tag = prompt_version_select("Fetching git tags...", "Tag", || {
-                husako_core::version_check::discover_git_tags(&repo, 10).map_err(|e| e.to_string())
-            })?;
+            let name = nv.name;
+            let tag = nv.version;
             let path: String = Input::with_theme(&theme)
                 .with_prompt("Path to chart in repository")
                 .validate_with(validate_non_empty("path"))
@@ -157,20 +160,18 @@ fn prompt_registry_chart() -> Result<AddTarget, String> {
         .interact_text()
         .map_err(|e| e.to_string())?;
 
-    let name = crate::text_input::run("Name", &chart, is_valid_name)?
-        .ok_or_else(|| "cancelled".to_string())?;
-
-    let version = prompt_version_select("Fetching chart versions...", "Version", || {
-        husako_core::version_check::discover_registry_versions(&repo, &chart, 10)
+    let result = crate::name_version_select::run(&chart, is_valid_name, |limit, offset| {
+        husako_core::version_check::discover_registry_versions(&repo, &chart, limit, offset)
             .map_err(|e| e.to_string())
-    })?;
+    })?
+    .ok_or_else(|| "cancelled".to_string())?;
 
     Ok(AddTarget::Chart {
-        name,
+        name: result.name,
         source: ChartSource::Registry {
             repo,
             chart,
-            version,
+            version: result.version,
         },
     })
 }
@@ -245,19 +246,17 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
     let pkg = &pkgs[idx];
     let package_id = format!("{}/{}", pkg.repository.name, pkg.name);
 
-    let name = crate::text_input::run("Name", &pkg.name, is_valid_name)?
-        .ok_or_else(|| "cancelled".to_string())?;
-
-    let version = prompt_version_select("Fetching available versions...", "Version", || {
-        husako_core::version_check::discover_artifacthub_versions(&package_id, 10)
+    let result = crate::name_version_select::run(&pkg.name, is_valid_name, |limit, offset| {
+        husako_core::version_check::discover_artifacthub_versions(&package_id, limit, offset)
             .map_err(|e| e.to_string())
-    })?;
+    })?
+    .ok_or_else(|| "cancelled".to_string())?;
 
     Ok(AddTarget::Chart {
-        name,
+        name: result.name,
         source: ChartSource::ArtifactHub {
             package: package_id,
-            version,
+            version: result.version,
         },
     })
 }
@@ -289,17 +288,19 @@ fn prompt_artifacthub_manual() -> Result<AddTarget, String> {
         .map_err(|e| e.to_string())?;
 
     let default_name = package.rsplit('/').next().unwrap_or(&package);
-    let name = crate::text_input::run("Name", default_name, is_valid_name)?
+    let result =
+        crate::name_version_select::run(default_name, is_valid_name, |limit, offset| {
+            husako_core::version_check::discover_artifacthub_versions(&package, limit, offset)
+                .map_err(|e| e.to_string())
+        })?
         .ok_or_else(|| "cancelled".to_string())?;
 
-    let version = prompt_version_select("Fetching available versions...", "Version", || {
-        husako_core::version_check::discover_artifacthub_versions(&package, 10)
-            .map_err(|e| e.to_string())
-    })?;
-
     Ok(AddTarget::Chart {
-        name,
-        source: ChartSource::ArtifactHub { package, version },
+        name: result.name,
+        source: ChartSource::ArtifactHub {
+            package,
+            version: result.version,
+        },
     })
 }
 
@@ -361,7 +362,7 @@ fn prompt_release_version() -> Result<String, String> {
     prompt_version_select(
         "Fetching Kubernetes versions...",
         "Kubernetes version (e.g. 1.35)",
-        || husako_core::version_check::discover_recent_releases(5).map_err(|e| e.to_string()),
+        || husako_core::version_check::discover_recent_releases(5, 0).map_err(|e| e.to_string()),
     )
 }
 

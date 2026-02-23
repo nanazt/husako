@@ -1,4 +1,5 @@
 mod interactive;
+mod name_version_select;
 mod progress;
 mod search_select;
 mod style;

@@ -14,10 +14,13 @@ All interactive prompts, status messages, and command output must follow these r
 | Active item | Cyan+bold `>` | `> Resource` |
 | Inactive item | Plain | `  Chart` |
 | Default value hint | Cyan in parens | `**Name** (postgresql):` |
+| Inline hint | Dim text after placeholder | `(Enter to confirm)` |
 | Selected value (after) | Cyan | `Resource` |
 | FuzzySelect cursor | Black on white | dialoguer default |
 | Success prefix | Green+bold `✔` (`\u{2714}`) | After selection confirmed |
 | Failure prefix | Red+bold `✘` (`\u{2718}`) | After failure |
+| Latest tag | Appended to first version item | `1.16.3 (latest)` |
+| Scroll indicator | Dim `↑ more above` / `↓ more below` | Replaced by `loading…` during fetch |
 
 ### Prompt Flow
 
@@ -51,6 +54,7 @@ Cancelled:
 - **Colon suffix** — every prompt ends with `:` (or `: ` before input field)
 - **After-selection format** — `✔ {bold prompt}: {cyan value}` on one line
 - **Validation errors** — shown in red on the line below the prompt, then re-render
+- **Inline hints** — dim text placed on the same line as the prompt to avoid layout shift
 
 ## Status Messages
 
@@ -89,11 +93,77 @@ Paths, metadata, version details, extra context — all **dim** (`style::dim()`)
 
 Columns in `list` and `outdated` output use consistent minimum widths for legibility.
 
-## Infinite Scroll (search_select)
+## Custom Widgets
 
-- Items remain visible during loading (no full re-render)
-- Spinning indicator appears at the bottom of the list while loading
-- After load, spinner is replaced by new items or "no more results"
+Three custom widgets built on `console::Term` with raw key input. All write to stderr.
+
+### text_input (`text_input.rs`)
+
+Single-field text input with dim placeholder.
+
+```
+Name: postgresql      ← dim placeholder (empty input)
+Name: my-chart        ← user typing, placeholder gone
+  name is invalid     ← red validation error (optional)
+
+After:
+✔ Name: my-chart
+```
+
+- Character keys append, Backspace deletes, Enter confirms, Escape cancels
+- Empty input + Enter returns the default value
+- Validation callback; errors shown in red below the prompt
+
+### search_select (`search_select.rs`)
+
+Scrollable list with infinite scroll, used for ArtifactHub package search.
+
+```
+? Select a chart:
+  > metallb           ← cyan+bold
+    metallb-system
+    ↓ more below      ← dim, or "loading…" during fetch
+```
+
+- Up/Down navigate without wrapping
+- Auto-loads more items when cursor approaches bottom (`LOAD_THRESHOLD = 3`)
+- `↓ more below` swaps to `loading…` in-place during fetch (no layout shift)
+- `↑ more above` shown when scrolled past the top
+- Max 10 items visible at once
+- Enter confirms (`✔ prompt value`), Escape cancels
+
+### name_version_select (`name_version_select.rs`)
+
+Combined Name input + Version infinite-scroll select. Both controls are active simultaneously in one event loop.
+
+```
+Name: cert-manager  (Enter to confirm)   ← dim placeholder + inline hint
+Version:
+  > 1.16.3 (latest)                      ← cyan+bold, first item tagged
+    1.16.2
+    1.16.1
+    ↓ more below
+```
+
+- Character keys / Backspace edit the Name field
+- Arrow Up/Down move the Version cursor
+- Enter confirms both Name and selected Version at once
+- Escape cancels
+- Inline hint `(Enter to confirm)` on same line as Name placeholder (no separate hint line)
+- Version list fetched in pages of 10 (`VERSION_PAGE_SIZE`), max 8 visible
+- First version tagged with `(latest)` suffix; stripped before returning
+- Falls back to manual `dialoguer::Input` if no versions are found
+
+### Echo Suppression
+
+All three widgets use `with_echo_suppressed()` during blocking network calls:
+
+1. Enter crossterm raw mode to prevent arrow key escape sequences from echoing
+2. Execute the blocking fetch
+3. Restore normal mode
+4. Drain any buffered key events via `crossterm::event::poll()` + `read()`
+
+This prevents stray characters from appearing in the terminal while the user presses keys during loading.
 
 ## Color Helpers (style.rs)
 
@@ -107,6 +177,21 @@ Columns in `list` and `outdated` output use consistent minimum widths for legibi
 | `dep_name(s)` | Cyan text |
 | `dim(s)` | Dim text |
 | `bold(s)` | Bold text |
+
+## Theme (theme.rs)
+
+`HusakoTheme` wraps `dialoguer::ColorfulTheme` with husako-specific overrides:
+
+| Method | Format |
+|--------|--------|
+| `format_prompt` | `**Prompt:**` — bold, no prefix, colon suffix |
+| `format_input_prompt` | `**Prompt** *(default)*: ` — default in cyan parens |
+| `format_confirm_prompt` | `**Prompt** *(y/n)*: ` — hint in dim parens |
+| `format_input_prompt_selection` | `✔ **Prompt**: *value*` — green check, cyan value |
+| `format_confirm_prompt_selection` | `✔ **Prompt**: *yes/no*` |
+| `format_fuzzy_select_prompt` | `**Prompt**: search_term` — no `?` prefix |
+
+Used by all `dialoguer` prompts (`Select`, `Input`, `Confirm`, `FuzzySelect`) via `husako_theme()`.
 
 ## NO_COLOR Support
 

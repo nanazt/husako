@@ -80,7 +80,7 @@ pub fn search_artifacthub(
 }
 
 /// Discover the N most recent stable Kubernetes release versions (major.minor).
-pub fn discover_recent_releases(limit: usize) -> Result<Vec<String>, HusakoError> {
+pub fn discover_recent_releases(limit: usize, offset: usize) -> Result<Vec<String>, HusakoError> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("husako")
         .build()
@@ -115,10 +115,11 @@ pub fn discover_recent_releases(limit: usize) -> Result<Vec<String>, HusakoError
     }
 
     versions.sort_by(|a, b| b.cmp(a));
-    versions.truncate(limit);
 
     Ok(versions
         .iter()
+        .skip(offset)
+        .take(limit)
         .map(|v| format!("{}.{}", v.major, v.minor))
         .collect())
 }
@@ -128,6 +129,7 @@ pub fn discover_registry_versions(
     repo: &str,
     chart: &str,
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
     let url = format!("{}/index.yaml", repo.trim_end_matches('/'));
     let client = reqwest::blocking::Client::builder()
@@ -168,9 +170,13 @@ pub fn discover_registry_versions(
     }
 
     versions.sort_by(|a, b| b.cmp(a));
-    versions.truncate(limit);
 
-    Ok(versions.iter().map(|v| v.to_string()).collect())
+    Ok(versions
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|v| v.to_string())
+        .collect())
 }
 
 /// Discover the latest stable Kubernetes release version from GitHub API.
@@ -294,6 +300,7 @@ pub fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError>
 pub fn discover_artifacthub_versions(
     package: &str,
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
     let url = format!(
         "https://artifacthub.io/api/v1/packages/helm/{}",
@@ -314,16 +321,35 @@ pub fn discover_artifacthub_versions(
         .json()
         .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub response: {e}")))?;
 
-    let versions: Vec<String> = data["available_versions"]
+    let versions = parse_artifacthub_versions(&data, limit, offset);
+    Ok(versions)
+}
+
+/// Parse and sort ArtifactHub `available_versions` by semver descending.
+/// Filters out pre-release entries and non-semver strings.
+fn parse_artifacthub_versions(
+    data: &serde_json::Value,
+    limit: usize,
+    offset: usize,
+) -> Vec<String> {
+    let mut parsed: Vec<semver::Version> = data["available_versions"]
         .as_array()
         .unwrap_or(&vec![])
         .iter()
         .filter(|entry| !entry["prerelease"].as_bool().unwrap_or(false))
-        .filter_map(|entry| entry["version"].as_str().map(|s| s.to_string()))
-        .take(limit)
+        .filter_map(|entry| entry["version"].as_str())
+        .filter_map(|v| semver::Version::parse(v).ok())
+        .filter(|v| v.pre.is_empty())
         .collect();
 
-    Ok(versions)
+    parsed.sort_by(|a, b| b.cmp(a));
+
+    parsed
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|v| v.to_string())
+        .collect()
 }
 
 /// Discover the latest tag from a git repository using `git ls-remote --tags`.
@@ -367,7 +393,7 @@ pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError
 
 /// Discover recent stable tags from a git repository.
 /// Returns up to `limit` stable semver tags, sorted newest first.
-pub fn discover_git_tags(repo: &str, limit: usize) -> Result<Vec<String>, HusakoError> {
+pub fn discover_git_tags(repo: &str, limit: usize, offset: usize) -> Result<Vec<String>, HusakoError> {
     let output = std::process::Command::new("git")
         .args(["ls-remote", "--tags", "--sort=-v:refname", repo])
         .output()
@@ -404,9 +430,13 @@ pub fn discover_git_tags(repo: &str, limit: usize) -> Result<Vec<String>, Husako
     }
 
     entries.sort_by(|a, b| b.0.cmp(&a.0));
-    entries.truncate(limit);
 
-    Ok(entries.into_iter().map(|(_, tag)| tag).collect())
+    Ok(entries
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(_, tag)| tag)
+        .collect())
 }
 
 /// Compare two version strings for equivalence.
@@ -562,30 +592,63 @@ vwx234\trefs/tags/v1.7.0^{}\n";
     }
 
     #[test]
-    fn artifacthub_versions_filtering() {
-        // Simulate the JSON structure returned by ArtifactHub API
+    fn artifacthub_versions_filters_prerelease() {
         let data = serde_json::json!({
-            "version": "3.0.0",
             "available_versions": [
-                {"version": "3.0.0", "prerelease": false, "ts": 1700000000},
-                {"version": "3.0.0-rc.1", "prerelease": true, "ts": 1699900000},
-                {"version": "2.5.0", "prerelease": false, "ts": 1699000000},
-                {"version": "2.5.0-beta.1", "prerelease": true, "ts": 1698000000},
-                {"version": "2.4.0", "prerelease": false, "ts": 1697000000},
-                {"version": "2.3.0", "prerelease": false, "ts": 1696000000},
+                {"version": "3.0.0", "prerelease": false},
+                {"version": "3.0.0-rc.1", "prerelease": true},
+                {"version": "2.5.0", "prerelease": false},
+                {"version": "2.5.0-beta.1", "prerelease": true},
+                {"version": "2.4.0", "prerelease": false},
             ]
         });
-
-        let versions: Vec<String> = data["available_versions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|entry| !entry["prerelease"].as_bool().unwrap_or(false))
-            .filter_map(|entry| entry["version"].as_str().map(|s| s.to_string()))
-            .take(3)
-            .collect();
-
+        let versions = parse_artifacthub_versions(&data, 10, 0);
         assert_eq!(versions, vec!["3.0.0", "2.5.0", "2.4.0"]);
+    }
+
+    #[test]
+    fn artifacthub_versions_sorted_descending() {
+        // API may return versions in arbitrary order
+        let data = serde_json::json!({
+            "available_versions": [
+                {"version": "1.0.0", "prerelease": false},
+                {"version": "3.0.0", "prerelease": false},
+                {"version": "0.0.0", "prerelease": false},
+                {"version": "2.1.0", "prerelease": false},
+                {"version": "2.0.0", "prerelease": false},
+            ]
+        });
+        let versions = parse_artifacthub_versions(&data, 10, 0);
+        assert_eq!(versions, vec!["3.0.0", "2.1.0", "2.0.0", "1.0.0", "0.0.0"]);
+    }
+
+    #[test]
+    fn artifacthub_versions_offset_and_limit() {
+        let data = serde_json::json!({
+            "available_versions": [
+                {"version": "5.0.0", "prerelease": false},
+                {"version": "4.0.0", "prerelease": false},
+                {"version": "3.0.0", "prerelease": false},
+                {"version": "2.0.0", "prerelease": false},
+                {"version": "1.0.0", "prerelease": false},
+            ]
+        });
+        // Skip first 2, take 2
+        let versions = parse_artifacthub_versions(&data, 2, 2);
+        assert_eq!(versions, vec!["3.0.0", "2.0.0"]);
+    }
+
+    #[test]
+    fn artifacthub_versions_skips_invalid_semver() {
+        let data = serde_json::json!({
+            "available_versions": [
+                {"version": "2.0.0", "prerelease": false},
+                {"version": "not-a-version", "prerelease": false},
+                {"version": "1.0.0", "prerelease": false},
+            ]
+        });
+        let versions = parse_artifacthub_versions(&data, 10, 0);
+        assert_eq!(versions, vec!["2.0.0", "1.0.0"]);
     }
 
     #[test]
