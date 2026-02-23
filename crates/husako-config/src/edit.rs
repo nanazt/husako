@@ -193,9 +193,12 @@ fn chart_source_to_inline_table(source: &ChartSource) -> toml_edit::InlineTable 
 fn plugin_source_to_inline_table(source: &PluginSource) -> toml_edit::InlineTable {
     let mut t = toml_edit::InlineTable::new();
     match source {
-        PluginSource::Git { url } => {
+        PluginSource::Git { url, path } => {
             t.insert("source", "git".into());
             t.insert("url", url.as_str().into());
+            if let Some(p) = path {
+                t.insert("path", p.as_str().into());
+            }
         }
         PluginSource::Path { path } => {
             t.insert("source", "path".into());
@@ -394,6 +397,7 @@ mod tests {
             "flux",
             &PluginSource::Git {
                 url: "https://github.com/nanazt/husako-plugin-flux".to_string(),
+                path: None,
             },
         );
 
@@ -402,6 +406,29 @@ mod tests {
         assert!(output.contains("flux"));
         assert!(output.contains("git"));
         assert!(output.contains("husako-plugin-flux"));
+        // No path field when None
+        assert!(!output.contains("\"path\""));
+    }
+
+    #[test]
+    fn add_plugin_git_with_path() {
+        let (_tmp, path) = create_test_toml("");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_plugin(
+            &mut doc,
+            "flux",
+            &PluginSource::Git {
+                url: "https://github.com/nanazt/husako".to_string(),
+                path: Some("plugins/flux".to_string()),
+            },
+        );
+
+        let output = doc.to_string();
+        assert!(output.contains("[plugins]"));
+        assert!(output.contains("flux"));
+        assert!(output.contains("git"));
+        assert!(output.contains("plugins/flux"));
     }
 
     #[test]
