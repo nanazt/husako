@@ -16,6 +16,8 @@ cargo install husako
 
 Or download prebuilt binaries from [GitHub Releases](https://github.com/nanazt/husako/releases).
 
+---
+
 ## Requirements
 
 - **git** — used by `husako generate` and `husako add` for git-based schema and chart sources
@@ -24,7 +26,11 @@ To build from source:
 
 - **Rust 1.85+**
 
-TypeScript and Node.js are not required. husako embeds its own TypeScript compiler and JavaScript runtime.
+TypeScript and Node.js are not required.
+
+husako embeds its own TypeScript compiler and JavaScript runtime.
+
+---
 
 ## Create a project
 
@@ -33,11 +39,17 @@ husako new my-app
 cd my-app
 ```
 
-This generates a starter `entry.ts`, a `husako.toml` config file, and `.gitignore`. The `entry.ts` contains a minimal working example you can run immediately.
+This generates a starter `entry.ts`, a `husako.toml` config file, and `.gitignore`.
+
+The `entry.ts` contains a minimal working example you can run immediately.
+
+---
 
 ## Generate types
 
-Types are generated from your Kubernetes cluster's OpenAPI spec (or a pre-fetched spec file). They give you typed builder classes for every resource kind your cluster supports.
+Types are generated from your Kubernetes cluster's OpenAPI spec (or a pre-fetched spec file).
+
+They give you typed builder classes for every resource kind your cluster supports.
 
 Connect to a running cluster:
 
@@ -63,11 +75,15 @@ Skip Kubernetes type generation (only writes `husako.d.ts` and `tsconfig.json`):
 husako generate --skip-k8s
 ```
 
-This writes a `.husako/` directory with `.d.ts` type definitions and a `tsconfig.json`. Your editor reads these automatically for autocomplete and type checking.
+This writes a `.husako/` directory with `.d.ts` type definitions and a `tsconfig.json`.
+
+Your editor reads these automatically for autocomplete and type checking.
 
 ::: tip
 `.husako/` is auto-managed by husako and should never be committed to version control. It is added to `.gitignore` by `husako new`.
 :::
+
+---
 
 ## Write resources
 
@@ -96,9 +112,13 @@ const nginx = Deployment()
 build([nginx]);
 ```
 
-The `build()` call at the end is required. It collects all resources and signals husako to emit YAML.
+The `build()` call at the end is required.
+
+It collects all resources and signals husako to emit YAML.
 
 See [Writing Resources](/guide/writing-resources) for the full builder API.
+
+---
 
 ## Render
 

@@ -1,6 +1,8 @@
 # Helm Integration
 
-husako can generate TypeScript types from Helm chart `values.schema.json` files. This gives you autocomplete and type checking when composing Helm chart values in TypeScript.
+husako can generate TypeScript types from Helm chart `values.schema.json` files.
+
+This gives you autocomplete and type checking when composing Helm chart values in TypeScript.
 
 ## Overview
 
@@ -12,6 +14,8 @@ When you add a chart dependency to `husako.toml` and run `husako generate`, husa
 
 You then import typed value builders from `"helm/<chart-name>"`.
 
+---
+
 ## Adding a chart dependency
 
 **Interactive:**
@@ -22,12 +26,14 @@ husako add --chart
 
 This prompts for the chart source type, searches ArtifactHub if selected, and helps you pick the name and version.
 
-**Manual (husako.toml):**
+**Manual (`husako.toml`):**
 
 ```toml
 [charts]
 ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
 ```
+
+---
 
 ## Generating types
 
@@ -38,6 +44,8 @@ husako generate
 ```
 
 This fetches `values.schema.json` for each chart in `[charts]` and writes typed builders to `.husako/types/helm/`.
+
+---
 
 ## Using Helm values
 
@@ -73,13 +81,19 @@ const release = HelmRelease("ingress-nginx")
 build([repo, release]);
 ```
 
-The `Values` type has typed properties corresponding to the chart's `values.schema.json`. Your editor shows autocomplete and catches typos.
+The `Values` type has typed properties corresponding to the chart's `values.schema.json`.
+
+Your editor shows autocomplete and catches typos.
+
+---
 
 ## Source types
 
 ### registry
 
-Fetches from a Helm HTTP repository. Downloads `index.yaml`, finds the chart version, and extracts `values.schema.json` from the chart archive:
+Fetches from a Helm HTTP repository.
+
+Downloads `index.yaml`, finds the chart version, and extracts `values.schema.json` from the chart archive:
 
 ```toml
 [charts]
@@ -88,7 +102,9 @@ ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingr
 
 ### artifacthub
 
-Resolves the chart using the ArtifactHub API. Useful when you don't know the registry URL:
+Resolves the chart using the ArtifactHub API.
+
+Useful when you don't know the registry URL:
 
 ```toml
 [charts]
@@ -117,9 +133,15 @@ local-chart = { source = "file", path = "./charts/my-chart/values.schema.json" }
 
 Useful for charts in the same repository.
 
+---
+
 ## ArtifactHub search
 
-When using `husako add --chart` interactively, selecting ArtifactHub as the source opens an inline search. Type to filter charts, use arrow keys to select, and press Enter to confirm. husako then fetches available versions and shows a selection list.
+When using `husako add --chart` interactively, selecting ArtifactHub opens an inline search.
+
+Type to filter charts, use arrow keys to select, and press Enter to confirm.
+
+husako then fetches available versions and shows a selection list.
 
 The interactive flow:
 
@@ -129,13 +151,17 @@ The interactive flow:
 4. Choose a version (latest tagged first)
 5. husako writes the entry to `husako.toml`
 
+---
+
 ## Checking for updates
 
 ```
 husako outdated
 ```
 
-For registry and ArtifactHub sources, husako queries upstream for newer versions and reports what's available. For git sources, it checks for newer tags.
+For registry and ArtifactHub sources, husako queries upstream for newer versions and reports what's available.
+
+For git sources, it checks for newer tags.
 
 ```
 husako update

@@ -14,9 +14,13 @@ husako new <directory> [options]
 
 Creates `husako.toml`, `entry.ts` (or template files), and `.gitignore` in the specified directory.
 
+---
+
 ## husako generate
 
-Generate type definitions and `tsconfig.json` from Kubernetes schemas and Helm charts. Alias: `gen`.
+Generate type definitions and `tsconfig.json` from Kubernetes schemas and Helm charts.
+
+Alias: `gen`.
 
 ```
 husako generate [options]
@@ -29,11 +33,15 @@ husako gen [options]
 | `--spec-dir <path>` | Local directory with pre-fetched OpenAPI spec files |
 | `--skip-k8s` | Only write `husako.d.ts` and `tsconfig.json`, skip Kubernetes types |
 
-**Priority chain for k8s schema source:** `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip.
+Priority chain for k8s schema source: `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip.
 
-Chart types from `[charts]` are always generated when configured. Plugins from `[plugins]` are installed first.
+Chart types from `[charts]` are always generated when configured.
+
+Plugins from `[plugins]` are installed first.
 
 Output goes to `.husako/` (auto-managed, gitignored).
+
+---
 
 ## husako render
 
@@ -52,6 +60,8 @@ The file argument is resolved as: direct path → entry alias from `husako.toml`
 | `--max-heap-mb <mb>` | Maximum heap memory in megabytes |
 | `--verbose` | Print diagnostic traces to stderr |
 
+---
+
 ## husako init
 
 Set up husako in an existing project directory (in-place, no new directory created).
@@ -61,6 +71,8 @@ husako init [options]
 ```
 
 Same flags as `husako new` but runs in the current directory.
+
+---
 
 ## husako clean
 
@@ -76,7 +88,11 @@ husako clean [options]
 | `--cache` | Remove only `.husako/cache/` |
 | `--types` | Remove only `.husako/types/` and `.husako/plugins/` |
 
-Prompts for confirmation by default. Use `-y` / `--yes` to skip.
+Prompts for confirmation by default.
+
+Use `-y` / `--yes` to skip.
+
+---
 
 ## husako list / husako ls
 
@@ -88,6 +104,8 @@ husako ls
 ```
 
 Prints resource dependencies, chart dependencies, and plugins with their source types and versions.
+
+---
 
 ## husako add
 
@@ -103,7 +121,11 @@ husako add [options]
 | `--chart` | Add a chart (Helm values) dependency |
 | `-y, --yes` | Skip confirmation prompts |
 
-When run without flags, prompts for dependency type, source type, and details. For charts, searches ArtifactHub interactively.
+When run without flags, prompts for dependency type, source type, and details.
+
+For charts, searches ArtifactHub interactively.
+
+---
 
 ## husako remove / husako rm
 
@@ -114,7 +136,11 @@ husako remove <name>
 husako rm <name>
 ```
 
-Removes the named entry from `[resources]`, `[charts]`, or `[plugins]`. Prompts for confirmation. Use `-y` / `--yes` to skip.
+Removes the named entry from `[resources]`, `[charts]`, or `[plugins]`.
+
+Prompts for confirmation. Use `-y` / `--yes` to skip.
+
+---
 
 ## husako outdated
 
@@ -124,7 +150,11 @@ Check for newer versions of versioned dependencies.
 husako outdated
 ```
 
-Queries upstream (GitHub releases, Helm registry, ArtifactHub, git tags) for each dependency that has a version field and reports which ones have updates available.
+Queries upstream (GitHub releases, Helm registry, ArtifactHub, git tags) for each dependency that has a version field.
+
+Reports which ones have updates available.
+
+---
 
 ## husako update
 
@@ -140,7 +170,11 @@ husako update [name] [options]
 | `--resources-only` | Only update resource dependencies |
 | `--charts-only` | Only update chart dependencies |
 
-Pass a dependency name to update only that one. Without a name, updates all versioned dependencies.
+Pass a dependency name to update only that one.
+
+Without a name, updates all versioned dependencies.
+
+---
 
 ## husako info
 
@@ -150,7 +184,11 @@ Print a project summary and dependency details.
 husako info [name]
 ```
 
-Without a name, prints a project overview: config location, number of resources/charts/plugins, and whether types are generated. With a dependency name, prints source details for that dependency.
+Without a name, prints a project overview: config location, number of resources/charts/plugins, and whether types are generated.
+
+With a dependency name, prints source details for that dependency.
+
+---
 
 ## husako debug
 
@@ -160,7 +198,11 @@ Run health checks on the project setup.
 husako debug
 ```
 
-Checks: config file validity, generated types staleness, `tsconfig.json` consistency, and import path resolution. Reports any issues with suggested fixes.
+Checks: config file validity, generated types staleness, `tsconfig.json` consistency, and import path resolution.
+
+Reports any issues with suggested fixes.
+
+---
 
 ## husako validate
 
@@ -170,7 +212,11 @@ Compile TypeScript and validate resource structure without emitting YAML.
 husako validate <file-or-alias>
 ```
 
-Runs the full pipeline (TypeScript compile → execute → validate JSON contract) but does not write output. Useful in CI to catch errors early.
+Runs the full pipeline (TypeScript compile → execute → validate JSON contract) but does not write output.
+
+Useful in CI to catch errors early.
+
+---
 
 ## husako plugin
 

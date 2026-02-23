@@ -17,15 +17,21 @@ Top-level Kubernetes resources — schemas that carry `apiVersion` and `kind` (i
 | `.set(key, value)` | Sets an arbitrary top-level field outside spec. |
 | `.resources(...fragments)` | Sets container resource requirements. |
 
-Per-spec-property methods (`.replicas()`, `.selector()`, `.template()`, etc.) are generated from the OpenAPI spec. Each calls an internal `_setSpec()` and returns a new instance.
+Per-spec-property methods (`.replicas()`, `.selector()`, `.template()`, etc.) are generated from the OpenAPI spec.
 
-Deep-path shortcuts (`.containers()`, `.initContainers()`) are generated for resources that have a `template` property. They call an internal `_setDeep()` and reach into `spec.template.spec`.
+Each calls an internal `_setSpec()` and returns a new instance.
+
+Deep-path shortcuts (`.containers()`, `.initContainers()`) are generated for resources that have a `template` property.
+
+They call an internal `_setDeep()` and reach into `spec.template.spec`.
 
 **Examples:** `Deployment`, `Service`, `Namespace`, `StatefulSet`, `DaemonSet`, `ConfigMap`
 
 ### _SchemaBuilder
 
-Intermediate types with complex nested properties but no `apiVersion`/`kind`. Generated for schemas that have at least one property referencing another schema.
+Intermediate types with complex nested properties but no `apiVersion`/`kind`.
+
+Generated for schemas that have at least one property referencing another schema.
 
 | Method | Description |
 |--------|-------------|
@@ -46,9 +52,13 @@ Hand-crafted builders in the `"husako"` module for common cross-resource concern
 | ResourceListFragment | `cpu(v)`, `memory(v)` | `.cpu(v)`, `.memory(v)` |
 | ResourceRequirementsFragment | `requests(rl)`, `limits(rl)` | `.requests(rl)`, `.limits(rl)` |
 
+---
+
 ## Copy-on-write
 
-Every chainable method returns a **new** builder instance. The original is never mutated.
+Every chainable method returns a **new** builder instance.
+
+The original is never mutated.
 
 ```typescript
 const base = Deployment().metadata(metadata().name("base")).replicas(1);
@@ -57,6 +67,8 @@ const dev  = base.replicas(1);   // independent from prod
 ```
 
 This makes builders safe to use as templates and share across multiple resource definitions.
+
+---
 
 ## Merge semantics
 
@@ -77,6 +89,8 @@ merge([base, env]);
 // → { name: "svc", labels: { app: "web", env: "prod" } }
 ```
 
+---
+
 ## Render precedence
 
 When `_render()` builds the `spec` field, it checks three sources in order:
@@ -87,7 +101,11 @@ When `_render()` builds the `spec` field, it checks three sources in order:
 | 2 | `_specParts` | Per-property methods, `.containers()`, etc. | Accumulated per property. Merged with `_resources` if present. |
 | 3 | `_resources` | `.resources()` | Creates `template.spec.containers[0].resources`. |
 
-Calling `.spec(obj)` clears any per-property parts. Calling per-property methods clears any previously set `.spec()`.
+Calling `.spec(obj)` clears any per-property parts.
+
+Calling per-property methods clears any previously set `.spec()`.
+
+---
 
 ## Fragment builders in detail
 
@@ -140,6 +158,8 @@ Full quantity normalization table:
 | string | pass-through | `"512Mi"` → `"512Mi"` |
 | number | `v + "Gi"` | `2` → `"2Gi"` |
 
+---
+
 ## build() strict JSON contract
 
 `build()` validates every rendered resource against a strict JSON contract before emitting YAML.
@@ -166,6 +186,8 @@ If any banned value appears in the rendered output, husako exits with code 7 and
 - Must be called exactly once per entry file. Zero or multiple calls → exit 7.
 - Accepts a single builder or an array of builders.
 - Every item must have a `_render()` method. Plain objects throw `TypeError`.
+
+---
 
 ## TypeScript declaration shape
 
