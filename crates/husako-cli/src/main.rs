@@ -966,7 +966,7 @@ fn main() -> ExitCode {
             match action {
                 PluginAction::Add { name, url, path } => {
                     let source = if let Some(url) = url {
-                        husako_config::PluginSource::Git { url }
+                        husako_config::PluginSource::Git { url, path: None }
                     } else if let Some(path) = path {
                         husako_config::PluginSource::Path { path }
                     } else {

@@ -76,7 +76,7 @@ fn install_plugin(
     }
 
     match source {
-        PluginSource::Git { url } => install_git(name, url, target_dir),
+        PluginSource::Git { url, path } => install_git(name, url, path.as_deref(), target_dir),
         PluginSource::Path { path } => {
             let source_dir = project_root.join(path);
             install_path(name, &source_dir, target_dir)
@@ -84,7 +84,20 @@ fn install_plugin(
     }
 }
 
-fn install_git(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoError> {
+fn install_git(
+    name: &str,
+    url: &str,
+    subdir: Option<&str>,
+    target_dir: &Path,
+) -> Result<(), HusakoError> {
+    match subdir {
+        None => install_git_full(name, url, target_dir),
+        Some(sub) => install_git_subdir(name, url, sub, target_dir),
+    }
+}
+
+/// Shallow-clone the full repository into `target_dir`.
+fn install_git_full(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoError> {
     std::fs::create_dir_all(target_dir).map_err(|e| {
         HusakoError::GenerateIo(format!("create dir {}: {e}", target_dir.display()))
     })?;
@@ -103,7 +116,6 @@ fn install_git(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoErr
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Clean up partial clone
         let _ = std::fs::remove_dir_all(target_dir);
         return Err(HusakoError::GenerateIo(format!(
             "plugin '{name}': git clone failed: {stderr}"
@@ -116,6 +128,86 @@ fn install_git(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoErr
         let _ = std::fs::remove_dir_all(&git_dir);
     }
 
+    Ok(())
+}
+
+/// Use sparse-checkout to fetch only `subdir` from the repository,
+/// then copy its contents into `target_dir`.
+fn install_git_subdir(
+    name: &str,
+    url: &str,
+    subdir: &str,
+    target_dir: &Path,
+) -> Result<(), HusakoError> {
+    // Use a sibling temp directory for staging
+    let tmp_dir = {
+        let mut p = target_dir.to_path_buf();
+        let dir_name = format!(
+            "{}_tmp",
+            target_dir
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.to_string())
+        );
+        p.set_file_name(dir_name);
+        p
+    };
+
+    // Clean up any leftover temp dir
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir)
+            .map_err(|e| HusakoError::GenerateIo(format!("remove {}: {e}", tmp_dir.display())))?;
+    }
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| HusakoError::GenerateIo(format!("create dir {}: {e}", tmp_dir.display())))?;
+
+    let cleanup = |msg: String| -> HusakoError {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        HusakoError::GenerateIo(msg)
+    };
+
+    // git init
+    let run = |args: &[&str]| -> Result<(), HusakoError> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .output()
+            .map_err(|e| cleanup(format!("plugin '{name}': git {} failed: {e}", args[0])))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(cleanup(format!(
+                "plugin '{name}': git {} failed: {stderr}",
+                args[0]
+            )));
+        }
+        Ok(())
+    };
+
+    let tmp = tmp_dir.to_string_lossy();
+    run(&["init", &tmp])?;
+    run(&["-C", &tmp, "remote", "add", "origin", url])?;
+    run(&["-C", &tmp, "sparse-checkout", "set", subdir])?;
+    run(&["-C", &tmp, "pull", "--depth", "1", "origin", "HEAD"])?;
+
+    // Copy the subdirectory contents into target_dir
+    let subdir_path = tmp_dir.join(subdir);
+    if !subdir_path.is_dir() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(HusakoError::GenerateIo(format!(
+            "plugin '{name}': subdirectory '{subdir}' not found in repository"
+        )));
+    }
+
+    std::fs::create_dir_all(target_dir).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        HusakoError::GenerateIo(format!("create dir {}: {e}", target_dir.display()))
+    })?;
+
+    copy_dir_recursive(&subdir_path, target_dir).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        HusakoError::GenerateIo(format!("plugin '{name}': copy from subdir failed: {e}"))
+    })?;
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
     Ok(())
 }
 
