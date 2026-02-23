@@ -2056,3 +2056,231 @@ fn plugin_cli_add_path_and_remove() {
     let config_content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
     assert!(!config_content.contains("test"));
 }
+
+// --- Flux CD Plugin ---
+
+/// Install the bundled flux plugin into `.husako/plugins/flux/` for test isolation.
+fn install_flux_plugin(root: &Path) {
+    let plugin_dir = root.join(".husako/plugins/flux");
+    let modules_dir = plugin_dir.join("modules");
+    std::fs::create_dir_all(&modules_dir).unwrap();
+
+    std::fs::write(
+        plugin_dir.join("plugin.toml"),
+        include_str!("../../../plugins/flux/plugin.toml"),
+    )
+    .unwrap();
+    std::fs::write(
+        modules_dir.join("source.js"),
+        include_str!("../../../plugins/flux/modules/source.js"),
+    )
+    .unwrap();
+    std::fs::write(
+        modules_dir.join("index.js"),
+        include_str!("../../../plugins/flux/modules/index.js"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn flux_plugin_helm_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    install_flux_plugin(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name, namespace } from "husako";
+import { HelmRelease, HelmRepository } from "flux";
+
+const repo = HelmRepository()
+    .metadata(name("bitnami").namespace("flux-system"))
+    .url("https://charts.bitnami.com/bitnami")
+    .interval("1h");
+
+const release = HelmRelease()
+    .metadata(name("redis").namespace("default"))
+    .chart("redis", "18.0.0")
+    .sourceRef(repo)
+    .interval("5m")
+    .values({ architecture: "standalone" });
+
+build([repo, release]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains("kind: HelmRepository"))
+        .stdout(predicates::str::contains("name: bitnami"))
+        .stdout(predicates::str::contains("apiVersion: helm.toolkit.fluxcd.io/v2"))
+        .stdout(predicates::str::contains("kind: HelmRelease"))
+        .stdout(predicates::str::contains("name: redis"))
+        .stdout(predicates::str::contains("chart: redis"))
+        .stdout(predicates::str::contains("version: 18.0.0"))
+        .stdout(predicates::str::contains("architecture: standalone"));
+}
+
+#[test]
+fn flux_plugin_kustomization() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    install_flux_plugin(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name, namespace } from "husako";
+import { Kustomization } from "flux";
+import { GitRepository } from "flux/source";
+
+const repo = GitRepository()
+    .metadata(name("infra").namespace("flux-system"))
+    .url("https://github.com/example/infra")
+    .ref({ branch: "main" })
+    .interval("5m");
+
+const ks = Kustomization()
+    .metadata(name("infra").namespace("flux-system"))
+    .sourceRef(repo)
+    .path("./clusters/production")
+    .interval("10m")
+    .prune(true)
+    .targetNamespace("default");
+
+build([repo, ks]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains("kind: GitRepository"))
+        .stdout(predicates::str::contains("name: infra"))
+        .stdout(predicates::str::contains("apiVersion: kustomize.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains("kind: Kustomization"))
+        .stdout(predicates::str::contains("path: ./clusters/production"))
+        .stdout(predicates::str::contains("prune: true"))
+        .stdout(predicates::str::contains("targetNamespace: default"));
+}
+
+#[test]
+fn flux_plugin_source_ref_linking() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    install_flux_plugin(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name, namespace } from "husako";
+import { HelmRelease, HelmRepository } from "flux";
+
+const repo = HelmRepository("charts")
+    .metadata(name("charts").namespace("flux-system"))
+    .url("https://charts.example.com")
+    .interval("1h");
+
+const release = HelmRelease("app")
+    .chart("my-app", "1.0.0")
+    .sourceRef(repo);
+
+build([release]);
+"#,
+    )
+    .unwrap();
+
+    let output = husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    // sourceRef should be resolved from the HelmRepository builder
+    assert!(yaml.contains("kind: HelmRepository"));
+    assert!(yaml.contains("name: charts"));
+    assert!(yaml.contains("namespace: flux-system"));
+}
+
+#[test]
+fn flux_plugin_values_plain_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    install_flux_plugin(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name } from "husako";
+import { HelmRelease } from "flux";
+
+const release = HelmRelease("app")
+    .chart("my-app", 2.0)
+    .values({ replicas: 3, image: { tag: "latest" } });
+
+build([release]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: HelmRelease"))
+        .stdout(predicates::str::contains("chart: my-app"))
+        .stdout(predicates::str::contains("version: '2'"))
+        .stdout(predicates::str::contains("replicas: 3"))
+        .stdout(predicates::str::contains("tag: latest"));
+}
+
+#[test]
+fn flux_plugin_re_exports() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    install_flux_plugin(root);
+
+    // Import GitRepository from "flux" (re-exported) instead of "flux/source"
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name } from "husako";
+import { GitRepository } from "flux";
+
+const repo = GitRepository("my-repo")
+    .url("https://github.com/example/repo")
+    .ref({ tag: "v1.0.0" })
+    .interval("5m");
+
+build([repo]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains("kind: GitRepository"))
+        .stdout(predicates::str::contains("name: my-repo"))
+        .stdout(predicates::str::contains("tag: v1.0.0"));
+}
