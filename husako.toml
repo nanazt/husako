@@ -1,2 +1,6 @@
 [resources]
 k8s = { source = "release", version = "1.35" }
+
+[charts]
+redis = { source = "artifacthub", package = "bitnami/redis", version = "25.3.0" }
+postgresql = { source = "artifacthub", package = "bitnami/postgresql", version = "18.4.0" }

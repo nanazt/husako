@@ -1,7 +1,27 @@
+use std::time::Duration;
+
 use console::{Key, Term, style};
 
 const MAX_VISIBLE: usize = 10;
 const LOAD_THRESHOLD: usize = 3;
+
+/// Suppress terminal echo during a blocking operation by entering raw mode,
+/// then restore normal mode and drain any buffered key events.
+fn with_echo_suppressed<T>(f: impl FnOnce() -> T) -> T {
+    let raw = crossterm::terminal::enable_raw_mode().is_ok();
+
+    let result = f();
+
+    if raw {
+        let _ = crossterm::terminal::disable_raw_mode();
+        // Drain any keys typed during loading
+        while crossterm::event::poll(Duration::ZERO).unwrap_or(false) {
+            let _ = crossterm::event::read();
+        }
+    }
+
+    result
+}
 
 /// Interactive scrollable select with infinite scroll.
 ///
@@ -32,10 +52,12 @@ where
     loop {
         // Infinite scroll: auto-load when cursor approaches the bottom
         if *has_more && cursor + LOAD_THRESHOLD >= items.len() {
+            // Re-render with loading indicator in place of "↓ more below"
             clear(&term, rendered)?;
-            rendered = render_loading(&term, prompt)?;
+            let visible = MAX_VISIBLE.min(items.len());
+            rendered = render(&term, prompt, items, cursor, offset, visible, true)?;
 
-            match load_more() {
+            match with_echo_suppressed(&mut load_more) {
                 Ok((new_items, more)) => {
                     items.extend(new_items);
                     *has_more = more;
@@ -57,7 +79,7 @@ where
 
         // Render
         clear(&term, rendered)?;
-        rendered = render(&term, prompt, items, cursor, offset, visible)?;
+        rendered = render(&term, prompt, items, cursor, offset, visible, false)?;
 
         // Handle input
         match term.read_key().map_err(|e| e.to_string())? {
@@ -106,6 +128,7 @@ fn render(
     cursor: usize,
     offset: usize,
     visible: usize,
+    loading: bool,
 ) -> Result<usize, String> {
     let mut lines = 0;
 
@@ -141,25 +164,18 @@ fn render(
         lines += 1;
     }
 
-    // Scroll indicator (bottom)
-    if end < items.len() {
+    // Bottom indicator: loading spinner or scroll hint
+    if loading {
+        term.write_line(&format!("    {}", style("loading\u{2026}").dim()))
+            .map_err(|e| e.to_string())?;
+        lines += 1;
+    } else if end < items.len() {
         term.write_line(&format!("    {}", style("\u{2193} more below").dim()))
             .map_err(|e| e.to_string())?;
         lines += 1;
     }
 
     Ok(lines)
-}
-
-fn render_loading(term: &Term, prompt: &str) -> Result<usize, String> {
-    term.write_line(&format!(
-        "{} {} {}",
-        style("?").green().bold(),
-        style(prompt).bold(),
-        style("(loading...)").dim()
-    ))
-    .map_err(|e| e.to_string())?;
-    Ok(1)
 }
 
 #[cfg(test)]
