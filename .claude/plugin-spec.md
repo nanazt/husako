@@ -74,6 +74,8 @@ The `url` field is aliased to `repo` during parsing so the same `SchemaSource` s
 ```toml
 [plugins]
 flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+# Plugin bundled inside a monorepo — only the subdirectory is fetched
+flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
@@ -81,7 +83,7 @@ my-local = { source = "path", path = "./plugins/my-plugin" }
 
 | Source | Fields | Description |
 |--------|--------|-------------|
-| `git` | `url` | Clone from a git repository (HEAD of default branch) |
+| `git` | `url`, `path` (optional) | Clone from a git repository (HEAD of default branch). When `path` is set, only that subdirectory is fetched via sparse-checkout (useful for monorepos). |
 | `path` | `path` | Use a local directory (must be relative) |
 
 ## Storage Layout
@@ -104,7 +106,8 @@ my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
 - Plugins are installed to `.husako/plugins/<name>/`.
-- For `source = "git"`, the repo is shallow-cloned to `.husako/plugins/<name>/`.
+- For `source = "git"` without `path`, the repo is shallow-cloned to `.husako/plugins/<name>/`.
+- For `source = "git"` with `path`, only the subdirectory is fetched via sparse-checkout and its contents are copied to `.husako/plugins/<name>/`.
 - For `source = "path"`, the directory is copied to `.husako/plugins/<name>/`.
 - `.husako/plugins/` is ephemeral (like `.husako/types/`) — can be regenerated.
 

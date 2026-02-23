@@ -287,7 +287,7 @@ flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
 my-plugin = { source = "path", path = "./plugins/my-plugin" }
 ```
 
-`PluginSource` enum: `Git { url }` or `Path { path }`. Uses `#[serde(tag = "source")]` matching the `SchemaSource`/`ChartSource` pattern.
+`PluginSource` enum: `Git { url, path: Option<String> }` or `Path { path }`. Uses `#[serde(tag = "source")]` matching the `SchemaSource`/`ChartSource` pattern. When `path` is set on `Git`, sparse-checkout fetches only that subdirectory (for monorepo plugins).
 
 ### Install lifecycle (`husako-core/src/plugin.rs`)
 
