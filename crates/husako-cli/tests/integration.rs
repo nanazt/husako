@@ -1825,3 +1825,234 @@ fn new_then_render_with_alias() {
         .stdout(predicates::str::contains("kind: Deployment"))
         .stdout(predicates::str::contains("name: nginx"));
 }
+
+// --- Plugin System ---
+
+/// Create a minimal fixture plugin under `root/.husako/plugins/<name>/`.
+fn write_fixture_plugin(root: &Path, name: &str) {
+    let plugin_dir = root.join(format!(".husako/plugins/{name}"));
+    let modules_dir = plugin_dir.join("modules");
+    std::fs::create_dir_all(&modules_dir).unwrap();
+
+    std::fs::write(
+        plugin_dir.join("plugin.toml"),
+        format!(
+            r#"[plugin]
+name = "{name}"
+version = "0.1.0"
+description = "Test fixture plugin"
+
+[modules]
+"{name}" = "modules/index.js"
+"{name}/sub" = "modules/sub.js"
+"#
+        ),
+    )
+    .unwrap();
+
+    // Main module: exports a ResourceBuilder subclass
+    std::fs::write(
+        modules_dir.join("index.js"),
+        r#"import { _ResourceBuilder } from "husako/_base";
+
+class _TestResource extends _ResourceBuilder {
+  constructor() { super("test.example.com/v1", "TestResource"); }
+  message(v) { return this._setSpec("message", v); }
+}
+export function TestResource() { return new _TestResource(); }
+"#,
+    )
+    .unwrap();
+
+    // Sub-module
+    std::fs::write(
+        modules_dir.join("sub.js"),
+        r#"import { _ResourceBuilder } from "husako/_base";
+
+class _SubResource extends _ResourceBuilder {
+  constructor() { super("test.example.com/v1", "SubResource"); }
+  count(v) { return this._setSpec("count", v); }
+}
+export function SubResource() { return new _SubResource(); }
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn plugin_render_main_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    write_fixture_plugin(root, "testplugin");
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name } from "husako";
+import { TestResource } from "testplugin";
+const r = TestResource().metadata(name("my-resource")).message("hello");
+build([r]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: test.example.com/v1"))
+        .stdout(predicates::str::contains("kind: TestResource"))
+        .stdout(predicates::str::contains("name: my-resource"))
+        .stdout(predicates::str::contains("message: hello"));
+}
+
+#[test]
+fn plugin_render_sub_module() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    write_fixture_plugin(root, "testplugin");
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name } from "husako";
+import { SubResource } from "testplugin/sub";
+const r = SubResource().metadata(name("sub")).count(42);
+build([r]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("apiVersion: test.example.com/v1"))
+        .stdout(predicates::str::contains("kind: SubResource"))
+        .stdout(predicates::str::contains("count: 42"));
+}
+
+#[test]
+fn plugin_import_unknown_module_exit_4() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // No plugins installed — bare import should fail at runtime
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build } from "husako";
+import { Foo } from "nonexistent-plugin";
+build([Foo()]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .code(4);
+}
+
+#[test]
+fn plugin_with_k8s_modules_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    write_fixture_plugin(root, "testplugin");
+    write_k8s_modules(root);
+
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"
+import { build, name } from "husako";
+import { Deployment } from "k8s/apps/v1";
+import { TestResource } from "testplugin";
+
+const dep = Deployment().metadata(name("app")).replicas(3);
+const res = TestResource().metadata(name("my-res")).message("world");
+build([dep, res]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["render", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("kind: Deployment"))
+        .stdout(predicates::str::contains("kind: TestResource"))
+        .stdout(predicates::str::contains("message: world"));
+}
+
+#[test]
+fn plugin_cli_list_empty() {
+    let dir = tempfile::tempdir().unwrap();
+
+    husako_at(dir.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("No plugins installed"));
+}
+
+#[test]
+fn plugin_cli_list_installed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    write_fixture_plugin(root, "myplugin");
+
+    husako_at(root)
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("myplugin"))
+        .stderr(predicates::str::contains("0.1.0"));
+}
+
+#[test]
+fn plugin_cli_add_path_and_remove() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Create husako.toml
+    std::fs::write(root.join("husako.toml"), "").unwrap();
+
+    // Create a local plugin source
+    let plugin_src = root.join("my-plugin");
+    std::fs::create_dir_all(&plugin_src).unwrap();
+    std::fs::write(
+        plugin_src.join("plugin.toml"),
+        "[plugin]\nname = \"test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    // Add the plugin
+    husako_at(root)
+        .args(["plugin", "add", "test", "--path", "my-plugin"])
+        .assert()
+        .success();
+
+    // Verify it was added to husako.toml
+    let config_content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(config_content.contains("[plugins]"));
+    assert!(config_content.contains("test"));
+    assert!(config_content.contains("my-plugin"));
+
+    // Remove the plugin
+    husako_at(root)
+        .args(["plugin", "remove", "test"])
+        .assert()
+        .success();
+
+    // Verify it was removed from husako.toml
+    let config_content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(!config_content.contains("test"));
+}

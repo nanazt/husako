@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Table, value};
 
-use crate::{CONFIG_FILENAME, ChartSource, ConfigError, SchemaSource};
+use crate::{CONFIG_FILENAME, ChartSource, ConfigError, PluginSource, SchemaSource};
 
 /// Load the husako.toml as a format-preserving TOML document.
 pub fn load_document(project_root: &Path) -> Result<(DocumentMut, PathBuf), ConfigError> {
@@ -78,6 +78,22 @@ pub fn remove_resource(doc: &mut DocumentMut, name: &str) -> bool {
 /// Remove a chart entry. Returns true if found and removed.
 pub fn remove_chart(doc: &mut DocumentMut, name: &str) -> bool {
     if let Some(table) = doc.get_mut("charts").and_then(|t| t.as_table_like_mut()) {
+        return table.remove(name).is_some();
+    }
+    false
+}
+
+/// Add a plugin entry to the [plugins] section.
+pub fn add_plugin(doc: &mut DocumentMut, name: &str, source: &PluginSource) {
+    ensure_table(doc, "plugins");
+
+    let inline = plugin_source_to_inline_table(source);
+    doc["plugins"][name] = Item::Value(toml_edit::Value::InlineTable(inline));
+}
+
+/// Remove a plugin entry. Returns true if found and removed.
+pub fn remove_plugin(doc: &mut DocumentMut, name: &str) -> bool {
+    if let Some(table) = doc.get_mut("plugins").and_then(|t| t.as_table_like_mut()) {
         return table.remove(name).is_some();
     }
     false
@@ -168,6 +184,21 @@ fn chart_source_to_inline_table(source: &ChartSource) -> toml_edit::InlineTable 
             t.insert("source", "git".into());
             t.insert("repo", repo.as_str().into());
             t.insert("tag", tag.as_str().into());
+            t.insert("path", path.as_str().into());
+        }
+    }
+    t
+}
+
+fn plugin_source_to_inline_table(source: &PluginSource) -> toml_edit::InlineTable {
+    let mut t = toml_edit::InlineTable::new();
+    match source {
+        PluginSource::Git { url } => {
+            t.insert("source", "git".into());
+            t.insert("url", url.as_str().into());
+        }
+        PluginSource::Path { path } => {
+            t.insert("source", "path".into());
             t.insert("path", path.as_str().into());
         }
     }
@@ -351,5 +382,64 @@ mod tests {
         save_document(&doc, &path).unwrap();
         let reloaded = std::fs::read_to_string(&path).unwrap();
         assert_eq!(reloaded, content);
+    }
+
+    #[test]
+    fn add_plugin_git() {
+        let (_tmp, path) = create_test_toml("");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_plugin(
+            &mut doc,
+            "flux",
+            &PluginSource::Git {
+                url: "https://github.com/nanazt/husako-plugin-flux".to_string(),
+            },
+        );
+
+        let output = doc.to_string();
+        assert!(output.contains("[plugins]"));
+        assert!(output.contains("flux"));
+        assert!(output.contains("git"));
+        assert!(output.contains("husako-plugin-flux"));
+    }
+
+    #[test]
+    fn add_plugin_path() {
+        let (_tmp, path) = create_test_toml("");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_plugin(
+            &mut doc,
+            "my-plugin",
+            &PluginSource::Path {
+                path: "./plugins/my-plugin".to_string(),
+            },
+        );
+
+        let output = doc.to_string();
+        assert!(output.contains("[plugins]"));
+        assert!(output.contains("my-plugin"));
+        assert!(output.contains("path"));
+    }
+
+    #[test]
+    fn remove_plugin_existing() {
+        let (_tmp, path) = create_test_toml(
+            "[plugins]\nflux = { source = \"git\", url = \"https://github.com/nanazt/husako-plugin-flux\" }\n",
+        );
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        assert!(remove_plugin(&mut doc, "flux"));
+        let output = doc.to_string();
+        assert!(!output.contains("flux"));
+    }
+
+    #[test]
+    fn remove_plugin_missing() {
+        let (_tmp, path) = create_test_toml("[plugins]\n");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        assert!(!remove_plugin(&mut doc, "nonexistent"));
     }
 }

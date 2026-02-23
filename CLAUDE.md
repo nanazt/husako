@@ -34,14 +34,14 @@ cargo fmt --all           # apply
 The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit YAML**
 
 1. **Compiler** (`husako-compile-oxc`): Strips TypeScript types with oxc, producing plain JavaScript
-2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`, `"helm/*"`), captures `husako.build()` output via Rust-side sink
-3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar
+2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`, `"helm/*"`, plugin modules), captures `husako.build()` output via Rust-side sink
+3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar, manages plugin lifecycle
 4. **Emitter** (`husako-yaml`): Converts validated `serde_json::Value` to YAML or JSON output
 5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; kubeconfig credential resolution; GitHub release spec download
 6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs; JSON Schema → TypeScript for Helm charts
 7. **Helm** (`husako-helm`): Resolves Helm chart `values.schema.json` from file, registry, ArtifactHub, or git sources
 8. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
-9. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, resource/chart dependencies)
+9. **Config** (`husako-config`): Parses `husako.toml` project configuration (entry aliases, resource/chart/plugin dependencies)
 
 ## Project Structure
 
@@ -49,11 +49,14 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 crates/
 ├── husako-cli/            # CLI entry point (clap), thin — no business logic
 │   └── src/main.rs
-├── husako-config/         # husako.toml parser (entry aliases, resource/chart deps, cluster config)
-│   └── src/lib.rs
-├── husako-core/           # Pipeline orchestration + validation + schema source resolution
+├── husako-config/         # husako.toml parser (entry aliases, resource/chart/plugin deps, cluster config)
+│   └── src/
+│       ├── lib.rs              # Config structs, plugin manifest parser
+│       └── edit.rs             # Format-preserving TOML editing
+├── husako-core/           # Pipeline orchestration + validation + schema source resolution + plugins
 │   └── src/
 │       ├── lib.rs              # generate(), render(), scaffold(), JSONC tsconfig handling
+│       ├── plugin.rs           # Plugin install/remove/list, preset merging, tsconfig paths
 │       ├── quantity.rs         # Kubernetes quantity grammar validation
 │       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
 │       └── validate.rs         # JSON Schema validation engine
@@ -63,7 +66,7 @@ crates/
 │   └── src/
 │       ├── lib.rs              # QuickJS runtime, build() capture
 │       ├── loader.rs           # Module loader (compile + resolve chain)
-│       └── resolver.rs         # Import resolvers (builtin, k8s/*, helm/*, file)
+│       └── resolver.rs         # Import resolvers (builtin, plugin, k8s/*, helm/*, file)
 ├── husako-openapi/        # OpenAPI v3 fetch + disk cache + CRD/kubeconfig/release
 │   └── src/
 │       ├── lib.rs
@@ -128,7 +131,7 @@ Boundary rules:
 - `husako.build(input)` must be called exactly once with builder instances (items must have `_render()`). Missing call → exit 7. Multiple calls → exit 7. Plain objects → TypeError.
 - Strict JSON enforcement by default (`--strict-json=true`): no `undefined`, `bigint`, `symbol`, functions, class instances, `Date`, `Map`, `Set`, `RegExp`, or cyclic references.
 - Validation errors must include `doc[index]`, JSON path (`$.spec...`), and value kind.
-- Supported imports: relative (`./`, `../`) and builtins (`"husako"`, `"k8s/<group>/<version>"`, `"helm/<chart-name>"`). No npm/bare specifiers, Node built-ins, or network imports.
+- Supported imports: relative (`./`, `../`), builtins (`"husako"`, `"k8s/<group>/<version>"`, `"helm/<chart-name>"`), and plugin modules (`"<plugin>"`, `"<plugin>/sub"`). No npm/bare specifiers, Node built-ins, or network imports.
 - Resolved imports must stay within project root by default. `--allow-outside-root` overrides this.
 
 ## Testing
@@ -167,6 +170,7 @@ Project-level configuration file created by `husako new`. Supports:
 - **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
 - **Resource dependencies**: `[resources]` declares k8s schema sources with 4 types: `release`, `cluster`, `git`, `file` (aliased from legacy `[schemas]`)
 - **Chart dependencies**: `[charts]` declares Helm chart sources with 4 types: `registry`, `artifacthub`, `git`, `file`
+- **Plugins**: `[plugins]` declares plugin sources with 2 types: `git` (URL), `path` (local directory)
 - **Cluster config**: `[cluster]` (single) or `[clusters.*]` (multiple named clusters)
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
@@ -177,9 +181,10 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags 
 
 Read `.claude/*.md` before making changes to related areas:
 
-- `.claude/builder-spec.md` — Builder DSL rules
+- `.claude/dsl-spec.md` — Builder DSL rules
 - `.claude/cli-design.md` — CLI visual design system
-- `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching)
+- `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching, plugins)
+- `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 
 ## Plans
 

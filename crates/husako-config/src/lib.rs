@@ -42,6 +42,10 @@ pub struct HusakoConfig {
     /// Chart values schema sources.
     #[serde(default)]
     pub charts: HashMap<String, ChartSource>,
+
+    /// Plugin dependencies.
+    #[serde(default)]
+    pub plugins: HashMap<String, PluginSource>,
 }
 
 /// Cluster connection configuration.
@@ -114,6 +118,67 @@ pub enum ChartSource {
         tag: String,
         path: String,
     },
+}
+
+/// A plugin dependency entry in `husako.toml`.
+/// `flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }`
+/// `my-plugin = { source = "path", path = "./plugins/my-plugin" }`
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "source")]
+pub enum PluginSource {
+    /// Clone from a git repository.
+    #[serde(rename = "git")]
+    Git { url: String },
+
+    /// Use a local directory.
+    #[serde(rename = "path")]
+    Path { path: String },
+}
+
+/// Plugin manifest (`plugin.toml`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginManifest {
+    pub plugin: PluginMeta,
+
+    /// Resource dependency presets.
+    #[serde(default)]
+    pub resources: HashMap<String, SchemaSource>,
+
+    /// Chart dependency presets.
+    #[serde(default)]
+    pub charts: HashMap<String, ChartSource>,
+
+    /// Module import mappings: specifier → relative file path.
+    #[serde(default)]
+    pub modules: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginMeta {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+pub const PLUGIN_MANIFEST: &str = "plugin.toml";
+
+/// Load a plugin manifest from a directory.
+pub fn load_plugin_manifest(plugin_dir: &Path) -> Result<PluginManifest, ConfigError> {
+    let path = plugin_dir.join(PLUGIN_MANIFEST);
+    if !path.exists() {
+        return Err(ConfigError::Validation(format!(
+            "plugin manifest not found: {}",
+            path.display()
+        )));
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| ConfigError::Io {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    let manifest: PluginManifest =
+        toml::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
+    Ok(manifest)
 }
 
 /// Load `husako.toml` from the given directory.
@@ -202,6 +267,17 @@ fn validate(config: &HusakoConfig) -> Result<(), ConfigError> {
         {
             return Err(ConfigError::Validation(format!(
                 "chart '{name}' has absolute path '{path}'; use a relative path"
+            )));
+        }
+    }
+
+    // Plugin path sources must be relative
+    for (name, source) in &config.plugins {
+        if let PluginSource::Path { path } = source
+            && Path::new(path).is_absolute()
+        {
+            return Err(ConfigError::Validation(format!(
+                "plugin '{name}' has absolute path '{path}'; use a relative path"
             )));
         }
     }
@@ -501,6 +577,107 @@ my-other = { source = "git", repo = "https://github.com/example/repo", tag = "v1
         };
         let err = validate(&config).unwrap_err();
         assert!(err.to_string().contains("absolute path"));
+    }
+
+    #[test]
+    fn parse_plugins_section() {
+        let toml = r#"
+[plugins]
+flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+my-plugin = { source = "path", path = "./plugins/my-plugin" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.plugins.len(), 2);
+        assert!(matches!(
+            config.plugins["flux"],
+            PluginSource::Git { ref url } if url == "https://github.com/nanazt/husako-plugin-flux"
+        ));
+        assert!(matches!(
+            config.plugins["my-plugin"],
+            PluginSource::Path { ref path } if path == "./plugins/my-plugin"
+        ));
+    }
+
+    #[test]
+    fn reject_absolute_plugin_path() {
+        let config = HusakoConfig {
+            plugins: HashMap::from([(
+                "test".to_string(),
+                PluginSource::Path {
+                    path: "/absolute/path".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+        let err = validate(&config).unwrap_err();
+        assert!(err.to_string().contains("absolute path"));
+    }
+
+    #[test]
+    fn parse_plugin_manifest() {
+        let toml = r#"
+[plugin]
+name = "flux"
+version = "0.1.0"
+description = "Flux CD integration for husako"
+
+[resources]
+flux-source = { source = "git", repo = "https://github.com/fluxcd/source-controller", tag = "v1.5.0", path = "config/crd/bases" }
+
+[modules]
+"flux" = "modules/index.js"
+"flux/helm" = "modules/helm.js"
+"#;
+        let manifest: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.plugin.name, "flux");
+        assert_eq!(manifest.plugin.version, "0.1.0");
+        assert_eq!(manifest.plugin.description.as_deref(), Some("Flux CD integration for husako"));
+        assert_eq!(manifest.resources.len(), 1);
+        assert!(matches!(manifest.resources["flux-source"], SchemaSource::Git { .. }));
+        assert_eq!(manifest.modules.len(), 2);
+        assert_eq!(manifest.modules["flux"], "modules/index.js");
+        assert_eq!(manifest.modules["flux/helm"], "modules/helm.js");
+    }
+
+    #[test]
+    fn parse_plugin_manifest_minimal() {
+        let toml = r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+"#;
+        let manifest: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.plugin.name, "test");
+        assert!(manifest.resources.is_empty());
+        assert!(manifest.charts.is_empty());
+        assert!(manifest.modules.is_empty());
+    }
+
+    #[test]
+    fn load_plugin_manifest_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = load_plugin_manifest(tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn load_plugin_manifest_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("plugin.toml"),
+            r#"
+[plugin]
+name = "test"
+version = "0.1.0"
+
+[modules]
+"test" = "modules/index.js"
+"#,
+        )
+        .unwrap();
+        let manifest = load_plugin_manifest(tmp.path()).unwrap();
+        assert_eq!(manifest.plugin.name, "test");
+        assert_eq!(manifest.modules["test"], "modules/index.js");
     }
 
     #[test]

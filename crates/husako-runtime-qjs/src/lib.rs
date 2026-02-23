@@ -11,7 +11,7 @@ use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
 use rquickjs::{Context, Ctx, Error, Function, Module, Runtime, Value};
 
 use loader::HusakoFileLoader;
-use resolver::{HusakoFileResolver, HusakoK8sResolver};
+use resolver::{HusakoFileResolver, HusakoK8sResolver, PluginResolver};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
@@ -38,6 +38,8 @@ pub struct ExecuteOptions {
     pub timeout_ms: Option<u64>,
     pub max_heap_mb: Option<usize>,
     pub generated_types_dir: Option<PathBuf>,
+    /// Plugin module mappings: import specifier → absolute `.js` path.
+    pub plugin_modules: std::collections::HashMap<String, PathBuf>,
 }
 
 /// Extract a meaningful error message from rquickjs errors.
@@ -90,6 +92,7 @@ pub fn execute(
         BuiltinResolver::default()
             .with_module("husako")
             .with_module("husako/_base"),
+        PluginResolver::new(options.plugin_modules.clone()),
         HusakoK8sResolver::new(options.generated_types_dir.clone()),
         HusakoFileResolver::new(
             &options.project_root,
@@ -289,6 +292,7 @@ mod tests {
             timeout_ms: None,
             max_heap_mb: None,
             generated_types_dir: None,
+            plugin_modules: std::collections::HashMap::new(),
         }
     }
 
@@ -388,6 +392,7 @@ export class ConfigMap extends _ResourceBuilder {
             timeout_ms: None,
             max_heap_mb: None,
             generated_types_dir: Some(dir.path().to_path_buf()),
+            plugin_modules: std::collections::HashMap::new(),
         };
         (dir, opts)
     }
@@ -668,6 +673,7 @@ export function values() { return new Values(); }
             timeout_ms: None,
             max_heap_mb: None,
             generated_types_dir: Some(dir.path().to_path_buf()),
+            plugin_modules: std::collections::HashMap::new(),
         };
 
         let js = r#"

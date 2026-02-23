@@ -1,6 +1,6 @@
 # Architecture Deep-Dive
 
-Implementation details not covered by CLAUDE.md, builder-spec.md, or cli-design.md.
+Implementation details not covered by CLAUDE.md, dsl-spec.md, or cli-design.md.
 
 ## 1. Schema Classification & Code Generation
 
@@ -260,7 +260,75 @@ djb2: `hash = hash.wrapping_mul(33).wrapping_add(byte)` from seed 5381, formatte
 
 No explicit invalidation. Pinned sources (release+version, git+tag, chart+version) are deterministic by design. File and cluster sources are not cached (intentionally mutable).
 
-## 8. Critical Invariants
+## 8. Plugin System
+
+**Spec:** `.claude/plugin-spec.md` (authoritative reference)
+
+### Storage layout
+
+```
+.husako/plugins/<name>/
+├── plugin.toml           # Manifest
+└── modules/              # Importable JS + .d.ts
+    ├── index.js
+    ├── index.d.ts
+    └── sub.js
+```
+
+### Plugin manifest (`plugin.toml`)
+
+Parsed by `husako-config`: `PluginManifest` struct with `PluginMeta` (name, version, description), `resources` (HashMap → `SchemaSource`), `charts` (HashMap → `ChartSource`), `modules` (HashMap → relative `.js` path).
+
+### Configuration (`husako.toml`)
+
+```toml
+[plugins]
+flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+my-plugin = { source = "path", path = "./plugins/my-plugin" }
+```
+
+`PluginSource` enum: `Git { url }` or `Path { path }`. Uses `#[serde(tag = "source")]` matching the `SchemaSource`/`ChartSource` pattern.
+
+### Install lifecycle (`husako-core/src/plugin.rs`)
+
+1. `install_plugins()` iterates `config.plugins` in order
+2. For each plugin: clean existing install → dispatch to `install_git()` (shallow clone, remove `.git/`) or `install_path()` (recursive copy)
+3. Load `plugin.toml` manifest from installed directory
+4. Return `Vec<InstalledPlugin>` for downstream use
+
+### Preset merging
+
+`merge_plugin_presets()` adds plugin resources/charts into the main config with namespaced keys `<plugin>:<name>` (e.g., `flux:flux-source`). Uses `entry().or_insert_with()` so user-defined entries take precedence.
+
+### Module resolution chain (updated)
+
+`BuiltinResolver` → **`PluginResolver`** → `HusakoK8sResolver` → `HusakoFileResolver`
+
+`PluginResolver` maps import specifiers (e.g., `"flux"`, `"flux/helm"`) to absolute `.js` paths under `.husako/plugins/<name>/`. Built from `PluginManifest.modules`.
+
+### tsconfig.json integration
+
+`plugin_tsconfig_paths()` builds specifier → `.d.ts` path mappings (e.g., `"flux"` → `.husako/plugins/flux/modules/index.d.ts`). Paths are added alongside `k8s/*` and `helm/*` in the generated `tsconfig.json`.
+
+### Runtime loading
+
+`load_plugin_modules()` scans `.husako/plugins/` for directories with valid `plugin.toml`, collecting all module specifier → `.js` path mappings. Called by `render()` and `validate_file()` to populate `ExecuteOptions.plugin_modules`.
+
+### Generate integration
+
+1. Install plugins from `[plugins]` config
+2. Clone config, merge plugin presets (resources + charts)
+3. Generate k8s types (includes plugin CRD resources)
+4. Generate chart types (includes plugin chart presets)
+5. Write tsconfig with plugin module paths
+
+### CLI commands
+
+- `husako plugin add <name> --url <url>` / `--path <path>` — adds to `husako.toml`
+- `husako plugin remove <name>` — removes from `husako.toml` + deletes `.husako/plugins/<name>/`
+- `husako plugin list` — shows installed plugins from `.husako/plugins/`
+
+## 9. Critical Invariants
 
 1. **CRD reclassification must precede group-version partitioning** — otherwise CRD schemas stay in `Other` and are never emitted to module files.
 
@@ -268,14 +336,16 @@ No explicit invalidation. Pinned sources (release+version, git+tag, chart+versio
 
 3. **`HusakoK8sResolver` handles both `k8s/*` and `helm/*`** — despite the name, this single resolver maps both prefixes to `.husako/types/*.js` files.
 
-4. **tsconfig.json paths must include `husako` and `k8s/*`** — optionally `helm/*` when charts are configured. Missing paths break IDE autocomplete.
+4. **tsconfig.json paths must include `husako` and `k8s/*`** — optionally `helm/*` when charts are configured, plus plugin module specifiers when plugins are installed. Missing paths break IDE autocomplete.
 
 5. **Schema filename ↔ discovery key** — uses `__` → `/` replacement (e.g., `apis__apps__v1` ↔ `apis/apps/v1`).
 
-6. **Module resolution chain order** — `BuiltinResolver` → `HusakoK8sResolver` → `HusakoFileResolver`. Each returns `None` for unhandled imports.
+6. **Module resolution chain order** — `BuiltinResolver` → `PluginResolver` → `HusakoK8sResolver` → `HusakoFileResolver`. Each returns `Err` for unhandled imports, passing to the next resolver.
 
-7. **Generate priority** — `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip. Charts from `[charts]` are always generated when configured.
+7. **Generate priority** — `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip. Charts from `[charts]` are always generated when configured. Plugins are always installed first when `[plugins]` is configured.
 
 8. **Render precedence** — `_spec` > `_specParts` > `_resources`. Calling `.spec({...})` clears `_specParts`.
 
 9. **Dependency list sorting** — `list_dependencies()` and `check_outdated()` iterate in sorted order by name for deterministic output.
+
+10. **Plugin preset namespace** — Plugin resources/charts are merged with `<plugin>:<name>` keys to avoid collisions with user-defined dependencies.

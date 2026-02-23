@@ -1,6 +1,44 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rquickjs::{Ctx, Error, Result};
+
+/// Resolves plugin module imports to `.js` files under `.husako/plugins/<name>/`.
+///
+/// Each entry maps an import specifier (e.g. `"flux"`, `"flux/helm"`) to an absolute
+/// path to the corresponding `.js` file.
+pub struct PluginResolver {
+    /// Import specifier → absolute `.js` file path.
+    modules: HashMap<String, PathBuf>,
+}
+
+impl PluginResolver {
+    pub fn new(modules: HashMap<String, PathBuf>) -> Self {
+        Self { modules }
+    }
+}
+
+impl rquickjs::loader::Resolver for PluginResolver {
+    fn resolve<'js>(&mut self, _ctx: &Ctx<'js>, base: &str, name: &str) -> Result<String> {
+        let Some(path) = self.modules.get(name) else {
+            return Err(Error::new_resolving(base, name));
+        };
+
+        if path.is_file() {
+            Ok(path.to_string_lossy().into_owned())
+        } else {
+            Err(Error::new_resolving_message(
+                base,
+                name,
+                format!(
+                    "plugin module '{}' mapped to '{}' but file not found. Run 'husako generate' to install plugins",
+                    name,
+                    path.display()
+                ),
+            ))
+        }
+    }
+}
 
 /// Resolves `k8s/*` and `helm/*` imports to generated `.js` files under `.husako/types/`.
 pub struct HusakoK8sResolver {
@@ -260,6 +298,72 @@ mod tests {
         let ctx = rquickjs::Context::full(&rt).unwrap();
         ctx.with(|ctx| {
             let result = resolver.resolve(&ctx, "main", "helm/test");
+            assert!(result.is_err());
+        });
+    }
+
+    // --- PluginResolver tests ---
+
+    #[test]
+    fn plugin_resolver_resolves_known_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let mod_dir = dir.path().join("modules");
+        fs::create_dir_all(&mod_dir).unwrap();
+        fs::write(mod_dir.join("index.js"), "export function HelmRelease() {}").unwrap();
+
+        let mut modules = std::collections::HashMap::new();
+        modules.insert("flux".to_string(), mod_dir.join("index.js"));
+
+        let mut resolver = PluginResolver::new(modules);
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "flux").unwrap();
+            assert!(result.ends_with("modules/index.js"));
+        });
+    }
+
+    #[test]
+    fn plugin_resolver_resolves_sub_module() {
+        let dir = tempfile::tempdir().unwrap();
+        let mod_dir = dir.path().join("modules");
+        fs::create_dir_all(&mod_dir).unwrap();
+        fs::write(mod_dir.join("helm.js"), "export function helmRelease() {}").unwrap();
+
+        let mut modules = std::collections::HashMap::new();
+        modules.insert("flux/helm".to_string(), mod_dir.join("helm.js"));
+
+        let mut resolver = PluginResolver::new(modules);
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "flux/helm").unwrap();
+            assert!(result.ends_with("modules/helm.js"));
+        });
+    }
+
+    #[test]
+    fn plugin_resolver_ignores_unknown() {
+        let resolver_modules = std::collections::HashMap::new();
+        let mut resolver = PluginResolver::new(resolver_modules);
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "unknown");
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn plugin_resolver_error_when_file_missing() {
+        let mut modules = std::collections::HashMap::new();
+        modules.insert("flux".to_string(), PathBuf::from("/nonexistent/index.js"));
+
+        let mut resolver = PluginResolver::new(modules);
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let result = resolver.resolve(&ctx, "main", "flux");
             assert!(result.is_err());
         });
     }

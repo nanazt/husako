@@ -1,3 +1,4 @@
+pub mod plugin;
 pub mod progress;
 pub mod quantity;
 pub mod schema_source;
@@ -69,6 +70,8 @@ pub fn render(
         .canonicalize()
         .ok();
 
+    let plugin_modules = load_plugin_modules(&options.project_root);
+
     let exec_options = ExecuteOptions {
         entry_path,
         project_root: options.project_root.clone(),
@@ -76,6 +79,7 @@ pub fn render(
         timeout_ms: options.timeout_ms,
         max_heap_mb: options.max_heap_mb,
         generated_types_dir,
+        plugin_modules,
     };
 
     if options.verbose {
@@ -159,16 +163,31 @@ pub fn generate(
 ) -> Result<(), HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
 
-    // 1. Write static husako.d.ts
+    // 1. Process plugins: install and collect presets
+    let installed_plugins = if let Some(config) = &options.config
+        && !config.plugins.is_empty()
+    {
+        plugin::install_plugins(config, &options.project_root, progress)?
+    } else {
+        Vec::new()
+    };
+
+    // Clone config and merge plugin presets (resources + charts)
+    let mut merged_config = options.config.clone();
+    if !installed_plugins.is_empty() && let Some(ref mut cfg) = merged_config {
+        plugin::merge_plugin_presets(cfg, &installed_plugins);
+    }
+
+    // 2. Write static husako.d.ts
     write_file(&types_dir.join("husako.d.ts"), husako_sdk::HUSAKO_DTS)?;
 
-    // 2. Write static husako/_base.d.ts
+    // 3. Write static husako/_base.d.ts
     write_file(
         &types_dir.join("husako/_base.d.ts"),
         husako_sdk::HUSAKO_BASE_DTS,
     )?;
 
-    // 3. Generate k8s types
+    // 4. Generate k8s types
     // Priority: --skip-k8s → CLI flags → husako.toml [schemas] → skip
     if !options.skip_k8s {
         let specs = if let Some(openapi_opts) = &options.openapi {
@@ -193,10 +212,10 @@ pub fn generate(
             let result = client.fetch_all_specs()?;
             task.finish_ok("Fetched OpenAPI specs");
             Some(result)
-        } else if let Some(config) = &options.config
+        } else if let Some(config) = &merged_config
             && !config.resources.is_empty()
         {
-            // Config-driven mode
+            // Config-driven mode (includes merged plugin presets)
             let cache_dir = options.project_root.join(".husako/cache");
             Some(schema_source::resolve_all(
                 config,
@@ -220,8 +239,8 @@ pub fn generate(
         }
     }
 
-    // 4. Generate chart (helm) types from [charts] config
-    if let Some(config) = &options.config
+    // 5. Generate chart (helm) types from [charts] config (includes merged plugin charts)
+    if let Some(config) = &merged_config
         && !config.charts.is_empty()
     {
         let cache_dir = options.project_root.join(".husako/cache");
@@ -237,8 +256,9 @@ pub fn generate(
         }
     }
 
-    // 5. Write/update tsconfig.json
-    write_tsconfig(&options.project_root, options.config.as_ref())?;
+    // 6. Write/update tsconfig.json (includes plugin module paths)
+    let plugin_paths = plugin::plugin_tsconfig_paths(&installed_plugins);
+    write_tsconfig(&options.project_root, merged_config.as_ref(), &plugin_paths)?;
 
     Ok(())
 }
@@ -256,6 +276,7 @@ fn write_file(path: &std::path::Path, content: &str) -> Result<(), HusakoError> 
 fn write_tsconfig(
     project_root: &std::path::Path,
     config: Option<&husako_config::HusakoConfig>,
+    plugin_paths: &std::collections::HashMap<String, String>,
 ) -> Result<(), HusakoError> {
     let tsconfig_path = project_root.join("tsconfig.json");
 
@@ -272,6 +293,14 @@ fn write_tsconfig(
         paths.as_object_mut().unwrap().insert(
             "helm/*".to_string(),
             serde_json::json!([".husako/types/helm/*"]),
+        );
+    }
+
+    // Add plugin module paths
+    for (specifier, dts_path) in plugin_paths {
+        paths.as_object_mut().unwrap().insert(
+            specifier.clone(),
+            serde_json::json!([dts_path]),
         );
     }
 
@@ -617,9 +646,18 @@ fn walkdir(path: &Path) -> Result<u64, std::io::Error> {
 // --- husako list ---
 
 #[derive(Debug)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub module_count: usize,
+}
+
+#[derive(Debug)]
 pub struct DependencyList {
     pub resources: Vec<DependencyInfo>,
     pub charts: Vec<DependencyInfo>,
+    pub plugins: Vec<PluginInfo>,
 }
 
 #[derive(Debug)]
@@ -635,6 +673,7 @@ pub fn list_dependencies(project_root: &Path) -> Result<DependencyList, HusakoEr
 
     let mut resources = Vec::new();
     let mut charts = Vec::new();
+    let mut plugins = Vec::new();
 
     if let Some(cfg) = &config {
         let mut res_entries: Vec<_> = cfg.resources.iter().collect();
@@ -650,7 +689,21 @@ pub fn list_dependencies(project_root: &Path) -> Result<DependencyList, HusakoEr
         }
     }
 
-    Ok(DependencyList { resources, charts })
+    // List installed plugins
+    for p in plugin::list_plugins(project_root) {
+        plugins.push(PluginInfo {
+            name: p.name,
+            version: p.manifest.plugin.version,
+            description: p.manifest.plugin.description,
+            module_count: p.manifest.modules.len(),
+        });
+    }
+
+    Ok(DependencyList {
+        resources,
+        charts,
+        plugins,
+    })
 }
 
 fn resource_info(name: &str, source: &husako_config::SchemaSource) -> DependencyInfo {
@@ -1124,6 +1177,7 @@ pub fn project_summary(project_root: &Path) -> Result<ProjectSummary, HusakoErro
     let deps = list_dependencies(project_root).unwrap_or(DependencyList {
         resources: Vec::new(),
         charts: Vec::new(),
+        plugins: Vec::new(),
     });
 
     let cache_dir = project_root.join(".husako/cache");
@@ -1466,6 +1520,8 @@ pub fn validate_file(
         .canonicalize()
         .ok();
 
+    let plugin_modules = load_plugin_modules(&options.project_root);
+
     let exec_options = ExecuteOptions {
         entry_path,
         project_root: options.project_root.clone(),
@@ -1473,6 +1529,7 @@ pub fn validate_file(
         timeout_ms: options.timeout_ms,
         max_heap_mb: options.max_heap_mb,
         generated_types_dir,
+        plugin_modules,
     };
 
     let value = husako_runtime_qjs::execute(&js, &exec_options)?;
@@ -1572,6 +1629,40 @@ fn strip_jsonc(input: &str) -> String {
     }
 
     out
+}
+
+/// Load plugin module mappings from installed plugins under `.husako/plugins/`.
+///
+/// Scans each plugin directory for a `plugin.toml` manifest and builds a
+/// HashMap of import specifier → absolute `.js` path for the PluginResolver.
+fn load_plugin_modules(
+    project_root: &Path,
+) -> std::collections::HashMap<String, PathBuf> {
+    let mut modules = std::collections::HashMap::new();
+    let plugins_dir = project_root.join(".husako/plugins");
+    if !plugins_dir.is_dir() {
+        return modules;
+    }
+
+    let Ok(entries) = std::fs::read_dir(&plugins_dir) else {
+        return modules;
+    };
+
+    for entry in entries.flatten() {
+        let plugin_dir = entry.path();
+        if !plugin_dir.is_dir() {
+            continue;
+        }
+        let Ok(manifest) = husako_config::load_plugin_manifest(&plugin_dir) else {
+            continue;
+        };
+        for (specifier, rel_path) in &manifest.modules {
+            let abs_path = plugin_dir.join(rel_path);
+            modules.insert(specifier.clone(), abs_path);
+        }
+    }
+
+    modules
 }
 
 fn new_tsconfig(husako_paths: serde_json::Value) -> serde_json::Value {

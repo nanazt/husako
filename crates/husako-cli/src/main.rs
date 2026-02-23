@@ -196,6 +196,38 @@ enum Commands {
         /// TypeScript entry file or alias
         file: String,
     },
+
+    /// Manage plugins
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum PluginAction {
+    /// Add a plugin
+    Add {
+        /// Plugin name
+        name: String,
+
+        /// Git repository URL
+        #[arg(long)]
+        url: Option<String>,
+
+        /// Local directory path
+        #[arg(long)]
+        path: Option<String>,
+    },
+
+    /// Remove a plugin
+    Remove {
+        /// Plugin name
+        name: String,
+    },
+
+    /// List installed plugins
+    List,
 }
 
 fn main() -> ExitCode {
@@ -925,6 +957,127 @@ fn main() -> ExitCode {
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
+                }
+            }
+        }
+        Commands::Plugin { action } => {
+            let project_root = cwd();
+
+            match action {
+                PluginAction::Add { name, url, path } => {
+                    let source = if let Some(url) = url {
+                        husako_config::PluginSource::Git { url }
+                    } else if let Some(path) = path {
+                        husako_config::PluginSource::Path { path }
+                    } else {
+                        eprintln!(
+                            "{} specify --url or --path for the plugin source",
+                            style::error_prefix()
+                        );
+                        return ExitCode::from(2);
+                    };
+
+                    let (mut doc, doc_path) =
+                        match husako_config::edit::load_document(&project_root) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("{} {e}", style::error_prefix());
+                                return ExitCode::from(2);
+                            }
+                        };
+
+                    husako_config::edit::add_plugin(&mut doc, &name, &source);
+
+                    if let Err(e) = husako_config::edit::save_document(&doc, &doc_path) {
+                        eprintln!("{} {e}", style::error_prefix());
+                        return ExitCode::from(1);
+                    }
+
+                    eprintln!(
+                        "{} Added plugin {} to [plugins]",
+                        style::check_mark(),
+                        style::dep_name(&name)
+                    );
+                    eprintln!();
+                    eprintln!("Run 'husako generate' to install the plugin and generate types.");
+                    ExitCode::SUCCESS
+                }
+                PluginAction::Remove { name } => {
+                    // Remove from config
+                    let (mut doc, doc_path) =
+                        match husako_config::edit::load_document(&project_root) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("{} {e}", style::error_prefix());
+                                return ExitCode::from(2);
+                            }
+                        };
+
+                    let removed_from_config =
+                        husako_config::edit::remove_plugin(&mut doc, &name);
+
+                    if removed_from_config
+                        && let Err(e) = husako_config::edit::save_document(&doc, &doc_path)
+                    {
+                        eprintln!("{} {e}", style::error_prefix());
+                        return ExitCode::from(1);
+                    }
+
+                    // Remove installed files
+                    let removed_files = match husako_core::plugin::remove_plugin(&project_root, &name) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(1);
+                        }
+                    };
+
+                    if removed_from_config || removed_files {
+                        eprintln!(
+                            "{} Removed plugin {}",
+                            style::check_mark(),
+                            style::dep_name(&name)
+                        );
+                    } else {
+                        eprintln!(
+                            "{} Plugin '{}' not found",
+                            style::cross_mark(),
+                            name
+                        );
+                        return ExitCode::from(1);
+                    }
+
+                    ExitCode::SUCCESS
+                }
+                PluginAction::List => {
+                    let plugins = husako_core::plugin::list_plugins(&project_root);
+
+                    if plugins.is_empty() {
+                        eprintln!("No plugins installed");
+                    } else {
+                        eprintln!("{}", style::bold("Plugins:"));
+                        for p in &plugins {
+                            let desc = p
+                                .manifest
+                                .plugin
+                                .description
+                                .as_deref()
+                                .unwrap_or("");
+                            eprintln!(
+                                "  {:<16} {:<10} {} modules{}",
+                                style::dep_name(&p.name),
+                                p.manifest.plugin.version,
+                                p.manifest.modules.len(),
+                                if desc.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("  {}", style::dim(desc))
+                                }
+                            );
+                        }
+                    }
+
+                    ExitCode::SUCCESS
                 }
             }
         }
