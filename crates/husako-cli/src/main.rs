@@ -1013,8 +1013,7 @@ fn main() -> ExitCode {
                             }
                         };
 
-                    let removed_from_config =
-                        husako_config::edit::remove_plugin(&mut doc, &name);
+                    let removed_from_config = husako_config::edit::remove_plugin(&mut doc, &name);
 
                     if removed_from_config
                         && let Err(e) = husako_config::edit::save_document(&doc, &doc_path)
@@ -1024,13 +1023,14 @@ fn main() -> ExitCode {
                     }
 
                     // Remove installed files
-                    let removed_files = match husako_core::plugin::remove_plugin(&project_root, &name) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            eprintln!("{} {e}", style::error_prefix());
-                            return ExitCode::from(1);
-                        }
-                    };
+                    let removed_files =
+                        match husako_core::plugin::remove_plugin(&project_root, &name) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("{} {e}", style::error_prefix());
+                                return ExitCode::from(1);
+                            }
+                        };
 
                     if removed_from_config || removed_files {
                         eprintln!(
@@ -1039,11 +1039,7 @@ fn main() -> ExitCode {
                             style::dep_name(&name)
                         );
                     } else {
-                        eprintln!(
-                            "{} Plugin '{}' not found",
-                            style::cross_mark(),
-                            name
-                        );
+                        eprintln!("{} Plugin '{}' not found", style::cross_mark(), name);
                         return ExitCode::from(1);
                     }
 
@@ -1057,12 +1053,7 @@ fn main() -> ExitCode {
                     } else {
                         eprintln!("{}", style::bold("Plugins:"));
                         for p in &plugins {
-                            let desc = p
-                                .manifest
-                                .plugin
-                                .description
-                                .as_deref()
-                                .unwrap_or("");
+                            let desc = p.manifest.plugin.description.as_deref().unwrap_or("");
                             eprintln!(
                                 "  {:<16} {:<10} {} modules{}",
                                 style::dep_name(&p.name),

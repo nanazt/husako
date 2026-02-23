@@ -174,7 +174,9 @@ pub fn generate(
 
     // Clone config and merge plugin presets (resources + charts)
     let mut merged_config = options.config.clone();
-    if !installed_plugins.is_empty() && let Some(ref mut cfg) = merged_config {
+    if !installed_plugins.is_empty()
+        && let Some(ref mut cfg) = merged_config
+    {
         plugin::merge_plugin_presets(cfg, &installed_plugins);
     }
 
@@ -298,10 +300,10 @@ fn write_tsconfig(
 
     // Add plugin module paths
     for (specifier, dts_path) in plugin_paths {
-        paths.as_object_mut().unwrap().insert(
-            specifier.clone(),
-            serde_json::json!([dts_path]),
-        );
+        paths
+            .as_object_mut()
+            .unwrap()
+            .insert(specifier.clone(), serde_json::json!([dts_path]));
     }
 
     let husako_paths = paths;
@@ -1635,9 +1637,7 @@ fn strip_jsonc(input: &str) -> String {
 ///
 /// Scans each plugin directory for a `plugin.toml` manifest and builds a
 /// HashMap of import specifier → absolute `.js` path for the PluginResolver.
-fn load_plugin_modules(
-    project_root: &Path,
-) -> std::collections::HashMap<String, PathBuf> {
+fn load_plugin_modules(project_root: &Path) -> std::collections::HashMap<String, PathBuf> {
     let mut modules = std::collections::HashMap::new();
     let plugins_dir = project_root.join(".husako/plugins");
     if !plugins_dir.is_dir() {

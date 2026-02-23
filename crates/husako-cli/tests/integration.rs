@@ -2117,10 +2117,14 @@ build([repo, release]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains(
+            "apiVersion: source.toolkit.fluxcd.io/v1",
+        ))
         .stdout(predicates::str::contains("kind: HelmRepository"))
         .stdout(predicates::str::contains("name: bitnami"))
-        .stdout(predicates::str::contains("apiVersion: helm.toolkit.fluxcd.io/v2"))
+        .stdout(predicates::str::contains(
+            "apiVersion: helm.toolkit.fluxcd.io/v2",
+        ))
         .stdout(predicates::str::contains("kind: HelmRelease"))
         .stdout(predicates::str::contains("name: redis"))
         .stdout(predicates::str::contains("chart: redis"))
@@ -2166,10 +2170,14 @@ build([repo, ks]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains(
+            "apiVersion: source.toolkit.fluxcd.io/v1",
+        ))
         .stdout(predicates::str::contains("kind: GitRepository"))
         .stdout(predicates::str::contains("name: infra"))
-        .stdout(predicates::str::contains("apiVersion: kustomize.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains(
+            "apiVersion: kustomize.toolkit.fluxcd.io/v1",
+        ))
         .stdout(predicates::str::contains("kind: Kustomization"))
         .stdout(predicates::str::contains("path: ./clusters/production"))
         .stdout(predicates::str::contains("prune: true"))
@@ -2279,7 +2287,9 @@ build([repo]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicates::str::contains("apiVersion: source.toolkit.fluxcd.io/v1"))
+        .stdout(predicates::str::contains(
+            "apiVersion: source.toolkit.fluxcd.io/v1",
+        ))
         .stdout(predicates::str::contains("kind: GitRepository"))
         .stdout(predicates::str::contains("name: my-repo"))
         .stdout(predicates::str::contains("tag: v1.0.0"));

@@ -323,42 +323,39 @@ fn gvk_index_contains_expected_resources() {
     generate_from_real_specs(root);
 
     let schema = parse_schema_json(root);
-    let gvk_index = schema["gvk_index"].as_object().expect("gvk_index should be an object");
+    let gvk_index = schema["gvk_index"]
+        .as_object()
+        .expect("gvk_index should be an object");
 
     // Core resources (api/v1)
-    for kind in ["Pod", "Service", "ConfigMap", "Secret", "Namespace", "ServiceAccount"] {
+    for kind in [
+        "Pod",
+        "Service",
+        "ConfigMap",
+        "Secret",
+        "Namespace",
+        "ServiceAccount",
+    ] {
         let key = format!("v1:{kind}");
-        assert!(
-            gvk_index.contains_key(&key),
-            "{key} missing from gvk_index"
-        );
+        assert!(gvk_index.contains_key(&key), "{key} missing from gvk_index");
     }
 
     // Apps resources
     for kind in ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"] {
         let key = format!("apps/v1:{kind}");
-        assert!(
-            gvk_index.contains_key(&key),
-            "{key} missing from gvk_index"
-        );
+        assert!(gvk_index.contains_key(&key), "{key} missing from gvk_index");
     }
 
     // Batch resources
     for kind in ["Job", "CronJob"] {
         let key = format!("batch/v1:{kind}");
-        assert!(
-            gvk_index.contains_key(&key),
-            "{key} missing from gvk_index"
-        );
+        assert!(gvk_index.contains_key(&key), "{key} missing from gvk_index");
     }
 
     // Networking resources
     for kind in ["Ingress", "NetworkPolicy"] {
         let key = format!("networking.k8s.io/v1:{kind}");
-        assert!(
-            gvk_index.contains_key(&key),
-            "{key} missing from gvk_index"
-        );
+        assert!(gvk_index.contains_key(&key), "{key} missing from gvk_index");
     }
 
     // No GVK should start with "/" (core group formatting bug)
@@ -740,9 +737,7 @@ fn dts_imports_are_resolvable() {
     for entry in walkdir(&k8s_dir) {
         let path = entry;
         if path.extension().is_some_and(|ext| ext == "dts")
-            || path
-                .to_str()
-                .is_some_and(|s| s.ends_with(".d.ts"))
+            || path.to_str().is_some_and(|s| s.ends_with(".d.ts"))
         {
             let content = std::fs::read_to_string(&path).unwrap();
 
@@ -814,9 +809,7 @@ fn tsconfig_paths_point_to_generated_files() {
     assert_eq!(base_path, ".husako/types/husako/_base.d.ts");
 
     // Check k8s/* wildcard path
-    let k8s_path = paths["k8s/*"][0]
-        .as_str()
-        .expect("k8s/* path should exist");
+    let k8s_path = paths["k8s/*"][0].as_str().expect("k8s/* path should exist");
     assert_eq!(k8s_path, ".husako/types/k8s/*");
 
     // Verify that the referenced files actually exist on disk

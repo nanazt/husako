@@ -631,9 +631,15 @@ flux-source = { source = "git", repo = "https://github.com/fluxcd/source-control
         let manifest: PluginManifest = toml::from_str(toml).unwrap();
         assert_eq!(manifest.plugin.name, "flux");
         assert_eq!(manifest.plugin.version, "0.1.0");
-        assert_eq!(manifest.plugin.description.as_deref(), Some("Flux CD integration for husako"));
+        assert_eq!(
+            manifest.plugin.description.as_deref(),
+            Some("Flux CD integration for husako")
+        );
         assert_eq!(manifest.resources.len(), 1);
-        assert!(matches!(manifest.resources["flux-source"], SchemaSource::Git { .. }));
+        assert!(matches!(
+            manifest.resources["flux-source"],
+            SchemaSource::Git { .. }
+        ));
         assert_eq!(manifest.modules.len(), 2);
         assert_eq!(manifest.modules["flux"], "modules/index.js");
         assert_eq!(manifest.modules["flux/helm"], "modules/helm.js");
