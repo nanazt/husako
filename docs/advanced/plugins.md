@@ -184,49 +184,6 @@ export function HelmRelease(name?: string): HelmRelease;
 
 ---
 
-## Bundled plugins: Flux CD
-
-The Flux CD plugin ships in the husako repository at `plugins/flux/`.
-
-It provides two modules:
-
-### `"flux"`
-
-```typescript
-import { HelmRelease, Kustomization } from "flux";
-```
-
-- `HelmRelease(name?)` — `helm.toolkit.fluxcd.io/v2`
-- `Kustomization(name?)` — `kustomize.toolkit.fluxcd.io/v1`
-
-### `"flux/source"`
-
-```typescript
-import { GitRepository, HelmRepository, OCIRepository } from "flux/source";
-```
-
-- `GitRepository(name?)` — `source.toolkit.fluxcd.io/v1`
-- `HelmRepository(name?)` — `source.toolkit.fluxcd.io/v1`
-- `OCIRepository(name?)` — `source.toolkit.fluxcd.io/v1beta2`
-
-### `_sourceRef()` convention
-
-Flux source resources expose a `_sourceRef()` method that returns a `{ kind, name, namespace }` object.
-
-Flux workload resources (like `HelmRelease`) accept source objects via `.sourceRef()` and call `_sourceRef()` automatically:
-
-```typescript
-const repo = HelmRepository("my-repo").namespace("flux-system").url("https://...");
-
-const release = HelmRelease("my-app")
-  .sourceRef(repo)   // passes { kind: "HelmRepository", name: "my-repo", namespace: "flux-system" }
-  .chart("my-chart", "1.0.0");
-```
-
-This duck-typed convention (`typeof ref._sourceRef === "function"`) lets plugins link resources without hard-coded type checks.
-
----
-
 ## Plugin lifecycle
 
 1. `husako generate` reads `[plugins]` from `husako.toml`

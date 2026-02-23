@@ -19,17 +19,20 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Reference', link: '/reference/cli' },
-      { text: 'Advanced', link: '/advanced/helm' },
+      { text: 'Advanced', link: '/advanced/plugins' },
     ],
 
     sidebar: [
       {
         text: 'Guide',
         items: [
-          { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Getting Started',   link: '/guide/getting-started' },
           { text: 'Writing Resources', link: '/guide/writing-resources' },
-          { text: 'Configuration', link: '/guide/configuration' },
-          { text: 'Templates', link: '/guide/templates' },
+          { text: 'Configuration',     link: '/guide/configuration' },
+          { text: 'Templates',         link: '/guide/templates' },
+          { text: 'Helm Chart Values', link: '/guide/helm' },
+          { text: 'Official Plugins',  link: '/guide/plugins/' },
+          { text: 'Flux CD',           link: '/guide/plugins/flux' },
         ],
       },
       {
@@ -37,14 +40,13 @@ export default defineConfig({
         items: [
           { text: 'CLI Reference', link: '/reference/cli' },
           { text: 'Import System', link: '/reference/import-system' },
-          { text: 'Builder API', link: '/reference/builder-api' },
+          { text: 'Builder API',   link: '/reference/builder-api' },
         ],
       },
       {
         text: 'Advanced',
         items: [
-          { text: 'Helm Integration', link: '/advanced/helm' },
-          { text: 'Plugins', link: '/advanced/plugins' },
+          { text: 'Writing a Plugin', link: '/advanced/plugins' },
         ],
       },
     ],
