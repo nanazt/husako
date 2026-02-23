@@ -1,10 +1,16 @@
 # Writing Resources
 
-husako resources are written using a builder DSL. No YAML, no plain objects for resource structure — just chained method calls that compile to typed Kubernetes manifests.
+husako resources are written using a builder DSL.
+
+No YAML, no plain objects for resource structure — just chained method calls that compile to typed Kubernetes manifests.
+
+---
 
 ## Factory functions
 
-Every resource type is a PascalCase factory function. Call it with no arguments to get an empty builder:
+Every resource type is a PascalCase factory function.
+
+Call it with no arguments to get an empty builder:
 
 ```typescript
 import { Deployment } from "k8s/apps/v1";
@@ -16,9 +22,13 @@ const svc = Service();
 
 No `new` keyword, no `new Deployment()`. The factory is the API.
 
+---
+
 ## Chaining methods
 
-Every method on a builder returns a new builder instance. You build up a resource by chaining:
+Every method on a builder returns a new builder instance.
+
+You build up a resource by chaining:
 
 ```typescript
 const deploy = Deployment()
@@ -26,11 +36,17 @@ const deploy = Deployment()
   .selector(LabelSelector().matchLabels({ app: "web" }));
 ```
 
-Each property has a corresponding method generated from the OpenAPI spec. Method names match the spec field names in camelCase.
+Each property has a corresponding method generated from the OpenAPI spec.
+
+Method names match the spec field names in camelCase.
+
+---
 
 ## metadata()
 
-`metadata()` is the entry point for metadata chains. It returns a `MetadataFragment` with its own chainable methods:
+`metadata()` is the entry point for metadata chains.
+
+It returns a `MetadataFragment` with its own chainable methods:
 
 ```typescript
 import { metadata } from "husako";
@@ -49,7 +65,11 @@ Pass the fragment to any resource's `.metadata()` method:
 const deploy = Deployment().metadata(meta);
 ```
 
-The shorthand functions `name()`, `namespace()`, `label()`, and `annotation()` from `"husako"` are aliases that create a `metadata()` chain and call the corresponding method. Use whichever style you prefer.
+The shorthand functions `name()`, `namespace()`, `label()`, and `annotation()` from `"husako"` are aliases that create a `metadata()` chain and call the corresponding method.
+
+Use whichever style you prefer.
+
+---
 
 ## Resource quantities
 
@@ -91,7 +111,11 @@ Container()
   )
 ```
 
-`requests(resourceList)` creates a `ResourceRequirementsFragment`. Call `.limits(resourceList)` on it to add limits. Pass the whole thing to `.resources()`.
+`requests(resourceList)` creates a `ResourceRequirementsFragment`.
+
+Call `.limits(resourceList)` on it to add limits, then pass the whole thing to `.resources()`.
+
+---
 
 ## Workload shortcuts
 
@@ -110,7 +134,13 @@ Deployment()
   ])
 ```
 
-`.containers(v)` sets `spec.template.spec.containers`. `.initContainers(v)` sets `spec.template.spec.initContainers`. You don't need to build the full `template` → `spec` chain manually.
+`.containers(v)` sets `spec.template.spec.containers`.
+
+`.initContainers(v)` sets `spec.template.spec.initContainers`.
+
+You don't need to build the full `template` → `spec` chain manually.
+
+---
 
 ## Reusing builders
 
@@ -136,7 +166,9 @@ const staging = Deployment()
 build([prod, staging]);
 ```
 
-`prod` and `staging` share the same pod template object. Modifying one never affects the other.
+`prod` and `staging` share the same pod template object.
+
+Modifying one never affects the other.
 
 You can also parameterize with functions:
 
@@ -156,6 +188,8 @@ build([
 ]);
 ```
 
+---
+
 ## The build() call
 
 Every entry file must call `build()` exactly once:
@@ -166,11 +200,18 @@ import { build } from "husako";
 build([resource1, resource2, resource3]);
 ```
 
-`build()` accepts a single builder or an array of builders. Each item must be a resource builder instance (it must have a `_render()` method). Passing plain objects throws a `TypeError`.
+`build()` accepts a single builder or an array of builders.
 
-**Rules:**
+Each item must be a resource builder instance (it must have a `_render()` method).
+
+Passing plain objects throws a `TypeError`.
+
+Rules:
+
 - Missing `build()` call → exit code 7
 - Multiple `build()` calls → exit code 7
 - Items without `_render()` → `TypeError`
 
-The output must also pass strict JSON validation. Banned values in the rendered output: `undefined`, `bigint`, `symbol`, functions, class instances, `Date`, `Map`, `Set`, `RegExp`, and cyclic references.
+The output must also pass strict JSON validation.
+
+Banned values in the rendered output: `undefined`, `bigint`, `symbol`, functions, class instances, `Date`, `Map`, `Set`, `RegExp`, and cyclic references.

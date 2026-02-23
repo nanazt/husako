@@ -20,6 +20,8 @@ ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingr
 flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
 ```
 
+---
+
 ## Entry aliases
 
 ```toml
@@ -28,11 +30,15 @@ dev = "env/dev.ts"
 staging = "env/staging.ts"
 ```
 
-Entry aliases map short names to file paths. When you run `husako render dev`, husako resolves `dev` to `env/dev.ts` before rendering.
+Entry aliases map short names to file paths.
+
+When you run `husako render dev`, husako resolves `dev` to `env/dev.ts` before rendering.
 
 **Resolution order:** direct file path → entry alias → error with available aliases listed.
 
 If you pass a name that is neither a real file nor a known alias, husako exits with code 2 and shows the available aliases.
+
+---
 
 ## Resource dependencies
 
@@ -41,7 +47,9 @@ If you pass a name that is neither a real file nor a known alias, husako exits w
 core = { source = "release", version = "1.32.0" }
 ```
 
-Resource dependencies declare Kubernetes schema sources for type generation. `husako generate` reads these and produces typed builders under `.husako/types/k8s/`.
+Resource dependencies declare Kubernetes schema sources for type generation.
+
+`husako generate` reads these and produces typed builders under `.husako/types/k8s/`.
 
 Four source types are supported:
 
@@ -56,7 +64,9 @@ core = { source = "release", version = "1.32.0" }
 
 ### cluster
 
-Fetches the OpenAPI spec from a live cluster. Uses the kubeconfig bearer token for authentication:
+Fetches the OpenAPI spec from a live cluster.
+
+Uses the kubeconfig bearer token for authentication:
 
 ```toml
 [resources]
@@ -86,6 +96,8 @@ my-crds = { source = "file", path = "./crds" }
 `[resources]` is the current name for this section. The legacy name `[schemas]` is also accepted.
 :::
 
+---
+
 ## Chart dependencies
 
 ```toml
@@ -93,7 +105,9 @@ my-crds = { source = "file", path = "./crds" }
 ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
 ```
 
-Chart dependencies declare Helm chart sources for `values.schema.json` type generation. `husako generate` fetches the schema and produces typed value builders under `.husako/types/helm/`.
+Chart dependencies declare Helm chart sources for `values.schema.json` type generation.
+
+`husako generate` fetches the schema and produces typed value builders under `.husako/types/helm/`.
 
 Four source types are supported:
 
@@ -133,6 +147,8 @@ Reads `values.schema.json` from a local path:
 local-chart = { source = "file", path = "./charts/my-chart/values.schema.json" }
 ```
 
+---
+
 ## Plugins
 
 ```toml
@@ -141,14 +157,20 @@ flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
-Plugins extend husako with dependency presets and importable helper modules. Two source types:
+Plugins extend husako with dependency presets and importable helper modules.
+
+Two source types:
 
 | Source | Fields | Description |
 |--------|--------|-------------|
 | `git` | `url` | Clone from a git repository (HEAD of default branch) |
 | `path` | `path` | Use a local directory (relative path) |
 
-Plugins are installed to `.husako/plugins/<name>/` during `husako generate`. See [Plugins](/advanced/plugins) for authoring details.
+Plugins are installed to `.husako/plugins/<name>/` during `husako generate`.
+
+See [Plugins](/advanced/plugins) for authoring details.
+
+---
 
 ## Cluster config
 

@@ -10,7 +10,11 @@ A plugin can provide:
 2. **Helper modules** — importable TypeScript-typed JS files with ergonomic builder classes
 3. **Templates** — project scaffolds (planned)
 
-The official bundled plugin is the Flux CD plugin (`plugins/flux/` in the husako repository), which provides builders for `HelmRelease`, `Kustomization`, `GitRepository`, `HelmRepository`, and `OCIRepository`.
+The official bundled plugin is the Flux CD plugin (`plugins/flux/` in the husako repository).
+
+It provides builders for `HelmRelease`, `Kustomization`, `GitRepository`, `HelmRepository`, and `OCIRepository`.
+
+---
 
 ## Installing a plugin
 
@@ -21,7 +25,7 @@ husako plugin add <name> --url <git-url>
 husako plugin add <name> --path <local-dir>
 ```
 
-**Manual (husako.toml):**
+**Manual (`husako.toml`):**
 
 ```toml
 [plugins]
@@ -30,6 +34,8 @@ my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
 After adding a plugin, run `husako generate` to install it and regenerate types.
+
+---
 
 ## Using plugin modules
 
@@ -40,7 +46,11 @@ import { HelmRelease, Kustomization } from "flux";
 import { GitRepository, HelmRepository } from "flux/source";
 ```
 
-The specifiers are declared in the plugin's `plugin.toml`. Your editor gets autocomplete from the plugin's `.d.ts` files, which are wired into `tsconfig.json` path mappings by `husako generate`.
+The specifiers are declared in the plugin's `plugin.toml`.
+
+Your editor gets autocomplete from the plugin's `.d.ts` files, which are wired into `tsconfig.json` path mappings by `husako generate`.
+
+---
 
 ## Plugin structure
 
@@ -58,6 +68,8 @@ husako-plugin-<name>/
 ```
 
 Convention: the repository is named `husako-plugin-<name>`. Not enforced.
+
+---
 
 ## Plugin manifest
 
@@ -88,6 +100,8 @@ flux-helm = { source = "git", url = "https://github.com/fluxcd/helm-controller",
 | `modules` | No | Module specifier → file path mappings |
 
 Resource presets in `plugin.toml` use the same format as `husako.toml [resources]`, but `url` is used instead of `repo` for git sources.
+
+---
 
 ## Writing a plugin
 
@@ -168,9 +182,13 @@ export interface HelmRelease extends _ResourceBuilder {
 export function HelmRelease(name?: string): HelmRelease;
 ```
 
+---
+
 ## Bundled plugins: Flux CD
 
-The Flux CD plugin ships in the husako repository at `plugins/flux/`. It provides two modules:
+The Flux CD plugin ships in the husako repository at `plugins/flux/`.
+
+It provides two modules:
 
 ### `"flux"`
 
@@ -193,7 +211,9 @@ import { GitRepository, HelmRepository, OCIRepository } from "flux/source";
 
 ### `_sourceRef()` convention
 
-Flux source resources expose a `_sourceRef()` method that returns a `{ kind, name, namespace }` object. Flux workload resources (like `HelmRelease`) accept source objects via `.sourceRef()` and call `_sourceRef()` automatically:
+Flux source resources expose a `_sourceRef()` method that returns a `{ kind, name, namespace }` object.
+
+Flux workload resources (like `HelmRelease`) accept source objects via `.sourceRef()` and call `_sourceRef()` automatically:
 
 ```typescript
 const repo = HelmRepository("my-repo").namespace("flux-system").url("https://...");
@@ -204,6 +224,8 @@ const release = HelmRelease("my-app")
 ```
 
 This duck-typed convention (`typeof ref._sourceRef === "function"`) lets plugins link resources without hard-coded type checks.
+
+---
 
 ## Plugin lifecycle
 
@@ -219,4 +241,6 @@ This duck-typed convention (`typeof ref._sourceRef === "function"`) lets plugins
 
 `husako plugin remove <name>` removes the entry from `husako.toml` and deletes `.husako/plugins/<name>/`.
 
-`husako clean --types` removes `.husako/plugins/` alongside `.husako/types/`. Re-running `husako generate` reinstalls everything from scratch.
+`husako clean --types` removes `.husako/plugins/` alongside `.husako/types/`.
+
+Re-running `husako generate` reinstalls everything from scratch.
