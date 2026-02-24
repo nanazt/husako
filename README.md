@@ -1,8 +1,8 @@
 # husako
 
-Write Kubernetes resources in TypeScript, get YAML out.
+husako is a CLI tool for writing Kubernetes resources in TypeScript. Define your deployments, services, and configurations using a typed builder API — then compile to YAML with a single command.
 
-husako compiles TypeScript to Kubernetes YAML. You get type safety, autocomplete, and the full expressiveness of a real programming language — functions, variables, loops, imports — instead of templating hacks on top of YAML.
+You get type safety, autocomplete, and the full expressiveness of a real programming language — functions, variables, loops, imports — instead of templating hacks on top of YAML.
 
 Inspired by [gaji](https://github.com/dodok8/gaji).
 
@@ -58,7 +58,7 @@ Or download prebuilt binaries from [GitHub Releases](https://github.com/nanazt/h
 - **Rust 1.85+** — to build from source
 - **git** — used by `husako generate` and `husako add` for git-based schema and chart sources
 
-TypeScript/Node.js is not required. husako embeds its own TypeScript compiler and JavaScript runtime.
+No TypeScript compiler or JavaScript runtime installation required. husako bundles its own.
 
 ## Getting started
 

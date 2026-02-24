@@ -121,8 +121,8 @@ pub enum ChartSource {
 }
 
 /// A plugin dependency entry in `husako.toml`.
-/// `flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }`
-/// `flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }`
+/// `fluxcd = { source = "git", url = "https://github.com/nanazt/husako-plugin-fluxcd" }`
+/// `fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }`
 /// `my-plugin = { source = "path", path = "./plugins/my-plugin" }`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "source")]
@@ -589,14 +589,14 @@ my-other = { source = "git", repo = "https://github.com/example/repo", tag = "v1
     fn parse_plugins_section() {
         let toml = r#"
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako-plugin-fluxcd" }
 my-plugin = { source = "path", path = "./plugins/my-plugin" }
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.plugins.len(), 2);
         assert!(matches!(
-            config.plugins["flux"],
-            PluginSource::Git { ref url, path: None } if url == "https://github.com/nanazt/husako-plugin-flux"
+            config.plugins["fluxcd"],
+            PluginSource::Git { ref url, path: None } if url == "https://github.com/nanazt/husako-plugin-fluxcd"
         ));
         assert!(matches!(
             config.plugins["my-plugin"],
@@ -608,13 +608,13 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
     fn parse_plugin_git_with_path() {
         let toml = r#"
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert!(matches!(
-            config.plugins["flux"],
+            config.plugins["fluxcd"],
             PluginSource::Git { ref url, path: Some(ref p) }
-                if url == "https://github.com/nanazt/husako" && p == "plugins/flux"
+                if url == "https://github.com/nanazt/husako" && p == "plugins/fluxcd"
         ));
     }
 
@@ -637,23 +637,23 @@ flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugi
     fn parse_plugin_manifest() {
         let toml = r#"
 [plugin]
-name = "flux"
+name = "fluxcd"
 version = "0.1.0"
-description = "Flux CD integration for husako"
+description = "FluxCD integration for husako"
 
 [resources]
 flux-source = { source = "git", repo = "https://github.com/fluxcd/source-controller", tag = "v1.5.0", path = "config/crd/bases" }
 
 [modules]
-"flux" = "modules/index.js"
-"flux/helm" = "modules/helm.js"
+"fluxcd" = "modules/index.js"
+"fluxcd/helm" = "modules/helm.js"
 "#;
         let manifest: PluginManifest = toml::from_str(toml).unwrap();
-        assert_eq!(manifest.plugin.name, "flux");
+        assert_eq!(manifest.plugin.name, "fluxcd");
         assert_eq!(manifest.plugin.version, "0.1.0");
         assert_eq!(
             manifest.plugin.description.as_deref(),
-            Some("Flux CD integration for husako")
+            Some("FluxCD integration for husako")
         );
         assert_eq!(manifest.resources.len(), 1);
         assert!(matches!(
@@ -661,8 +661,8 @@ flux-source = { source = "git", repo = "https://github.com/fluxcd/source-control
             SchemaSource::Git { .. }
         ));
         assert_eq!(manifest.modules.len(), 2);
-        assert_eq!(manifest.modules["flux"], "modules/index.js");
-        assert_eq!(manifest.modules["flux/helm"], "modules/helm.js");
+        assert_eq!(manifest.modules["fluxcd"], "modules/index.js");
+        assert_eq!(manifest.modules["fluxcd/helm"], "modules/helm.js");
     }
 
     #[test]

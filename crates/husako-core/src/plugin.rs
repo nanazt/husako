@@ -445,10 +445,10 @@ version = "0.1.0"
         };
 
         let plugins = vec![InstalledPlugin {
-            name: "flux".to_string(),
+            name: "fluxcd".to_string(),
             manifest: PluginManifest {
                 plugin: husako_config::PluginMeta {
-                    name: "flux".to_string(),
+                    name: "fluxcd".to_string(),
                     version: "0.1.0".to_string(),
                     description: None,
                 },
@@ -463,7 +463,7 @@ version = "0.1.0"
                 charts: HashMap::new(),
                 modules: HashMap::new(),
             },
-            dir: PathBuf::from("/tmp/plugins/flux"),
+            dir: PathBuf::from("/tmp/plugins/fluxcd"),
         }];
 
         merge_plugin_presets(&mut config, &plugins);
@@ -471,7 +471,7 @@ version = "0.1.0"
         // Original resource preserved
         assert!(config.resources.contains_key("kubernetes"));
         // Plugin resource added with namespaced key
-        assert!(config.resources.contains_key("flux:flux-source"));
+        assert!(config.resources.contains_key("fluxcd:flux-source"));
     }
 
     #[test]
@@ -507,26 +507,26 @@ version = "0.1.0"
     #[test]
     fn plugin_tsconfig_paths_builds_mappings() {
         let plugins = vec![InstalledPlugin {
-            name: "flux".to_string(),
+            name: "fluxcd".to_string(),
             manifest: PluginManifest {
                 plugin: husako_config::PluginMeta {
-                    name: "flux".to_string(),
+                    name: "fluxcd".to_string(),
                     version: "0.1.0".to_string(),
                     description: None,
                 },
                 resources: HashMap::new(),
                 charts: HashMap::new(),
                 modules: HashMap::from([
-                    ("flux".to_string(), "modules/index.js".to_string()),
-                    ("flux/helm".to_string(), "modules/helm.js".to_string()),
+                    ("fluxcd".to_string(), "modules/index.js".to_string()),
+                    ("fluxcd/helm".to_string(), "modules/helm.js".to_string()),
                 ]),
             },
-            dir: PathBuf::from("/tmp/plugins/flux"),
+            dir: PathBuf::from("/tmp/plugins/fluxcd"),
         }];
 
         let paths = plugin_tsconfig_paths(&plugins);
-        assert_eq!(paths["flux"], ".husako/plugins/flux/modules/index.d.ts");
-        assert_eq!(paths["flux/helm"], ".husako/plugins/flux/modules/helm.d.ts");
+        assert_eq!(paths["fluxcd"], ".husako/plugins/fluxcd/modules/index.d.ts");
+        assert_eq!(paths["fluxcd/helm"], ".husako/plugins/fluxcd/modules/helm.d.ts");
     }
 
     #[test]

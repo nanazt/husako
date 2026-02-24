@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Error, Result};
 
 /// Resolves plugin module imports to `.js` files under `.husako/plugins/<name>/`.
 ///
-/// Each entry maps an import specifier (e.g. `"flux"`, `"flux/helm"`) to an absolute
+/// Each entry maps an import specifier (e.g. `"fluxcd"`, `"fluxcd/source"`) to an absolute
 /// path to the corresponding `.js` file.
 pub struct PluginResolver {
     /// Import specifier → absolute `.js` file path.
@@ -312,13 +312,13 @@ mod tests {
         fs::write(mod_dir.join("index.js"), "export function HelmRelease() {}").unwrap();
 
         let mut modules = std::collections::HashMap::new();
-        modules.insert("flux".to_string(), mod_dir.join("index.js"));
+        modules.insert("fluxcd".to_string(), mod_dir.join("index.js"));
 
         let mut resolver = PluginResolver::new(modules);
         let rt = rquickjs::Runtime::new().unwrap();
         let ctx = rquickjs::Context::full(&rt).unwrap();
         ctx.with(|ctx| {
-            let result = resolver.resolve(&ctx, "main", "flux").unwrap();
+            let result = resolver.resolve(&ctx, "main", "fluxcd").unwrap();
             assert!(result.ends_with("modules/index.js"));
         });
     }
@@ -331,13 +331,13 @@ mod tests {
         fs::write(mod_dir.join("helm.js"), "export function helmRelease() {}").unwrap();
 
         let mut modules = std::collections::HashMap::new();
-        modules.insert("flux/helm".to_string(), mod_dir.join("helm.js"));
+        modules.insert("fluxcd/source".to_string(), mod_dir.join("helm.js"));
 
         let mut resolver = PluginResolver::new(modules);
         let rt = rquickjs::Runtime::new().unwrap();
         let ctx = rquickjs::Context::full(&rt).unwrap();
         ctx.with(|ctx| {
-            let result = resolver.resolve(&ctx, "main", "flux/helm").unwrap();
+            let result = resolver.resolve(&ctx, "main", "fluxcd/source").unwrap();
             assert!(result.ends_with("modules/helm.js"));
         });
     }
@@ -357,13 +357,13 @@ mod tests {
     #[test]
     fn plugin_resolver_error_when_file_missing() {
         let mut modules = std::collections::HashMap::new();
-        modules.insert("flux".to_string(), PathBuf::from("/nonexistent/index.js"));
+        modules.insert("fluxcd".to_string(), PathBuf::from("/nonexistent/index.js"));
 
         let mut resolver = PluginResolver::new(modules);
         let rt = rquickjs::Runtime::new().unwrap();
         let ctx = rquickjs::Context::full(&rt).unwrap();
         ctx.with(|ctx| {
-            let result = resolver.resolve(&ctx, "main", "flux");
+            let result = resolver.resolve(&ctx, "main", "fluxcd");
             assert!(result.is_err());
         });
     }

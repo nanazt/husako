@@ -28,9 +28,9 @@ husako-plugin-<name>/
 
 ```toml
 [plugin]
-name = "flux"
+name = "fluxcd"
 version = "0.1.0"
-description = "Flux CD integration for husako"
+description = "FluxCD integration for husako"
 
 # Dependency presets — merged into the project's schema resolution
 [resources]
@@ -39,12 +39,12 @@ flux-helm = { source = "git", url = "https://github.com/fluxcd/helm-controller",
 
 # Chart presets
 [charts]
-# (none for flux, but plugins can declare chart sources)
+# (none for fluxcd, but plugins can declare chart sources)
 
 # Module mappings: import specifier → file path (relative to plugin root)
 [modules]
-"flux" = "modules/index.js"
-"flux/helm" = "modules/helm.js"
+"fluxcd" = "modules/index.js"
+"fluxcd/helm" = "modules/helm.js"
 ```
 
 ### Manifest Fields
@@ -73,9 +73,9 @@ The `url` field is aliased to `repo` during parsing so the same `SchemaSource` s
 
 ```toml
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako-plugin-flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako-plugin-fluxcd" }
 # Plugin bundled inside a monorepo — only the subdirectory is fetched
-flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
@@ -96,7 +96,7 @@ my-local = { source = "path", path = "./plugins/my-plugin" }
 │   ├── k8s/
 │   └── helm/
 └── plugins/          # NEW: installed plugin copies
-    └── flux/         # One directory per plugin
+    └── fluxcd/       # One directory per plugin
         ├── plugin.toml
         └── modules/
             ├── index.js
@@ -123,15 +123,15 @@ The resolver chain is updated to include plugins:
 
 ### PluginResolver Rules
 
-Given plugin "flux" with modules:
+Given plugin "fluxcd" with modules:
 ```toml
 [modules]
-"flux" = "modules/index.js"
-"flux/helm" = "modules/helm.js"
+"fluxcd" = "modules/index.js"
+"fluxcd/helm" = "modules/helm.js"
 ```
 
-- `import { HelmRelease } from "flux"` → `.husako/plugins/flux/modules/index.js`
-- `import { helmRelease } from "flux/helm"` → `.husako/plugins/flux/modules/helm.js`
+- `import { HelmRelease } from "fluxcd"` → `.husako/plugins/fluxcd/modules/index.js`
+- `import { helmRelease } from "fluxcd/helm"` → `.husako/plugins/fluxcd/modules/helm.js`
 
 The resolver:
 1. Checks if the import specifier matches any installed plugin's module mappings
@@ -146,8 +146,8 @@ Plugin `.d.ts` files are exposed via `tsconfig.json` path mappings:
 {
   "compilerOptions": {
     "paths": {
-      "flux": [".husako/plugins/flux/modules/index.d.ts"],
-      "flux/helm": [".husako/plugins/flux/modules/helm.d.ts"]
+      "fluxcd": [".husako/plugins/fluxcd/modules/index.d.ts"],
+      "fluxcd/helm": [".husako/plugins/fluxcd/modules/helm.d.ts"]
     }
   }
 }
@@ -256,6 +256,6 @@ module.exports = { ... };
 ## Naming Conventions
 
 - Plugin repo: `husako-plugin-<name>` (convention, not enforced)
-- Plugin name in manifest: lowercase with hyphens (`flux`, `argo-cd`)
-- Module specifiers: match plugin name (`"flux"`, `"flux/helm"`)
+- Plugin name in manifest: lowercase with hyphens (`fluxcd`, `argo-cd`)
+- Module specifiers: match plugin name (`"fluxcd"`, `"fluxcd/helm"`)
 - Installed directory: `.husako/plugins/<name>/`
