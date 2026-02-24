@@ -271,6 +271,41 @@ fn resolve_json_schema_type_for_spec(
 }
 
 /// Convert a string to PascalCase.
+/// Convert a property name to a valid JS identifier by replacing non-alphanumeric
+/// chars (except `_` and `$`) with `_`. Prepends `_` if the name starts with a digit.
+fn to_js_identifier(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '$' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("_{sanitized}")
+    } else {
+        sanitized
+    }
+}
+
+/// Quote a property name for use in a TypeScript interface or object literal if
+/// it is not a valid JS identifier (e.g. contains `.` or `-`).
+fn quote_ts_property(name: &str) -> String {
+    let is_valid_id = !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    if is_valid_id {
+        name.to_string()
+    } else {
+        format!("\"{name}\"")
+    }
+}
+
 fn to_pascal_case(s: &str) -> String {
     s.split(['-', '_', '.'])
         .filter(|part| !part.is_empty())
@@ -334,7 +369,8 @@ fn emit_chart_interface(out: &mut String, schema: &SchemaInfo) {
         let opt = if prop.required { "" } else { "?" };
         // For builder types, accept both the builder class and the spec interface
         let type_str = format_param_type_dts(&prop.ts_type);
-        let _ = writeln!(out, "  {}{}: {};", prop.name, opt, type_str);
+        let key = quote_ts_property(&prop.name);
+        let _ = writeln!(out, "  {key}{opt}: {type_str};");
     }
     let _ = writeln!(out, "}}");
 }
@@ -352,10 +388,10 @@ fn emit_chart_builder_dts(out: &mut String, schema: &SchemaInfo) {
         if let Some(desc) = &prop.description {
             let _ = writeln!(out, "  /** {desc} */");
         }
+        let method_name = to_js_identifier(&prop.name);
         let _ = writeln!(
             out,
-            "  {}(value: {}): this;",
-            prop.name,
+            "  {method_name}(value: {}): this;",
             format_ts_type(&prop.ts_type)
         );
     }
@@ -389,10 +425,11 @@ fn emit_chart_js(schemas: &[ExtractedSchema]) -> String {
                 schema.info.ts_name
             );
             for prop in &schema.info.properties {
+                let method_name = to_js_identifier(&prop.name);
                 let _ = writeln!(
                     out,
-                    "  {}(v) {{ return this._set(\"{}\", v); }}",
-                    prop.name, prop.name
+                    "  {method_name}(v) {{ return this._set(\"{}\", v); }}",
+                    prop.name
                 );
             }
             let _ = writeln!(out, "}}");

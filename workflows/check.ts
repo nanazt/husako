@@ -27,6 +27,37 @@ const test = new Job("ubuntu-latest").steps((s) =>
     }),
 );
 
+const e2e = new Job("ubuntu-latest").steps((s) =>
+  s
+    .add(checkout({}))
+    .add(rustToolchain({}))
+    .add(rustCache({}))
+    .add({
+      name: "Cache husako downloads (Scenario A)",
+      uses: "actions/cache@v4",
+      with: {
+        path: "test/e2e/.husako/cache",
+        key: "${{ runner.os }}-husako-e2e-${{ hashFiles('test/e2e/husako.toml') }}",
+      },
+    })
+    .add({
+      name: "Install kubeconform",
+      run: [
+        'VER=$(curl -sL "https://api.github.com/repos/yannh/kubeconform/releases/latest" | grep \'"tag_name"\' | cut -d\'"\' -f4)',
+        'curl -sL "https://github.com/yannh/kubeconform/releases/download/${VER}/kubeconform-linux-amd64.tar.gz" | tar xz',
+        "chmod +x kubeconform && sudo mv kubeconform /usr/local/bin/kubeconform",
+      ].join("\n"),
+    })
+    .add({
+      name: "Build husako binary",
+      run: "cargo build --release --bin husako",
+    })
+    .add({
+      name: "E2E tests",
+      run: "bash scripts/e2e.sh",
+    }),
+);
+
 new Workflow({
   name: "Check",
   on: {
@@ -34,5 +65,5 @@ new Workflow({
     pull_request: { branches: ["master"] },
   },
 })
-  .jobs((j) => j.add("lint", lint).add("test", test))
+  .jobs((j) => j.add("lint", lint).add("test", test).add("e2e", e2e))
   .build("check");

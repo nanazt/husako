@@ -73,6 +73,93 @@ pub(crate) fn resolve(
     Ok(schema)
 }
 
+/// Extract chart name from OCI reference (last path component, before any tag suffix).
+///
+/// `oci://ghcr.io/org/postgresql`       → `"postgresql"`
+/// `oci://ghcr.io/org/postgresql:1.2.3` → `"postgresql"`
+pub(crate) fn chart_name_from_reference(reference: &str) -> &str {
+    let without_scheme = reference.strip_prefix("oci://").unwrap_or(reference);
+    let path_part = without_scheme
+        .split('/')
+        .next_back()
+        .unwrap_or(without_scheme);
+    path_part.split(':').next().unwrap_or(path_part)
+}
+
+/// Fetch available stable semver tags from an OCI registry for the given reference.
+///
+/// Uses the same anonymous bearer-token auth flow as `resolve()`.
+/// Returns tags sorted descending by semver, up to `limit` starting at `offset`.
+pub fn list_tags(reference: &str, limit: usize, offset: usize) -> Result<Vec<String>, HelmError> {
+    let (host, repo, _) = parse_oci_reference(reference)?;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| HelmError::Io(format!("list_tags: build HTTP client: {e}")))?;
+
+    let token = get_token(&client, "list_tags", &host, &repo).ok().flatten();
+
+    let url = format!(
+        "{}://{host}/v2/{repo}/tags/list?n=200",
+        registry_scheme(&host)
+    );
+    let mut builder = client.get(&url).header("User-Agent", "husako");
+    if let Some(ref tok) = token {
+        builder = builder.bearer_auth(tok);
+    }
+
+    let body: serde_json::Value = builder
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| HelmError::Io(format!("list_tags: fetch tags for {reference}: {e}")))?
+        .json()
+        .map_err(|e| HelmError::Io(format!("list_tags: parse tags response: {e}")))?;
+
+    let mut tags: Vec<semver::Version> = body["tags"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|v| v.as_str())
+        .filter_map(|tag| {
+            let stripped = tag.strip_prefix('v').unwrap_or(tag);
+            semver::Version::parse(stripped)
+                .ok()
+                .filter(|v| v.pre.is_empty())
+        })
+        .collect();
+
+    tags.sort_by(|a, b| b.cmp(a));
+
+    // Reconstruct the original tag string form (no 'v' prefix added — keep as parsed)
+    // Re-fetch the raw strings that match the parsed versions
+    let raw_tags: Vec<String> = {
+        let matching: std::collections::HashSet<semver::Version> = tags.iter().cloned().collect();
+        let mut ordered: Vec<(semver::Version, String)> = body["tags"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter_map(|tag| {
+                let stripped = tag.strip_prefix('v').unwrap_or(tag);
+                semver::Version::parse(stripped)
+                    .ok()
+                    .filter(|v| v.pre.is_empty() && matching.contains(v))
+                    .map(|v| (v, tag.to_owned()))
+            })
+            .collect();
+        ordered.sort_by(|a, b| b.0.cmp(&a.0));
+        ordered
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|(_, tag)| tag)
+            .collect()
+    };
+
+    Ok(raw_tags)
+}
+
 /// Parse an OCI reference into (host, repository, optional_tag).
 ///
 /// Examples:
@@ -373,6 +460,32 @@ fn download_blob(
 mod tests {
     use super::*;
 
+    // ── chart_name_from_reference ─────────────────────────────────────────────
+
+    #[test]
+    fn chart_name_from_reference_basic() {
+        assert_eq!(
+            chart_name_from_reference("oci://ghcr.io/org/postgresql"),
+            "postgresql"
+        );
+    }
+
+    #[test]
+    fn chart_name_from_reference_with_tag() {
+        assert_eq!(
+            chart_name_from_reference("oci://ghcr.io/org/postgresql:1.2.3"),
+            "postgresql"
+        );
+    }
+
+    #[test]
+    fn chart_name_from_reference_docker_hub() {
+        assert_eq!(
+            chart_name_from_reference("oci://registry-1.docker.io/bitnamicharts/postgresql"),
+            "postgresql"
+        );
+    }
+
     // ── parse_oci_reference ───────────────────────────────────────────────────
 
     #[test]
@@ -633,6 +746,53 @@ mod tests {
         let result = resolve("test", &reference, "mychart", "2.0.0", tmp.path()).unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicaCount"].is_object());
+    }
+
+    #[test]
+    fn list_tags_returns_sorted_semver_tags() {
+        let mut server = mockito::Server::new();
+
+        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+
+        let tags_resp = serde_json::json!({
+            "name": "myorg/mychart",
+            "tags": ["1.0.0", "2.0.0", "1.5.0", "not-semver", "3.0.0-alpha.1"]
+        });
+        let _m_tags = server
+            .mock("GET", "/v2/myorg/mychart/tags/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags_resp.to_string())
+            .create();
+
+        let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
+        let tags = list_tags(&reference, 10, 0).unwrap();
+        // Sorted descending, only stable semver, max 10
+        assert_eq!(tags, vec!["2.0.0", "1.5.0", "1.0.0"]);
+    }
+
+    #[test]
+    fn list_tags_offset_and_limit() {
+        let mut server = mockito::Server::new();
+
+        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+
+        let tags_resp = serde_json::json!({
+            "name": "myorg/mychart",
+            "tags": ["3.0.0", "2.0.0", "1.0.0"]
+        });
+        let _m_tags = server
+            .mock("GET", "/v2/myorg/mychart/tags/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags_resp.to_string())
+            .create();
+
+        let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
+        let tags = list_tags(&reference, 1, 1).unwrap();
+        assert_eq!(tags, vec!["2.0.0"]);
     }
 
     #[test]

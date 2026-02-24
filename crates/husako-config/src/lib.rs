@@ -118,6 +118,11 @@ pub enum ChartSource {
         tag: String,
         path: String,
     },
+
+    /// Fetch directly from an OCI registry.
+    /// `postgresql = { source = "oci", reference = "oci://ghcr.io/org/postgresql", version = "1.2.3" }`
+    #[serde(rename = "oci")]
+    Oci { reference: String, version: String },
 }
 
 /// A plugin dependency entry in `husako.toml`.
@@ -568,6 +573,19 @@ my-other = { source = "git", repo = "https://github.com/example/repo", tag = "v1
             ChartSource::File { .. }
         ));
         assert!(matches!(config.charts["my-other"], ChartSource::Git { .. }));
+    }
+
+    #[test]
+    fn parse_oci_chart_source() {
+        let toml = r#"[charts]
+postgresql = { source = "oci", reference = "oci://ghcr.io/org/postgresql", version = "1.2.3" }
+"#;
+        let config: HusakoConfig = toml::from_str(toml).unwrap();
+        assert!(matches!(
+            config.charts["postgresql"],
+            ChartSource::Oci { ref reference, ref version }
+            if reference == "oci://ghcr.io/org/postgresql" && version == "1.2.3"
+        ));
     }
 
     #[test]

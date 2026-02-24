@@ -443,6 +443,22 @@ pub fn discover_git_tags(
         .collect())
 }
 
+/// Fetch up to `limit` available stable OCI tags for `reference`, starting at `offset`.
+pub fn discover_oci_tags(
+    reference: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<String>, HusakoError> {
+    husako_helm::oci::list_tags(reference, limit, offset)
+        .map_err(|e| HusakoError::GenerateIo(e.to_string()))
+}
+
+/// Return the latest stable OCI tag for `reference`, or None if no tags found.
+pub fn discover_latest_oci(reference: &str) -> Result<Option<String>, HusakoError> {
+    let tags = discover_oci_tags(reference, 1, 0)?;
+    Ok(tags.into_iter().next())
+}
+
 /// Compare two version strings for equivalence.
 ///
 /// Handles cases like "1.35" matching "1.35" from latest discovery,

@@ -186,6 +186,11 @@ fn chart_source_to_inline_table(source: &ChartSource) -> toml_edit::InlineTable 
             t.insert("tag", tag.as_str().into());
             t.insert("path", path.as_str().into());
         }
+        ChartSource::Oci { reference, version } => {
+            t.insert("source", "oci".into());
+            t.insert("reference", reference.as_str().into());
+            t.insert("version", version.as_str().into());
+        }
     }
     t
 }
@@ -258,6 +263,28 @@ mod tests {
         assert!(output.contains("[charts]"));
         assert!(output.contains("ingress-nginx"));
         assert!(output.contains("4.12.0"));
+    }
+
+    #[test]
+    fn add_chart_oci() {
+        let (_tmp, path) = create_test_toml("");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_chart(
+            &mut doc,
+            "postgresql",
+            &ChartSource::Oci {
+                reference: "oci://ghcr.io/org/postgresql".to_string(),
+                version: "1.2.3".to_string(),
+            },
+        );
+
+        let output = doc.to_string();
+        assert!(output.contains("[charts]"));
+        assert!(output.contains("postgresql"));
+        assert!(output.contains("oci"));
+        assert!(output.contains("ghcr.io/org/postgresql"));
+        assert!(output.contains("1.2.3"));
     }
 
     #[test]

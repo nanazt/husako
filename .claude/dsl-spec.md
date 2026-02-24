@@ -55,10 +55,13 @@ Top-level Kubernetes resources with `apiVersion` and `kind` (schemas that carry 
 | `_setSpec(key, value)` | Sets one spec property. Clears `_spec`. |
 | `_setDeep(path, value)` | Sets nested spec path via deep merge. Clears `_spec`. |
 | `set(key, value)` | Sets arbitrary top-level field outside spec. |
+| `<field>(value)` | Per-top-level-property generated method (e.g., `.data()`, `.rules()`). Calls `set()`. |
 | `resources(...fragments)` | Sets container resource requirements from fragments. |
 | `_render()` | Serializes to plain Kubernetes object. |
 
 Generated per-spec-property methods (e.g., `.replicas()`, `.selector()`, `.template()`) call `_setSpec()` internally.
+
+Generated per-top-level-property methods (e.g., `.data()`, `.rules()`, `.subjects()`) call `set()` internally.
 
 Deep-path shortcuts (e.g., `.containers()`, `.initContainers()`) call `_setDeep()` internally.
 
@@ -189,6 +192,8 @@ Generated output:
 
 **Skip list for spec property methods:** `status`, `apiVersion`, `kind`, `metadata`
 
+**Skip list for top-level property methods:** `apiVersion`, `kind`, `metadata`, `spec`, `status`
+
 ### Schema builders (_SchemaBuilder subclass)
 
 **Condition:** schema has NO GVK AND has at least one property with `Ref` or `Array(Ref)` type.
@@ -228,6 +233,14 @@ export interface Deployment extends _ResourceBuilder {
   replicas(value: number): this;
 }
 export function Deployment(): Deployment;
+
+export interface ConfigMap extends _ResourceBuilder {
+  /** Data contains the configuration data. */
+  data(value: Record<string, string>): this;
+  binaryData(value: Record<string, string>): this;
+  immutable(value: boolean): this;
+}
+export function ConfigMap(): ConfigMap;
 ```
 
 In `.js`, the class is internal (prefixed with `_`) and only the factory is exported:
@@ -238,6 +251,14 @@ class _Deployment extends _ResourceBuilder {
   replicas(v) { return this._setSpec("replicas", v); }
 }
 export function Deployment() { return new _Deployment(); }
+
+class _ConfigMap extends _ResourceBuilder {
+  constructor() { super("v1", "ConfigMap"); }
+  data(v) { return this.set("data", v); }
+  binaryData(v) { return this.set("binaryData", v); }
+  immutable(v) { return this.set("immutable", v); }
+}
+export function ConfigMap() { return new _ConfigMap(); }
 ```
 
 ---

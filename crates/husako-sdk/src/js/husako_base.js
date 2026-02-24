@@ -48,6 +48,10 @@ export class _SchemaBuilder {
   _toJSON() {
     return _resolveFragments(this._props);
   }
+
+  _render() {
+    return this._toJSON();
+  }
 }
 
 export class _ResourceBuilder {

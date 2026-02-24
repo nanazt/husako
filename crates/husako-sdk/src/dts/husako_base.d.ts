@@ -4,6 +4,8 @@ import { MetadataFragment, ResourceRequirementsFragment } from "husako";
 export class _SchemaBuilder {
   /** Serialize to a plain object, resolving nested builders. */
   _toJSON(): Record<string, any>;
+  /** Render to a plain object for use with build(). */
+  _render(): Record<string, any>;
 }
 
 /** Base class for Kubernetes resource builders. */

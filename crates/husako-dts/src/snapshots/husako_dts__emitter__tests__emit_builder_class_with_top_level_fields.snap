@@ -1,0 +1,10 @@
+---
+source: crates/husako-dts/src/emitter.rs
+expression: output
+---
+export interface ConfigMap extends _ResourceBuilder {
+  /** Data contains the configuration data. */
+  data(value: Record<string, string>): this;
+  immutable(value: boolean): this;
+}
+export function ConfigMap(): ConfigMap;
