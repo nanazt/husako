@@ -9,7 +9,7 @@ A plugin can declare:
 1. **Dependency presets** — pre-configured `[resources]` entries (CRD schemas) and `[charts]`
    entries (chart repos) that are merged into the project's generation set automatically
 2. **Helper modules** — importable TypeScript-typed JS files with builder classes for
-   plugin-specific resource kinds (e.g. `import { HelmRelease } from "flux"`)
+   plugin-specific resource kinds (e.g. `import { HelmRelease } from "fluxcd"`)
 
 Plugin modules follow the same factory function convention as generated builders. Your editor
 gets autocomplete from the plugin's `.d.ts` files, wired in via `tsconfig.json` path mappings.
@@ -20,7 +20,7 @@ Add an entry to `[plugins]` in `husako.toml`:
 
 ```toml
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 ```
 
 Then run `husako generate`. husako fetches the plugin, merges its dependency presets, generates
@@ -37,9 +37,9 @@ husako plugin add <name> --path <local-dir>
 
 | Plugin | Description | Modules |
 |--------|-------------|---------|
-| [Flux CD](./flux) | GitOps controllers for Kubernetes | `"flux"`, `"flux/source"` |
+| [FluxCD](./fluxcd) | GitOps controllers for Kubernetes | `"fluxcd"`, `"fluxcd/source"` |
 
-The Flux CD plugin ships bundled in the husako repository at `plugins/flux/`. It provides
+The FluxCD plugin ships bundled in the husako repository at `plugins/fluxcd/`. It provides
 builders for `HelmRelease`, `Kustomization`, and all three source types.
 
 ## Community plugins

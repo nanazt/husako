@@ -10,7 +10,7 @@ A plugin can provide:
 2. **Helper modules** — importable TypeScript-typed JS files with ergonomic builder classes
 3. **Templates** — project scaffolds (planned)
 
-The official bundled plugin is the Flux CD plugin (`plugins/flux/` in the husako repository).
+The official bundled plugin is the FluxCD plugin (`plugins/fluxcd/` in the husako repository).
 
 It provides builders for `HelmRelease`, `Kustomization`, `GitRepository`, `HelmRepository`, and `OCIRepository`.
 
@@ -29,7 +29,7 @@ husako plugin add <name> --path <local-dir>
 
 ```toml
 [plugins]
-flux = { source = "path", path = "plugins/flux" }
+fluxcd = { source = "path", path = "plugins/fluxcd" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
@@ -42,8 +42,8 @@ After adding a plugin, run `husako generate` to install it and regenerate types.
 Once installed, import from the plugin's declared module specifiers:
 
 ```typescript
-import { HelmRelease, Kustomization } from "flux";
-import { GitRepository, HelmRepository } from "flux/source";
+import { HelmRelease, Kustomization } from "fluxcd";
+import { GitRepository, HelmRepository } from "fluxcd/source";
 ```
 
 The specifiers are declared in the plugin's `plugin.toml`.
@@ -77,17 +77,17 @@ Convention: the repository is named `husako-plugin-<name>`. Not enforced.
 
 ```toml
 [plugin]
-name = "flux"
+name = "fluxcd"
 version = "0.1.0"
-description = "Flux CD integration for husako"
+description = "FluxCD integration for husako"
 
 [resources]
 flux-source = { source = "git", url = "https://github.com/fluxcd/source-controller", path = "config/crd/bases" }
 flux-helm = { source = "git", url = "https://github.com/fluxcd/helm-controller", path = "config/crd/bases" }
 
 [modules]
-"flux" = "modules/index.js"
-"flux/source" = "modules/source.js"
+"fluxcd" = "modules/index.js"
+"fluxcd/source" = "modules/source.js"
 ```
 
 | Field | Required | Description |

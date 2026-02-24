@@ -26,9 +26,7 @@ To build from source:
 
 - **Rust 1.85+**
 
-TypeScript and Node.js are not required.
-
-husako embeds its own TypeScript compiler and JavaScript runtime.
+No TypeScript compiler or JavaScript runtime installation required. husako bundles its own.
 
 ---
 

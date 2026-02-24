@@ -67,8 +67,13 @@ export default defineConfig({
           { text: 'Configuration',     link: '/guide/configuration' },
           { text: 'Templates',         link: '/guide/templates' },
           { text: 'Helm Chart Values', link: '/guide/helm' },
-          { text: 'Official Plugins',  link: '/guide/plugins/' },
-          { text: 'Flux CD',           link: '/guide/plugins/flux' },
+          {
+            text: 'Plugins',
+            link: '/guide/plugins/',
+            items: [
+              { text: 'FluxCD', link: '/guide/plugins/fluxcd' },
+            ],
+          },
         ],
       },
       {

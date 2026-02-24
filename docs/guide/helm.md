@@ -80,8 +80,8 @@ object matching the chart's schema.
 To use this with a `HelmRelease`, pass the builder to `.values()`:
 
 ```typescript
-import { HelmRelease } from "flux";
-import { HelmRepository } from "flux/source";
+import { HelmRelease } from "fluxcd";
+import { HelmRepository } from "fluxcd/source";
 import { Values } from "helm/ingress-nginx";
 
 const repo = HelmRepository("ingress-nginx-repo")

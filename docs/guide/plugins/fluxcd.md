@@ -1,14 +1,14 @@
-# Flux CD Plugin
+# FluxCD Plugin
 
-The Flux CD plugin provides builders for GitOps resources from the Flux toolkit. It is
-bundled in the husako repository at `plugins/flux/`.
+The FluxCD plugin provides builders for GitOps resources from the Flux toolkit. It is
+bundled in the husako repository at `plugins/fluxcd/`.
 
 **Provided modules:**
 
 | Import | Resources |
 |--------|-----------|
-| `"flux"` | `HelmRelease`, `Kustomization` |
-| `"flux/source"` | `GitRepository`, `HelmRepository`, `OCIRepository` |
+| `"fluxcd"` | `HelmRelease`, `Kustomization` |
+| `"fluxcd/source"` | `GitRepository`, `HelmRepository`, `OCIRepository` |
 
 ---
 
@@ -18,23 +18,23 @@ Add the plugin to `husako.toml`:
 
 ```toml
 [plugins]
-flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 ```
 
-Then run `husako generate`. This installs the plugin, generates Flux CRD types, and updates
-`tsconfig.json` with path mappings for `"flux"` and `"flux/source"`.
+Then run `husako generate`. This installs the plugin, generates FluxCD CRD types, and updates
+`tsconfig.json` with path mappings for `"fluxcd"` and `"fluxcd/source"`.
 
 ---
 
-## Source types (`flux/source`)
+## Source types (`fluxcd/source`)
 
-Flux source resources represent where Flux should pull manifests or charts from. Each source
+FluxCD source resources represent where Flux should pull manifests or charts from. Each source
 type exposes a `_sourceRef()` method used for cross-resource linking.
 
 ### GitRepository
 
 ```typescript
-import { GitRepository } from "flux/source";
+import { GitRepository } from "fluxcd/source";
 import { metadata, build } from "husako";
 
 const gitRepo = GitRepository("my-repo")
@@ -49,7 +49,7 @@ build([gitRepo]);
 ### HelmRepository
 
 ```typescript
-import { HelmRepository } from "flux/source";
+import { HelmRepository } from "fluxcd/source";
 import { metadata, build } from "husako";
 
 const helmRepo = HelmRepository("ingress-nginx")
@@ -63,7 +63,7 @@ build([helmRepo]);
 ### OCIRepository
 
 ```typescript
-import { OCIRepository } from "flux/source";
+import { OCIRepository } from "fluxcd/source";
 import { metadata, build } from "husako";
 
 const ociRepo = OCIRepository("my-oci")
@@ -82,8 +82,8 @@ build([ociRepo]);
 `Kustomization` deploys manifests from a `GitRepository` or `OCIRepository`:
 
 ```typescript
-import { Kustomization } from "flux";
-import { GitRepository } from "flux/source";
+import { Kustomization } from "fluxcd";
+import { GitRepository } from "fluxcd/source";
 import { metadata, build } from "husako";
 
 const gitRepo = GitRepository("my-config")
@@ -109,8 +109,8 @@ build([gitRepo, ks]);
 `HelmRelease` deploys a Helm chart from a `HelmRepository` or `OCIRepository`:
 
 ```typescript
-import { HelmRelease } from "flux";
-import { HelmRepository } from "flux/source";
+import { HelmRelease } from "fluxcd";
+import { HelmRepository } from "fluxcd/source";
 import { metadata, build } from "husako";
 
 const helmRepo = HelmRepository("ingress-nginx")
@@ -132,7 +132,7 @@ See [Helm Chart Values](../helm) to generate typed `values` builders for the cha
 
 ## Linking with `_sourceRef()`
 
-All Flux source resources expose a `_sourceRef()` method that returns `{ kind, name, namespace }`.
+All FluxCD source resources expose a `_sourceRef()` method that returns `{ kind, name, namespace }`.
 
 When you pass a source builder to `.sourceRef()`, husako calls `_sourceRef()` automatically:
 
@@ -153,8 +153,8 @@ hard-coded type checks. It works the same way for `Kustomization` linking to a `
 ## Full example — HelmRepository + HelmRelease + typed values
 
 ```typescript
-import { HelmRelease } from "flux";
-import { HelmRepository } from "flux/source";
+import { HelmRelease } from "fluxcd";
+import { HelmRepository } from "fluxcd/source";
 import { Values } from "helm/ingress-nginx";
 import { metadata, build } from "husako";
 
