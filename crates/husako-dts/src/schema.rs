@@ -99,6 +99,14 @@ pub fn ts_type_from_schema(schema: &Value) -> TsType {
         return TsType::Ref(ts_name_from_full(ref_name));
     }
 
+    // Handle allOf with a single entry (k8s 1.35+ wraps $ref in allOf for array items)
+    // e.g. "items": {"allOf": [{"$ref": "..."}], "default": {}}
+    if let Some(all_of) = schema.get("allOf").and_then(Value::as_array)
+        && let Some(first) = all_of.first()
+    {
+        return ts_type_from_schema(first);
+    }
+
     // x-kubernetes-int-or-string
     if schema
         .get("x-kubernetes-int-or-string")
@@ -341,6 +349,42 @@ mod tests {
         assert_eq!(
             ts_type_from_schema(&schema),
             TsType::Map(Box::new(TsType::String))
+        );
+    }
+
+    #[test]
+    fn ts_type_all_of_single_ref() {
+        // k8s 1.35+ wraps $ref in allOf for array items
+        // e.g. "items": {"allOf": [{"$ref": "...LabelSelectorRequirement"}], "default": {}}
+        let schema = json!({
+            "allOf": [
+                {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement"}
+            ],
+            "default": {}
+        });
+        assert_eq!(
+            ts_type_from_schema(&schema),
+            TsType::Ref("LabelSelectorRequirement".to_string())
+        );
+    }
+
+    #[test]
+    fn ts_type_array_with_all_of_items() {
+        // Array whose items use allOf pattern should produce Array(Ref(...))
+        let schema = json!({
+            "type": "array",
+            "items": {
+                "allOf": [
+                    {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement"}
+                ],
+                "default": {}
+            }
+        });
+        assert_eq!(
+            ts_type_from_schema(&schema),
+            TsType::Array(Box::new(TsType::Ref(
+                "LabelSelectorRequirement".to_string()
+            )))
         );
     }
 
