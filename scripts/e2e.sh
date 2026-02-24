@@ -64,7 +64,9 @@ assert_no_dir() {
   fi
 }
 
-# Validate YAML is structurally valid using python3's yaml parser
+# Validate YAML is structurally valid using python3's yaml parser (PyYAML).
+# PyYAML is pre-installed on ubuntu-latest. For custom resources (CRDs, FluxCD)
+# where assert_k8s_valid is inappropriate, this is the right validator.
 assert_valid_yaml() {
   local desc="$1" yaml="$2"
   if echo "$yaml" | python3 -c "import sys,yaml; list(yaml.safe_load_all(sys.stdin))" 2>/dev/null; then
