@@ -27,6 +27,36 @@ const test = new Job("ubuntu-latest").steps((s) =>
     }),
 );
 
+const e2e = new Job("ubuntu-latest").steps((s) =>
+  s
+    .add(checkout({}))
+    .add(rustToolchain({}))
+    .add(rustCache({}))
+    .add({
+      name: "Cache husako downloads (Scenario A)",
+      uses: "actions/cache@v4",
+      with: {
+        path: "test/e2e/.husako/cache",
+        key: "${{ runner.os }}-husako-e2e-${{ hashFiles('test/e2e/husako.toml') }}",
+      },
+    })
+    .add({
+      name: "Install kubectl",
+      run: [
+        'curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"',
+        "chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl",
+      ].join("\n"),
+    })
+    .add({
+      name: "Build husako binary",
+      run: "cargo build --release --bin husako",
+    })
+    .add({
+      name: "E2E tests",
+      run: "bash scripts/e2e.sh",
+    }),
+);
+
 new Workflow({
   name: "Check",
   on: {
@@ -34,5 +64,5 @@ new Workflow({
     pull_request: { branches: ["master"] },
   },
 })
-  .jobs((j) => j.add("lint", lint).add("test", test))
+  .jobs((j) => j.add("lint", lint).add("test", test).add("e2e", e2e))
   .build("check");

@@ -1,0 +1,9 @@
+[entries]
+deploy = "entry.ts"
+helm = "helm-values.ts"
+
+[resources]
+k8s = { source = "release", version = "1.35" }
+
+[charts]
+local-chart = { source = "file", path = "chart-schema.json" }

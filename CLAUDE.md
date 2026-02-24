@@ -37,6 +37,11 @@ Before committing, always run in this order:
 1. `cargo fmt --all` — fix formatting
 2. `cargo clippy --workspace --all-targets --all-features -- -D warnings` — fix all warnings
 3. `cargo test --workspace --all-features` — confirm tests pass
+4. For changes touching `husako-helm`, `husako-core`, `husako-dts`, `husako-runtime-qjs`, or `husako-cli`:
+   ```bash
+   cargo build --bin husako
+   bash scripts/e2e.sh
+   ```
 
 **Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification.
 
@@ -173,6 +178,7 @@ cargo test -p husako-core test_name
 
 - Always respond in English and write documents in English.
 - Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
+- User-facing docs live in `.worktrees/docs-site/docs/` (VitePress site). Update them when user-visible behavior changes.
 
 ## Configuration (`husako.toml`)
 
@@ -229,3 +235,7 @@ Read `.claude/*.md` before making changes to related areas:
 ## Plans
 
 When implementing non-trivial features, write a plan document first in `.claude/plans/`.
+
+Plans must include a documentation step when the feature changes user-visible behavior (new CLI flags, new config options, new source types, changed error messages, etc.). Add a task like "Update `.worktrees/docs-site/docs/`" to the plan before implementation begins.
+
+For simple tasks that don't go through planning, ask the user whether documentation needs to be updated after the work is done.
