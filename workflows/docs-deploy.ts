@@ -2,13 +2,23 @@ import { getAction, Job, Workflow } from "../generated/index.js";
 
 const checkout = getAction("actions/checkout@v5");
 const setupNode = getAction("actions/setup-node@v4");
-const ghPages = getAction("peaceiris/actions-gh-pages@v4");
+const configurePages = getAction("actions/configure-pages@v5");
+const uploadPagesArtifact = getAction("actions/upload-pages-artifact@v3");
+const deployPages = getAction("actions/deploy-pages@v4");
 
 const deploy = new Job("ubuntu-latest", {
-  permissions: { contents: "write" },
+  permissions: {
+    contents: "read",
+    pages: "write",
+    "id-token": "write",
+  },
+  environment: {
+    name: "github-pages",
+    url: "${{ steps.deployment.outputs.page_url }}",
+  },
 }).steps((s) =>
   s
-    .add(checkout({ with: { "fetch-depth": 0 } }))
+    .add(checkout({}))
     .add(
       setupNode({
         with: {
@@ -18,45 +28,19 @@ const deploy = new Job("ubuntu-latest", {
         },
       }),
     )
+    .add(configurePages({ name: "Setup Pages" }))
     .add({ name: "Install", run: "npm ci", "working-directory": "docs" })
-    // Build for latest (/husako/)
-    .add({
-      name: "Build (latest)",
-      run: "npm run build",
-      "working-directory": "docs",
-    })
-    // Deploy latest to root of gh-pages, keeping existing versioned subdirectories
+    .add({ name: "Build", run: "npm run build", "working-directory": "docs" })
     .add(
-      ghPages({
-        name: "Deploy latest",
-        with: {
-          github_token: "${{ secrets.GITHUB_TOKEN }}",
-          publish_dir: "docs/.vitepress/dist",
-          keep_files: true,
-          destination_dir: ".",
-          commit_message: "docs: deploy latest (master)",
-        },
+      uploadPagesArtifact({
+        name: "Upload artifact",
+        with: { path: "docs/.vitepress/dist" },
       }),
     )
-    // On v* tag: rebuild with versioned base (/husako/vX.Y.Z/) and archive
-    .add({
-      name: "Build (versioned)",
-      "if": "${{ startsWith(github.ref, 'refs/tags/v') }}",
-      run: "npm run build",
-      "working-directory": "docs",
-      env: { VITEPRESS_BASE: "/husako/${{ github.ref_name }}/" },
-    })
     .add(
-      ghPages({
-        name: "Archive version",
-        "if": "${{ startsWith(github.ref, 'refs/tags/v') }}",
-        with: {
-          github_token: "${{ secrets.GITHUB_TOKEN }}",
-          publish_dir: "docs/.vitepress/dist",
-          keep_files: true,
-          destination_dir: "${{ github.ref_name }}",
-          commit_message: "docs: archive ${{ github.ref_name }}",
-        },
+      deployPages({
+        id: "deployment",
+        name: "Deploy to GitHub Pages",
       }),
     ),
 );
@@ -67,7 +51,6 @@ new Workflow({
     push: {
       branches: ["master"],
       paths: ["docs/**"],
-      tags: ["v*"],
     },
     workflow_dispatch: {},
   },

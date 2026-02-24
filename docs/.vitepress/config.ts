@@ -1,11 +1,42 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitepress'
 
-// VITEPRESS_BASE is set by CI when building versioned archives (e.g. /husako/v0.1.0/).
-// Defaults to /husako/ for the latest (master) build.
-const base = (process.env.VITEPRESS_BASE ?? '/husako/') as `/${string}/`
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const versions = JSON.parse(
+  readFileSync(resolve(__dirname, '../versions.json'), 'utf-8')
+)
+
+const BASE = 'https://nanazt.github.io/husako/'
+const RELEASES = 'https://github.com/nanazt/husako/releases/tag/'
+
+function parseSemver(v: string) {
+  const [major, minor, patch] = v.replace(/^v/, '').split('.').map(Number)
+  return { major, minor, patch }
+}
+
+function compareSemverDesc(a: string, b: string) {
+  const pa = parseSemver(a)
+  const pb = parseSemver(b)
+  return pb.major - pa.major || pb.minor - pa.minor || pb.patch - pa.patch
+}
+
+const versionNav = versions.latest
+  ? {
+      text: versions.latest,
+      items: [
+        { text: `${versions.latest} (latest)`, link: BASE },
+        { text: 'master (dev)', link: BASE },
+        ...[...versions.archived]
+          .sort(compareSemverDesc)
+          .map((v: string) => ({ text: v, link: RELEASES + v })),
+      ],
+    }
+  : undefined
 
 export default defineConfig({
-  base,
+  base: '/husako/',
   title: 'husako',
   description: 'Type-safe Kubernetes resource authoring in TypeScript',
   lang: 'en',
@@ -24,15 +55,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Reference', link: '/reference/cli' },
       { text: 'Advanced', link: '/advanced/plugins' },
-      // Version switcher — add a new entry here when cutting a release:
-      // { text: 'vX.Y.Z', link: 'https://nanazt.github.io/husako/vX.Y.Z/' }
-      {
-        text: 'master',
-        items: [
-          { text: 'master (latest)', link: 'https://nanazt.github.io/husako/' },
-          // v0.1.0: { text: 'v0.1.0', link: 'https://nanazt.github.io/husako/v0.1.0/' },
-        ],
-      },
+      ...(versionNav ? [versionNav] : []),
     ],
 
     sidebar: [
