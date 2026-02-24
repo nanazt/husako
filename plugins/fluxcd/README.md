@@ -1,6 +1,8 @@
-# husako-plugin-flux
+# husako-plugin-fluxcd
 
-Flux CD plugin for [husako](https://github.com/nanazt/husako). Provides type-safe builders for Flux CD resources — source controllers, Helm releases, and Kustomizations.
+FluxCD plugin for [husako](https://github.com/nanazt/husako). Provides type-safe builders for FluxCD resources — source controllers, Helm releases, and Kustomizations.
+
+Compatible with FluxCD v2.x.
 
 ## Setup
 
@@ -8,7 +10,7 @@ Add the plugin to your `husako.toml`:
 
 ```toml
 [plugins]
-flux = { source = "path", path = "plugins/flux" }
+fluxcd = { source = "path", path = "plugins/fluxcd" }
 ```
 
 Then run:
@@ -17,16 +19,16 @@ Then run:
 husako generate
 ```
 
-This installs the plugin, fetches CRD schemas for the Flux controllers, and generates type definitions so your editor provides full autocomplete.
+This installs the plugin, fetches CRD schemas for the FluxCD controllers, and generates type definitions so your editor provides full autocomplete.
 
 ## Modules
 
 | Import | Contents |
 |--------|----------|
-| `"flux"` | `HelmRelease`, `Kustomization`, plus re-exports of all source types |
-| `"flux/source"` | `GitRepository`, `HelmRepository`, `OCIRepository` |
+| `"fluxcd"` | `HelmRelease`, `Kustomization`, plus re-exports of all source types |
+| `"fluxcd/source"` | `GitRepository`, `HelmRepository`, `OCIRepository` |
 
-For most use cases, importing from `"flux"` alone is enough.
+For most use cases, importing from `"fluxcd"` alone is enough.
 
 ## Usage
 
@@ -34,7 +36,7 @@ For most use cases, importing from `"flux"` alone is enough.
 
 ```typescript
 import { build, name, namespace } from "husako";
-import { HelmRelease, HelmRepository } from "flux";
+import { HelmRelease, HelmRepository } from "fluxcd";
 
 const repo = HelmRepository()
   .metadata(name("bitnami").namespace("flux-system"))
@@ -55,7 +57,7 @@ build([repo, redis]);
 
 ```typescript
 import { build, name, namespace } from "husako";
-import { Kustomization, GitRepository } from "flux";
+import { Kustomization, GitRepository } from "fluxcd";
 
 const repo = GitRepository()
   .metadata(name("infra").namespace("flux-system"))
@@ -78,8 +80,8 @@ build([repo, ks]);
 
 ```typescript
 import { build, name, namespace } from "husako";
-import { HelmRelease } from "flux";
-import { OCIRepository } from "flux/source";
+import { HelmRelease } from "fluxcd";
+import { OCIRepository } from "fluxcd/source";
 
 const oci = OCIRepository()
   .metadata(name("podinfo").namespace("flux-system"))
@@ -89,6 +91,46 @@ const oci = OCIRepository()
 
 build([oci]);
 ```
+
+## Typed Helm values
+
+husako can generate typed values builders for the Helm charts your FluxCD releases deploy. Add the chart to `[charts]` in `husako.toml` and run `husako generate`:
+
+```toml
+[charts]
+ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
+```
+
+After generation, import the `Values` builder and pass it to `.values()`:
+
+```typescript
+import { build, metadata } from "husako";
+import { HelmRelease, HelmRepository } from "fluxcd";
+import { Values } from "helm/ingress-nginx";
+
+const repo = HelmRepository("ingress-nginx-repo")
+  .metadata(metadata().namespace("flux-system"))
+  .url("https://kubernetes.github.io/ingress-nginx")
+  .interval("1h");
+
+const values = Values()
+  .replicaCount(2)
+  .controller({
+    service: { type: "LoadBalancer" },
+    resources: { requests: { cpu: "100m", memory: "90Mi" } },
+  });
+
+const release = HelmRelease("ingress-nginx")
+  .metadata(metadata().namespace("ingress"))
+  .sourceRef(repo)
+  .chart("ingress-nginx", "4.11.0")
+  .interval("1h")
+  .values(values);
+
+build([repo, release]);
+```
+
+See [Helm Chart Values](https://nanazt.github.io/husako/guide/helm) in the husako docs for details on chart type generation.
 
 ## Source Ref Linking
 
@@ -115,7 +157,7 @@ const release = HelmRelease()
 
 ## API Reference
 
-### Source Controllers (`"flux/source"`)
+### Source Controllers (`"fluxcd/source"`)
 
 **GitRepository** — `source.toolkit.fluxcd.io/v1`
 
@@ -144,7 +186,7 @@ const release = HelmRelease()
 | `.interval(interval)` | `string` | Reconciliation interval |
 | `.secretRef(name)` | `string` | Secret name for authentication |
 
-### Deploy Controllers (`"flux"`)
+### Deploy Controllers (`"fluxcd"`)
 
 **HelmRelease** — `helm.toolkit.fluxcd.io/v2`
 
@@ -170,15 +212,13 @@ const release = HelmRelease()
 
 All builders also inherit `.metadata()`, `.spec()`, `.set()` from `_ResourceBuilder`.
 
-## Bundled CRD Versions
+## Compatibility
 
-| Controller | Version |
-|------------|---------|
-| source-controller | v1.8.0 |
-| helm-controller | v1.5.0 |
-| kustomize-controller | v1.8.0 |
+| FluxCD | source-controller | helm-controller | kustomize-controller |
+|--------|-------------------|-----------------|----------------------|
+| v2.x   | v1.8.0            | v1.5.0          | v1.8.0               |
 
-These are fetched during `husako generate` and used for schema validation.
+These CRDs are fetched during `husako generate` and used for schema validation.
 
 ## License
 

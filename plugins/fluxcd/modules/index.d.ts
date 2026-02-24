@@ -4,10 +4,10 @@ import {
   GitRepositoryBuilder,
   HelmRepositoryBuilder,
   OCIRepositoryBuilder,
-} from "flux/source";
+} from "fluxcd/source";
 
-export { GitRepository, HelmRepository, OCIRepository } from "flux/source";
-export type { SourceRef, GitRef, OCIRef, GitRepositoryBuilder, HelmRepositoryBuilder, OCIRepositoryBuilder } from "flux/source";
+export { GitRepository, HelmRepository, OCIRepository } from "fluxcd/source";
+export type { SourceRef, GitRef, OCIRef, GitRepositoryBuilder, HelmRepositoryBuilder, OCIRepositoryBuilder } from "fluxcd/source";
 
 export interface HelmReleaseBuilder extends _ResourceBuilder {
   chart(name: string, version: string | number): this;

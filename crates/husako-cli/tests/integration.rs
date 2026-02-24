@@ -2057,27 +2057,27 @@ fn plugin_cli_add_path_and_remove() {
     assert!(!config_content.contains("test"));
 }
 
-// --- Flux CD Plugin ---
+// --- FluxCD Plugin ---
 
-/// Install the bundled flux plugin into `.husako/plugins/flux/` for test isolation.
+/// Install the bundled fluxcd plugin into `.husako/plugins/fluxcd/` for test isolation.
 fn install_flux_plugin(root: &Path) {
-    let plugin_dir = root.join(".husako/plugins/flux");
+    let plugin_dir = root.join(".husako/plugins/fluxcd");
     let modules_dir = plugin_dir.join("modules");
     std::fs::create_dir_all(&modules_dir).unwrap();
 
     std::fs::write(
         plugin_dir.join("plugin.toml"),
-        include_str!("../../../plugins/flux/plugin.toml"),
+        include_str!("../../../plugins/fluxcd/plugin.toml"),
     )
     .unwrap();
     std::fs::write(
         modules_dir.join("source.js"),
-        include_str!("../../../plugins/flux/modules/source.js"),
+        include_str!("../../../plugins/fluxcd/modules/source.js"),
     )
     .unwrap();
     std::fs::write(
         modules_dir.join("index.js"),
-        include_str!("../../../plugins/flux/modules/index.js"),
+        include_str!("../../../plugins/fluxcd/modules/index.js"),
     )
     .unwrap();
 }
@@ -2094,7 +2094,7 @@ fn flux_plugin_helm_release() {
         &entry,
         r#"
 import { build, name, namespace } from "husako";
-import { HelmRelease, HelmRepository } from "flux";
+import { HelmRelease, HelmRepository } from "fluxcd";
 
 const repo = HelmRepository()
     .metadata(name("bitnami").namespace("flux-system"))
@@ -2144,8 +2144,8 @@ fn flux_plugin_kustomization() {
         &entry,
         r#"
 import { build, name, namespace } from "husako";
-import { Kustomization } from "flux";
-import { GitRepository } from "flux/source";
+import { Kustomization } from "fluxcd";
+import { GitRepository } from "fluxcd/source";
 
 const repo = GitRepository()
     .metadata(name("infra").namespace("flux-system"))
@@ -2196,7 +2196,7 @@ fn flux_plugin_source_ref_linking() {
         &entry,
         r#"
 import { build, name, namespace } from "husako";
-import { HelmRelease, HelmRepository } from "flux";
+import { HelmRelease, HelmRepository } from "fluxcd";
 
 const repo = HelmRepository("charts")
     .metadata(name("charts").namespace("flux-system"))
@@ -2236,7 +2236,7 @@ fn flux_plugin_values_plain_object() {
         &entry,
         r#"
 import { build, name } from "husako";
-import { HelmRelease } from "flux";
+import { HelmRelease } from "fluxcd";
 
 const release = HelmRelease("app")
     .chart("my-app", 2.0)
@@ -2265,13 +2265,13 @@ fn flux_plugin_re_exports() {
 
     install_flux_plugin(root);
 
-    // Import GitRepository from "flux" (re-exported) instead of "flux/source"
+    // Import GitRepository from "fluxcd" (re-exported) instead of "fluxcd/source"
     let entry = root.join("entry.ts");
     std::fs::write(
         &entry,
         r#"
 import { build, name } from "husako";
-import { GitRepository } from "flux";
+import { GitRepository } from "fluxcd";
 
 const repo = GitRepository("my-repo")
     .url("https://github.com/example/repo")

@@ -2,7 +2,7 @@ import { _ResourceBuilder } from "husako/_base";
 import { name as _name } from "husako";
 
 // Re-export source types for convenience
-export { GitRepository, HelmRepository, OCIRepository } from "flux/source";
+export { GitRepository, HelmRepository, OCIRepository } from "fluxcd/source";
 
 // --- HelmRelease (helm.toolkit.fluxcd.io/v2) ---
 
