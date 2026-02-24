@@ -1,7 +1,7 @@
 mod artifacthub;
 mod file;
 mod git;
-mod oci;
+pub mod oci;
 mod registry;
 
 use std::collections::HashMap;
@@ -46,6 +46,10 @@ pub fn resolve(
             artifacthub::resolve(name, package, version, cache_dir)
         }
         ChartSource::Git { repo, tag, path } => git::resolve(name, repo, tag, path, cache_dir),
+        ChartSource::Oci { reference, version } => {
+            let chart = crate::oci::chart_name_from_reference(reference);
+            crate::oci::resolve(name, reference, chart, version, cache_dir)
+        }
     }
 }
 
@@ -82,6 +86,33 @@ mod tests {
         let h1 = cache_hash("repo-a");
         let h2 = cache_hash("repo-b");
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn resolve_oci_uses_chart_name_from_reference() {
+        // Verify the dispatch builds cache path using the last path component as chart name.
+        // We use the cache-hit path to avoid network access.
+        let tmp = tempfile::tempdir().unwrap();
+        let reference = "oci://registry-1.docker.io/bitnamicharts/postgresql";
+        let chart = crate::oci::chart_name_from_reference(reference);
+        assert_eq!(chart, "postgresql");
+
+        // Seed cache
+        let cache_key = cache_hash(reference);
+        let cache_sub = tmp.path().join(format!("helm/oci/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join("16.4.0.json"),
+            r#"{"type":"object","properties":{"replicaCount":{"type":"integer"}}}"#,
+        )
+        .unwrap();
+
+        let source = husako_config::ChartSource::Oci {
+            reference: reference.to_string(),
+            version: "16.4.0".to_string(),
+        };
+        let result = resolve("test", &source, tmp.path(), tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
     }
 
     #[test]

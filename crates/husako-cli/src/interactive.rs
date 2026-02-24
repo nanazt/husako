@@ -87,7 +87,7 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
     let theme = crate::theme::husako_theme();
     let source_type = Select::with_theme(&theme)
         .with_prompt("Source type")
-        .items(["artifacthub", "registry", "git", "file"])
+        .items(["artifacthub", "registry", "oci", "git", "file"])
         .default(0)
         .interact()
         .map_err(|e| e.to_string())?;
@@ -95,7 +95,8 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
     let source = match source_type {
         0 => prompt_artifacthub_chart()?,
         1 => prompt_registry_chart()?,
-        2 => {
+        2 => prompt_oci_chart()?,
+        3 => {
             let repo: String = Input::with_theme(&theme)
                 .with_prompt("Git repository URL")
                 .validate_with(validate_url)
@@ -125,7 +126,7 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
                 source: ChartSource::Git { repo, tag, path },
             });
         }
-        3 => {
+        4 => {
             let name: String = Input::with_theme(&theme)
                 .with_prompt("Name")
                 .validate_with(validate_name)
@@ -145,6 +146,39 @@ fn prompt_add_chart() -> Result<AddTarget, String> {
     };
 
     Ok(source)
+}
+
+fn prompt_oci_chart() -> Result<AddTarget, String> {
+    let reference = crate::text_input::run("OCI reference", "oci://ghcr.io/org/chart-name", |s| {
+        validate_oci_reference(s)
+    })?
+    .ok_or_else(|| "cancelled".to_string())?;
+
+    let default_name = reference
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("chart")
+        .split(':')
+        .next()
+        .unwrap_or("chart")
+        .to_string();
+
+    let reference_clone = reference.clone();
+    let nv =
+        crate::name_version_select::run(&default_name, is_valid_name, move |limit, offset| {
+            husako_core::version_check::discover_oci_tags(&reference_clone, limit, offset)
+                .map_err(|e| e.to_string())
+        })?
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    Ok(AddTarget::Chart {
+        name: nv.name,
+        source: ChartSource::Oci {
+            reference,
+            version: nv.version,
+        },
+    })
 }
 
 fn prompt_registry_chart() -> Result<AddTarget, String> {
@@ -452,6 +486,14 @@ fn validate_url(input: &String) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_oci_reference(s: &str) -> Result<(), String> {
+    if s.starts_with("oci://") && s.len() > 6 {
+        Ok(())
+    } else {
+        Err("Must start with oci://".to_string())
+    }
+}
+
 fn validate_non_empty(field: &'static str) -> impl Fn(&String) -> Result<(), String> {
     move |input: &String| {
         if input.trim().is_empty() {
@@ -465,6 +507,21 @@ fn validate_non_empty(field: &'static str) -> impl Fn(&String) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_oci_reference_valid() {
+        assert!(validate_oci_reference("oci://ghcr.io/org/postgresql").is_ok());
+        assert!(
+            validate_oci_reference("oci://registry-1.docker.io/bitnamicharts/postgresql").is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_oci_reference_invalid() {
+        assert!(validate_oci_reference("https://ghcr.io/org/postgresql").is_err());
+        assert!(validate_oci_reference("oci://").is_err());
+        assert!(validate_oci_reference("ghcr.io/org/postgresql").is_err());
+    }
 
     #[test]
     fn is_valid_name_works_with_str() {

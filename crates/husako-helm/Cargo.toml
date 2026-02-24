@@ -10,6 +10,7 @@ repository.workspace = true
 flate2.workspace = true
 husako-config = { path = "../husako-config", version = "0" }
 reqwest.workspace = true
+semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

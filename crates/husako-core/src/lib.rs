@@ -790,6 +790,12 @@ fn chart_info(name: &str, source: &husako_config::ChartSource) -> DependencyInfo
             version: Some(tag.clone()),
             details: format!("{repo} ({})", path),
         },
+        husako_config::ChartSource::Oci { reference, version } => DependencyInfo {
+            name: name.to_string(),
+            source_type: "oci",
+            version: Some(version.clone()),
+            details: reference.clone(),
+        },
     }
 }
 
@@ -1037,6 +1043,37 @@ pub fn check_outdated(
                             kind: "chart",
                             source_type: "git",
                             current: tag.clone(),
+                            latest: None,
+                            up_to_date: false,
+                        });
+                    }
+                }
+            }
+            husako_config::ChartSource::Oci { reference, version } => {
+                let task = progress.start_task(&format!("Checking {name}..."));
+                match version_check::discover_latest_oci(reference) {
+                    Ok(Some(latest)) => {
+                        let up_to_date = version == &latest;
+                        task.finish_ok(&format!("{name}: {version} → {latest}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "oci",
+                            current: version.clone(),
+                            latest: Some(latest),
+                            up_to_date,
+                        });
+                    }
+                    Ok(None) => {
+                        task.finish_ok(&format!("{name}: no tags"));
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: {e}"));
+                        entries.push(OutdatedEntry {
+                            name: name.clone(),
+                            kind: "chart",
+                            source_type: "oci",
+                            current: version.clone(),
                             latest: None,
                             up_to_date: false,
                         });

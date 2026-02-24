@@ -125,7 +125,7 @@ enum Commands {
         #[arg(long, group = "kind")]
         chart: bool,
 
-        /// Source type (release, cluster, git, file, registry, artifacthub)
+        /// Source type (release, cluster, git, file, registry, artifacthub, oci)
         #[arg(long)]
         source: Option<String>,
 
@@ -152,6 +152,10 @@ enum Commands {
         /// ArtifactHub package name (e.g. bitnami/postgresql)
         #[arg(long)]
         package: Option<String>,
+
+        /// OCI reference (e.g. oci://ghcr.io/org/chart-name)
+        #[arg(long)]
+        reference: Option<String>,
     },
 
     /// Remove a resource or chart dependency
@@ -562,27 +566,40 @@ fn main() -> ExitCode {
             path,
             chart_name,
             package,
+            reference,
         } => {
             let project_root = cwd();
 
             let target = if let Some(src) = source {
                 // Non-interactive mode
                 if chart {
-                    // For charts, derive name from chart_name or package if not provided
-                    let dep_name = name.or_else(|| chart_name.clone()).or_else(|| {
-                        package
-                            .as_deref()
-                            .and_then(|p| p.rsplit('/').next())
-                            .map(String::from)
-                    });
+                    // For charts, derive name from chart_name, package, or reference if not provided
+                    let dep_name = name
+                        .or_else(|| chart_name.clone())
+                        .or_else(|| {
+                            package
+                                .as_deref()
+                                .and_then(|p| p.rsplit('/').next())
+                                .map(String::from)
+                        })
+                        .or_else(|| {
+                            reference.as_deref().map(|r| {
+                                let without_scheme = r.strip_prefix("oci://").unwrap_or(r);
+                                let last =
+                                    without_scheme.rsplit('/').next().unwrap_or(without_scheme);
+                                last.split(':').next().unwrap_or(last).to_string()
+                            })
+                        });
                     let Some(dep_name) = dep_name else {
                         eprintln!(
-                            "{} name is required (provide as positional arg, or use --chart-name / --package)",
+                            "{} name is required (provide as positional arg, or use --chart-name / --package / --reference)",
                             style::error_prefix()
                         );
                         return ExitCode::from(2);
                     };
-                    build_chart_target(dep_name, src, version, repo, tag, path, chart_name, package)
+                    build_chart_target(
+                        dep_name, src, version, repo, tag, path, chart_name, package, reference,
+                    )
                 } else {
                     let Some(dep_name) = name else {
                         eprintln!(
@@ -1302,6 +1319,7 @@ fn build_chart_target(
     path: Option<String>,
     chart_name: Option<String>,
     package: Option<String>,
+    reference: Option<String>,
 ) -> Result<husako_core::AddTarget, String> {
     let chart_source = match source.as_str() {
         "registry" => {
@@ -1328,6 +1346,11 @@ fn build_chart_target(
         "file" => {
             let path = path.ok_or("--path is required for file source")?;
             husako_config::ChartSource::File { path }
+        }
+        "oci" => {
+            let reference = reference.ok_or("--reference is required for oci source")?;
+            let version = version.ok_or("--version is required for oci source")?;
+            husako_config::ChartSource::Oci { reference, version }
         }
         other => return Err(format!("unknown chart source type: {other}")),
     };
