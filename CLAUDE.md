@@ -38,6 +38,8 @@ Before committing, always run in this order:
 2. `cargo clippy --workspace --all-targets --all-features -- -D warnings` — fix all warnings
 3. `cargo test --workspace --all-features` — confirm tests pass
 
+**Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification.
+
 ## Architecture
 
 The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit YAML**

@@ -101,19 +101,19 @@ husako can generate typed values builders for the Helm charts your FluxCD releas
 ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
 ```
 
-After generation, import the `Values` builder and pass it to `.values()`:
+After generation, import the chart builder and pass it to `.values()`:
 
 ```typescript
 import { build, metadata } from "husako";
 import { HelmRelease, HelmRepository } from "fluxcd";
-import { Values } from "helm/ingress-nginx";
+import { IngressNginx } from "helm/ingress-nginx";
 
 const repo = HelmRepository("ingress-nginx-repo")
   .metadata(metadata().namespace("flux-system"))
   .url("https://kubernetes.github.io/ingress-nginx")
   .interval("1h");
 
-const values = Values()
+const values = IngressNginx()
   .replicaCount(2)
   .controller({
     service: { type: "LoadBalancer" },
