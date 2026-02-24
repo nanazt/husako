@@ -192,6 +192,29 @@ pub(crate) fn extract_values_schema(
 mod tests {
     use super::*;
 
+    /// Build a minimal `.tgz` archive containing `{chart}/values.schema.json`
+    /// with the given JSON content.
+    fn build_tgz(chart: &str, schema_json: &str) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path(format!("{chart}/values.schema.json"))
+            .unwrap();
+        header.set_size(schema_json.len() as u64);
+        header.set_cksum();
+        builder.append(&header, schema_json.as_bytes()).unwrap();
+        let tar_data = builder.into_inner().unwrap();
+
+        let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&tar_data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    // ── OCI delegation ────────────────────────────────────────────────────────
+
     /// OCI URLs are delegated to oci::resolve. Pre-populate the OCI cache so
     /// no network call is made — this proves the delegation path is exercised.
     #[test]
@@ -212,6 +235,8 @@ mod tests {
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
     }
+
+    // ── find_chart_archive_url ────────────────────────────────────────────────
 
     #[test]
     fn find_chart_url_from_index() {
@@ -259,24 +284,18 @@ entries:
     }
 
     #[test]
+    fn find_chart_url_missing_entries_section() {
+        let index = "apiVersion: v1\n";
+        let err = find_chart_archive_url("test", "my-chart", "1.0.0", index).unwrap_err();
+        assert!(err.to_string().contains("no 'entries' section"));
+    }
+
+    // ── extract_values_schema ─────────────────────────────────────────────────
+
+    #[test]
     fn extract_schema_from_tgz() {
-        // Create a .tgz in memory with a values.schema.json
-        let mut builder = tar::Builder::new(Vec::new());
-
         let schema = r#"{"type":"object","properties":{"replicas":{"type":"integer"}}}"#;
-        let mut header = tar::Header::new_gnu();
-        header.set_path("my-chart/values.schema.json").unwrap();
-        header.set_size(schema.len() as u64);
-        header.set_cksum();
-        builder.append(&header, schema.as_bytes()).unwrap();
-        let tar_data = builder.into_inner().unwrap();
-
-        // Gzip it
-        use flate2::write::GzEncoder;
-        use std::io::Write;
-        let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
-        encoder.write_all(&tar_data).unwrap();
-        let gz_data = encoder.finish().unwrap();
+        let gz_data = build_tgz("my-chart", schema);
 
         let result = extract_values_schema("test", "my-chart", &gz_data).unwrap();
         assert_eq!(result["type"], "object");
@@ -285,9 +304,12 @@ entries:
 
     #[test]
     fn extract_schema_missing_in_archive() {
-        // Create a .tgz without values.schema.json
-        let mut builder = tar::Builder::new(Vec::new());
+        // Build a .tgz with Chart.yaml but no values.schema.json
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+
         let content = "# Chart.yaml\nname: my-chart";
+        let mut builder = tar::Builder::new(Vec::new());
         let mut header = tar::Header::new_gnu();
         header.set_path("my-chart/Chart.yaml").unwrap();
         header.set_size(content.len() as u64);
@@ -295,8 +317,6 @@ entries:
         builder.append(&header, content.as_bytes()).unwrap();
         let tar_data = builder.into_inner().unwrap();
 
-        use flate2::write::GzEncoder;
-        use std::io::Write;
         let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&tar_data).unwrap();
         let gz_data = encoder.finish().unwrap();
@@ -306,5 +326,112 @@ entries:
             err.to_string()
                 .contains("does not include values.schema.json")
         );
+    }
+
+    // ── resolve() integration (mockito) ──────────────────────────────────────
+
+    /// Cache hit: pre-populate cache, then call resolve() with an invalid repo URL.
+    /// No HTTP request should be made.
+    #[test]
+    fn cache_hit_skips_http() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = "http://127.0.0.1:1"; // port 1 — connection refused if actually called
+        let chart = "my-chart";
+        let version = "1.0.0";
+
+        let cache_key = crate::cache_hash(&format!("{repo}/{chart}"));
+        let cache_sub = tmp.path().join(format!("helm/registry/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join(format!("{version}.json")),
+            r#"{"type":"object","properties":{"cached":{"type":"boolean"}}}"#,
+        )
+        .unwrap();
+
+        let result = resolve("test", repo, chart, version, tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["cached"].is_object());
+    }
+
+    /// Full HTTP flow: mockito serves index.yaml and the .tgz archive.
+    #[test]
+    fn resolve_fetches_index_and_archive() {
+        let mut server = mockito::Server::new();
+        let host_url = server.url();
+
+        let chart = "my-chart";
+        let version = "1.0.0";
+        let archive_path = "/my-chart-1.0.0.tgz";
+
+        let index = format!(
+            "apiVersion: v1\nentries:\n  my-chart:\n    - version: \"{version}\"\n      urls:\n        - {host_url}{archive_path}\n"
+        );
+        let _m_index = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        let tgz = build_tgz(
+            chart,
+            r#"{"type":"object","properties":{"replicas":{"type":"integer"}}}"#,
+        );
+        let _m_archive = server
+            .mock("GET", archive_path)
+            .with_status(200)
+            .with_body(tgz)
+            .create();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let result = resolve("test", &host_url, chart, version, tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["replicas"].is_object());
+    }
+
+    /// When index.yaml lists an `oci://` archive URL, resolve() delegates to oci::resolve.
+    /// Pre-populate the OCI cache so no real OCI network call is made.
+    #[test]
+    fn resolve_oci_archive_url_in_index_delegates_to_oci() {
+        let mut server = mockito::Server::new();
+        let host_url = server.url();
+
+        let chart = "my-chart";
+        let version = "2.0.0";
+        let oci_url = "oci://ghcr.io/myorg/my-chart";
+
+        let index = format!(
+            "apiVersion: v1\nentries:\n  my-chart:\n    - version: \"{version}\"\n      urls:\n        - {oci_url}\n"
+        );
+        let _m_index = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        // Seed the OCI cache so oci::resolve returns immediately
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_key = crate::cache_hash(oci_url);
+        let cache_sub = tmp.path().join(format!("helm/oci/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join(format!("{version}.json")),
+            r#"{"type":"object","properties":{"ociField":{"type":"string"}}}"#,
+        )
+        .unwrap();
+
+        let result = resolve("test", &host_url, chart, version, tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["ociField"].is_object());
+    }
+
+    /// HTTP 404 on index.yaml → error message includes the status code.
+    #[test]
+    fn resolve_index_http_error_returns_err() {
+        let mut server = mockito::Server::new();
+        let _m = server.mock("GET", "/index.yaml").with_status(404).create();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let err = resolve("test", &server.url(), "my-chart", "1.0.0", tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("404"));
     }
 }

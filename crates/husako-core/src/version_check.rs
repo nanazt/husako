@@ -1,5 +1,8 @@
 use crate::HusakoError;
 
+const GITHUB_API_BASE: &str = "https://api.github.com";
+const ARTIFACTHUB_BASE: &str = "https://artifacthub.io";
+
 // TODO: use urlencoding instead
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
@@ -43,6 +46,14 @@ pub fn search_artifacthub(
     query: &str,
     offset: usize,
 ) -> Result<ArtifactHubSearchResult, HusakoError> {
+    search_artifacthub_from(query, offset, ARTIFACTHUB_BASE)
+}
+
+fn search_artifacthub_from(
+    query: &str,
+    offset: usize,
+    base_url: &str,
+) -> Result<ArtifactHubSearchResult, HusakoError> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("husako")
         .timeout(std::time::Duration::from_secs(10))
@@ -52,7 +63,7 @@ pub fn search_artifacthub(
     let encoded_query = percent_encode(query);
     let limit = ARTIFACTHUB_PAGE_SIZE + 1;
     let url = format!(
-        "https://artifacthub.io/api/v1/packages/search?ts_query_web={encoded_query}&kind=0&limit={limit}&offset={offset}"
+        "{base_url}/api/v1/packages/search?ts_query_web={encoded_query}&kind=0&limit={limit}&offset={offset}"
     );
 
     let resp = client
@@ -81,13 +92,23 @@ pub fn search_artifacthub(
 
 /// Discover the N most recent stable Kubernetes release versions (major.minor).
 pub fn discover_recent_releases(limit: usize, offset: usize) -> Result<Vec<String>, HusakoError> {
+    discover_recent_releases_from(limit, offset, GITHUB_API_BASE)
+}
+
+fn discover_recent_releases_from(
+    limit: usize,
+    offset: usize,
+    base_url: &str,
+) -> Result<Vec<String>, HusakoError> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
 
     let resp = client
-        .get("https://api.github.com/repos/kubernetes/kubernetes/tags?per_page=100")
+        .get(format!(
+            "{base_url}/repos/kubernetes/kubernetes/tags?per_page=100"
+        ))
         .send()
         .map_err(|e| HusakoError::GenerateIo(format!("GitHub API: {e}")))?;
 
@@ -181,13 +202,19 @@ pub fn discover_registry_versions(
 
 /// Discover the latest stable Kubernetes release version from GitHub API.
 pub fn discover_latest_release() -> Result<String, HusakoError> {
+    discover_latest_release_from(GITHUB_API_BASE)
+}
+
+fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
 
     let resp = client
-        .get("https://api.github.com/repos/kubernetes/kubernetes/tags?per_page=100")
+        .get(format!(
+            "{base_url}/repos/kubernetes/kubernetes/tags?per_page=100"
+        ))
         .send()
         .map_err(|e| HusakoError::GenerateIo(format!("GitHub API: {e}")))?;
 
@@ -267,8 +294,12 @@ pub fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, Husak
 
 /// Discover the latest version from ArtifactHub API.
 pub fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError> {
+    discover_latest_artifacthub_from(package, ARTIFACTHUB_BASE)
+}
+
+fn discover_latest_artifacthub_from(package: &str, base_url: &str) -> Result<String, HusakoError> {
     let url = format!(
-        "https://artifacthub.io/api/v1/packages/helm/{}",
+        "{base_url}/api/v1/packages/helm/{}",
         package.trim_start_matches('/')
     );
     let client = reqwest::blocking::Client::builder()
@@ -302,8 +333,17 @@ pub fn discover_artifacthub_versions(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
+    discover_artifacthub_versions_from(package, limit, offset, ARTIFACTHUB_BASE)
+}
+
+fn discover_artifacthub_versions_from(
+    package: &str,
+    limit: usize,
+    offset: usize,
+    base_url: &str,
+) -> Result<Vec<String>, HusakoError> {
     let url = format!(
-        "https://artifacthub.io/api/v1/packages/helm/{}",
+        "{base_url}/api/v1/packages/helm/{}",
         package.trim_start_matches('/')
     );
     let client = reqwest::blocking::Client::builder()
@@ -690,7 +730,237 @@ vwx234\trefs/tags/v1.7.0^{}\n";
     }
 
     #[test]
-    fn versions_match_v_prefix() {
-        assert!(versions_match("1.35", "1.35"));
+    fn versions_match_v_prefix_stripped() {
+        // v-prefix is stripped before comparison
+        assert!(versions_match("v1.35.0", "1.35.0"));
+        assert!(versions_match("1.35.0", "v1.35.0"));
+        assert!(versions_match("v1.17.2", "v1.17.2"));
+        assert!(!versions_match("v1.35.0", "v1.36.0"));
+    }
+
+    // ── percent_encode ────────────────────────────────────────────────────────
+
+    #[test]
+    fn percent_encode_safe_chars_unchanged() {
+        assert_eq!(percent_encode("abc"), "abc");
+        assert_eq!(percent_encode("ABC"), "ABC");
+        assert_eq!(percent_encode("0123456789"), "0123456789");
+        assert_eq!(percent_encode("-_.~"), "-_.~");
+    }
+
+    #[test]
+    fn percent_encode_special_chars() {
+        assert_eq!(percent_encode(" "), "%20");
+        assert_eq!(percent_encode("/"), "%2F");
+        assert_eq!(percent_encode(":"), "%3A");
+        assert_eq!(percent_encode("a b/c:d"), "a%20b%2Fc%3Ad");
+    }
+
+    // ── search_artifacthub_from (mockito) ─────────────────────────────────────
+
+    #[test]
+    fn search_artifacthub_returns_packages() {
+        let mut server = mockito::Server::new();
+        let resp = serde_json::json!({
+            "packages": [
+                {"name": "postgresql", "version": "16.4.0", "repository": {"name": "bitnami"}},
+                {"name": "redis", "version": "20.0.0", "repository": {"name": "bitnami"}}
+            ]
+        });
+        let _m = server
+            .mock("GET", "/api/v1/packages/search")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(resp.to_string())
+            .create();
+
+        let result = search_artifacthub_from("postgres", 0, &server.url()).unwrap();
+        assert_eq!(result.packages.len(), 2);
+        assert_eq!(result.packages[0].name, "postgresql");
+        assert!(!result.has_more);
+    }
+
+    #[test]
+    fn search_artifacthub_empty_result() {
+        let mut server = mockito::Server::new();
+        let resp = serde_json::json!({"packages": []});
+        let _m = server
+            .mock("GET", "/api/v1/packages/search")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(resp.to_string())
+            .create();
+
+        let result = search_artifacthub_from("nonexistent", 0, &server.url()).unwrap();
+        assert!(result.packages.is_empty());
+        assert!(!result.has_more);
+    }
+
+    // ── discover_recent_releases_from (mockito) ───────────────────────────────
+
+    #[test]
+    fn discover_recent_releases_dedupes_minor() {
+        let mut server = mockito::Server::new();
+        let tags = serde_json::json!([
+            {"name": "v1.35.1"},
+            {"name": "v1.35.0"},
+            {"name": "v1.34.0"}
+        ]);
+        let _m = server
+            .mock("GET", "/repos/kubernetes/kubernetes/tags")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags.to_string())
+            .create();
+
+        let versions = discover_recent_releases_from(10, 0, &server.url()).unwrap();
+        // v1.35.1 and v1.35.0 share the same minor → only one "1.35" entry
+        assert_eq!(versions, vec!["1.35", "1.34"]);
+    }
+
+    // ── discover_latest_release_from (mockito) ────────────────────────────────
+
+    #[test]
+    fn discover_latest_release_returns_highest() {
+        let mut server = mockito::Server::new();
+        let tags = serde_json::json!([
+            {"name": "v1.35.0-alpha.1"},
+            {"name": "v1.34.0"},
+            {"name": "v1.33.0"}
+        ]);
+        let _m = server
+            .mock("GET", "/repos/kubernetes/kubernetes/tags")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(tags.to_string())
+            .create();
+
+        let version = discover_latest_release_from(&server.url()).unwrap();
+        assert_eq!(version, "1.34");
+    }
+
+    // ── discover_latest_artifacthub_from (mockito) ────────────────────────────
+
+    #[test]
+    fn discover_latest_artifacthub_extracts_version() {
+        let mut server = mockito::Server::new();
+        let resp = serde_json::json!({
+            "name": "postgresql",
+            "version": "16.4.0",
+            "available_versions": [{"version": "16.4.0", "prerelease": false}]
+        });
+        let _m = server
+            .mock("GET", "/api/v1/packages/helm/bitnami/postgresql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(resp.to_string())
+            .create();
+
+        let version =
+            discover_latest_artifacthub_from("bitnami/postgresql", &server.url()).unwrap();
+        assert_eq!(version, "16.4.0");
+    }
+
+    #[test]
+    fn discover_latest_artifacthub_missing_version_field() {
+        let mut server = mockito::Server::new();
+        let resp = serde_json::json!({"name": "postgresql"});
+        let _m = server
+            .mock("GET", "/api/v1/packages/helm/bitnami/postgresql")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(resp.to_string())
+            .create();
+
+        let err =
+            discover_latest_artifacthub_from("bitnami/postgresql", &server.url()).unwrap_err();
+        assert!(err.to_string().contains("no version field"));
+    }
+
+    // ── discover_registry_versions (mockito) ──────────────────────────────────
+
+    fn make_index_yaml(chart: &str, versions: &[&str]) -> String {
+        let entries: String = versions
+            .iter()
+            .map(|v| format!("    - version: \"{v}\"\n"))
+            .collect();
+        format!("apiVersion: v1\nentries:\n  {chart}:\n{entries}")
+    }
+
+    #[test]
+    fn discover_registry_versions_filters_prerelease_and_sorts() {
+        let mut server = mockito::Server::new();
+        let index = make_index_yaml("my-chart", &["1.0.0-beta.1", "2.0.0", "1.0.0", "3.0.0"]);
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        let versions = discover_registry_versions(&server.url(), "my-chart", 10, 0).unwrap();
+        assert_eq!(versions, vec!["3.0.0", "2.0.0", "1.0.0"]);
+    }
+
+    #[test]
+    fn discover_registry_versions_applies_offset_and_limit() {
+        let mut server = mockito::Server::new();
+        let index = make_index_yaml("my-chart", &["5.0.0", "4.0.0", "3.0.0", "2.0.0", "1.0.0"]);
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        // Skip the first (5.0.0), take next 2 (4.0.0, 3.0.0)
+        let versions = discover_registry_versions(&server.url(), "my-chart", 2, 1).unwrap();
+        assert_eq!(versions, vec!["4.0.0", "3.0.0"]);
+    }
+
+    #[test]
+    fn discover_registry_versions_chart_not_found() {
+        let mut server = mockito::Server::new();
+        let index = make_index_yaml("other-chart", &["1.0.0"]);
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        let err = discover_registry_versions(&server.url(), "my-chart", 10, 0).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    // ── discover_latest_registry (mockito) ────────────────────────────────────
+
+    #[test]
+    fn discover_latest_registry_returns_highest_stable() {
+        let mut server = mockito::Server::new();
+        let index = make_index_yaml("my-chart", &["1.0.0-rc.1", "2.0.0", "1.5.0"]);
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        let version = discover_latest_registry(&server.url(), "my-chart").unwrap();
+        assert_eq!(version, "2.0.0");
+    }
+
+    #[test]
+    fn discover_latest_registry_all_prerelease_returns_error() {
+        let mut server = mockito::Server::new();
+        let index = make_index_yaml("my-chart", &["1.0.0-alpha.1", "2.0.0-beta.1"]);
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(200)
+            .with_body(index)
+            .create();
+
+        let err = discover_latest_registry(&server.url(), "my-chart").unwrap_err();
+        assert!(err.to_string().contains("no versions found"));
     }
 }
