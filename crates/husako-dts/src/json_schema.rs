@@ -13,7 +13,8 @@ pub fn generate_chart_types(
     schema: &serde_json::Value,
 ) -> Result<(String, String), DtsError> {
     let mut extracted = Vec::new();
-    extract_schemas(schema, "Values", &mut extracted);
+    let root_name = to_pascal_case(chart_name);
+    extract_schemas(schema, &root_name, &mut extracted);
 
     if extracted.is_empty() {
         return Err(DtsError::Schema(format!(
@@ -445,18 +446,18 @@ mod tests {
         let (dts, js) = generate_chart_types("my-chart", &schema).unwrap();
 
         // DTS checks
-        assert!(dts.contains("export interface ValuesSpec"));
+        assert!(dts.contains("export interface MyChartSpec"));
         assert!(dts.contains("replicaCount?: number;"));
-        assert!(dts.contains("export interface Values extends _SchemaBuilder"));
+        assert!(dts.contains("export interface MyChart extends _SchemaBuilder"));
         assert!(dts.contains("replicaCount(value: number): this;"));
         assert!(dts.contains("image(value: Image): this;"));
-        assert!(dts.contains("export function Values(): Values;"));
+        assert!(dts.contains("export function MyChart(): MyChart;"));
         assert!(dts.contains("export interface ImageSpec"));
 
         // JS checks
-        assert!(js.contains("class _Values extends _SchemaBuilder"));
+        assert!(js.contains("class _MyChart extends _SchemaBuilder"));
         assert!(js.contains("replicaCount(v) { return this._set(\"replicaCount\", v); }"));
-        assert!(js.contains("export function Values() { return new _Values(); }"));
+        assert!(js.contains("export function MyChart() { return new _MyChart(); }"));
     }
 
     #[test]
@@ -505,8 +506,8 @@ mod tests {
         let (dts, _js) = generate_chart_types("test", &schema).unwrap();
 
         // No complex properties → no builder class, just interface
-        assert!(dts.contains("export interface ValuesSpec"));
-        assert!(!dts.contains("class Values"));
+        assert!(dts.contains("export interface TestSpec"));
+        assert!(!dts.contains("class Test"));
     }
 
     #[test]

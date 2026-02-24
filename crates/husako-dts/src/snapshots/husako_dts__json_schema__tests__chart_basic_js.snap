@@ -6,10 +6,10 @@ expression: js
 
 import { _SchemaBuilder } from "husako/_base";
 
-class _Values extends _SchemaBuilder {
+class _MyChart extends _SchemaBuilder {
   image(v) { return this._set("image", v); }
   labels(v) { return this._set("labels", v); }
   replicaCount(v) { return this._set("replicaCount", v); }
   service(v) { return this._set("service", v); }
 }
-export function Values() { return new _Values(); }
+export function MyChart() { return new _MyChart(); }
