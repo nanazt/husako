@@ -1,6 +1,7 @@
 mod artifacthub;
 mod file;
 mod git;
+mod oci;
 mod registry;
 
 use std::collections::HashMap;

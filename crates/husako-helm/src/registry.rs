@@ -19,12 +19,9 @@ pub fn resolve(
     version: &str,
     cache_dir: &Path,
 ) -> Result<serde_json::Value, HelmError> {
-    // OCI registries are not supported
+    // Delegate OCI registries to the dedicated OCI resolver
     if repo.starts_with("oci://") {
-        return Err(HelmError::Io(format!(
-            "chart '{name}': OCI registries are not supported; \
-             use source = \"artifacthub\" or source = \"file\" instead"
-        )));
+        return crate::oci::resolve(name, repo, chart, version, cache_dir);
     }
 
     // Check cache
@@ -140,7 +137,7 @@ fn find_chart_archive_url(
 }
 
 /// Extract `values.schema.json` from a `.tgz` archive.
-fn extract_values_schema(
+pub(crate) fn extract_values_schema(
     name: &str,
     chart: &str,
     archive_bytes: &[u8],
@@ -186,18 +183,25 @@ fn extract_values_schema(
 mod tests {
     use super::*;
 
+    /// OCI URLs are delegated to oci::resolve. Pre-populate the OCI cache so
+    /// no network call is made — this proves the delegation path is exercised.
     #[test]
-    fn oci_registry_rejected() {
+    fn oci_registry_delegates_via_cache() {
+        let oci_url = "oci://registry.example.com/charts";
         let tmp = tempfile::tempdir().unwrap();
-        let err = resolve(
-            "test",
-            "oci://registry.example.com/charts",
-            "my-chart",
-            "1.0.0",
-            tmp.path(),
+
+        let cache_key = crate::cache_hash(oci_url);
+        let cache_sub = tmp.path().join(format!("helm/oci/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join("1.0.0.json"),
+            r#"{"type":"object","properties":{"replicas":{"type":"integer"}}}"#,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("OCI registries"));
+        .unwrap();
+
+        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["replicas"].is_object());
     }
 
     #[test]

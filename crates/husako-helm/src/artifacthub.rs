@@ -10,8 +10,8 @@ const ARTIFACTHUB_BASE: &str = "https://artifacthub.io/api/v1/packages/helm";
 /// 1. Check cache
 /// 2. Fetch `https://artifacthub.io/api/v1/packages/helm/{package}/{version}`
 /// 3. Use `values_schema` if present — cache and return
-/// 4. Otherwise attempt a registry fallback using `repository.url` (HTTP only)
-/// 5. OCI repos or missing repo URL produce a clear error with guidance
+/// 4. Otherwise attempt a registry fallback using `repository.url`
+///    (delegates to `registry::resolve`, which handles both HTTP and OCI)
 pub fn resolve(
     name: &str,
     package: &str,
@@ -77,7 +77,7 @@ fn resolve_from(
         return Ok(schema);
     }
 
-    // Phase 2: no values_schema — try an HTTP registry fallback using repository.url
+    // Phase 2: no values_schema — try a registry fallback using repository.url
     let repo_url = body
         .get("repository")
         .and_then(|r| r.get("url"))
@@ -86,7 +86,7 @@ fn resolve_from(
 
     let chart_name = package.rsplit('/').next().unwrap_or(package);
 
-    if !repo_url.is_empty() && !repo_url.starts_with("oci://") {
+    if !repo_url.is_empty() {
         return crate::registry::resolve(name, repo_url, chart_name, version, cache_dir).map_err(
             |e| {
                 HelmError::NotFound(format!(
@@ -97,14 +97,8 @@ fn resolve_from(
         );
     }
 
-    let oci_note = if repo_url.starts_with("oci://") {
-        format!(" (OCI registry {repo_url} is not supported for schema extraction)")
-    } else {
-        String::new()
-    };
-
     Err(HelmError::NotFound(format!(
-        "chart '{name}': no values_schema on ArtifactHub{oci_note}. \
+        "chart '{name}': no values_schema on ArtifactHub and no repository URL available. \
          Download values.schema.json manually and use source = \"file\" instead."
     )))
 }
@@ -200,12 +194,14 @@ mod tests {
     }
 
     /// When `values_schema` is absent and `repository.url` is an OCI URL,
-    /// resolve returns a clear error mentioning OCI is not supported.
+    /// resolve now delegates to oci::resolve via registry::resolve.
+    /// The OCI cache pre-populated here proves the delegation path is exercised.
     #[test]
-    fn no_values_schema_oci_repo_returns_clear_error() {
+    fn no_values_schema_oci_repo_delegates_to_oci_resolver() {
+        let oci_url = "oci://registry-1.docker.io/bitnamicharts/postgresql";
         let api_body = serde_json::json!({
             "name": "postgresql",
-            "repository": { "url": "oci://registry-1.docker.io/bitnamicharts" }
+            "repository": { "url": oci_url }
         });
 
         let mut server = mockito::Server::new();
@@ -217,18 +213,27 @@ mod tests {
             .create();
 
         let tmp = tempfile::tempdir().unwrap();
-        let err = resolve_from(
+
+        // Pre-populate the OCI cache so no real network call is made
+        let cache_key = crate::cache_hash(oci_url);
+        let cache_sub = tmp.path().join(format!("helm/oci/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join("16.4.0.json"),
+            r#"{"type":"object","properties":{"replicaCount":{"type":"integer"}}}"#,
+        )
+        .unwrap();
+
+        let result = resolve_from(
             "postgresql",
             "bitnami/postgresql",
             "16.4.0",
             tmp.path(),
             &server.url(),
         )
-        .unwrap_err();
-
-        let msg = err.to_string();
-        assert!(msg.contains("OCI registry"), "got: {msg}");
-        assert!(msg.contains("source = \"file\""), "got: {msg}");
+        .unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["replicaCount"].is_object());
     }
 
     /// When `values_schema` is absent and `repository.url` is an HTTP registry,
