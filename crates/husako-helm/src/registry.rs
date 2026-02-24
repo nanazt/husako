@@ -3,15 +3,18 @@ use std::path::Path;
 
 use crate::HelmError;
 
-/// Resolve a Helm chart from an HTTP Helm repository.
+/// Resolve a Helm chart from a Helm repository.
 ///
 /// Flow:
 /// 1. Check cache
-/// 2. Fetch `{repo}/index.yaml`
-/// 3. Find chart entry → match version → get archive URL
-/// 4. Download `.tgz` archive
-/// 5. Extract `values.schema.json` from archive
-/// 6. Cache and return
+/// 2. OCI `repo` URLs delegate to `oci::resolve`
+/// 3. Fetch `{repo}/index.yaml`
+/// 4. Find chart entry → match version → get archive URL
+/// 5. If archive URL is OCI (some registries list `oci://` in their index),
+///    delegate to `oci::resolve`
+/// 6. Download `.tgz` archive
+/// 7. Extract `values.schema.json` from archive
+/// 8. Cache and return
 pub fn resolve(
     name: &str,
     repo: &str,
@@ -19,12 +22,9 @@ pub fn resolve(
     version: &str,
     cache_dir: &Path,
 ) -> Result<serde_json::Value, HelmError> {
-    // OCI registries are not supported
+    // Delegate OCI registries to the dedicated OCI resolver
     if repo.starts_with("oci://") {
-        return Err(HelmError::Io(format!(
-            "chart '{name}': OCI registries are not supported; \
-             use source = \"artifacthub\" or source = \"file\" instead"
-        )));
+        return crate::oci::resolve(name, repo, chart, version, cache_dir);
     }
 
     // Check cache
@@ -46,6 +46,12 @@ pub fn resolve(
     let index_url = format!("{}/index.yaml", repo.trim_end_matches('/'));
     let index_yaml = fetch_url(name, &index_url)?;
     let archive_url = find_chart_archive_url(name, chart, version, &index_yaml)?;
+
+    // Some Helm registry index.yaml files list OCI URLs as archive URLs
+    // (e.g. Bitnami moved their HTTP registry to OCI). Delegate to oci::resolve.
+    if archive_url.starts_with("oci://") {
+        return crate::oci::resolve(name, &archive_url, chart, version, cache_dir);
+    }
 
     // Download and extract
     let archive_bytes = fetch_url_bytes(name, &archive_url)?;
@@ -140,7 +146,7 @@ fn find_chart_archive_url(
 }
 
 /// Extract `values.schema.json` from a `.tgz` archive.
-fn extract_values_schema(
+pub(crate) fn extract_values_schema(
     name: &str,
     chart: &str,
     archive_bytes: &[u8],
@@ -186,18 +192,25 @@ fn extract_values_schema(
 mod tests {
     use super::*;
 
+    /// OCI URLs are delegated to oci::resolve. Pre-populate the OCI cache so
+    /// no network call is made — this proves the delegation path is exercised.
     #[test]
-    fn oci_registry_rejected() {
+    fn oci_registry_delegates_via_cache() {
+        let oci_url = "oci://registry.example.com/charts";
         let tmp = tempfile::tempdir().unwrap();
-        let err = resolve(
-            "test",
-            "oci://registry.example.com/charts",
-            "my-chart",
-            "1.0.0",
-            tmp.path(),
+
+        let cache_key = crate::cache_hash(oci_url);
+        let cache_sub = tmp.path().join(format!("helm/oci/{cache_key}"));
+        std::fs::create_dir_all(&cache_sub).unwrap();
+        std::fs::write(
+            cache_sub.join("1.0.0.json"),
+            r#"{"type":"object","properties":{"replicas":{"type":"integer"}}}"#,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("OCI registries"));
+        .unwrap();
+
+        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path()).unwrap();
+        assert_eq!(result["type"], "object");
+        assert!(result["properties"]["replicas"].is_object());
     }
 
     #[test]
