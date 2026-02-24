@@ -86,6 +86,9 @@ export function Service() { return new _Service(); }
 
 class _ConfigMap extends _ResourceBuilder {
   constructor() { super("v1", "ConfigMap"); }
+  data(v) { return this.set("data", v); }
+  binaryData(v) { return this.set("binaryData", v); }
+  immutable(v) { return this.set("immutable", v); }
 }
 export function ConfigMap() { return new _ConfigMap(); }
 
@@ -1429,7 +1432,7 @@ import { build, name } from "husako";
 import { ConfigMap } from "k8s/core/v1";
 const cm = ConfigMap()
     .metadata(name("my-config"))
-    .set("data", { key1: "val1", key2: "val2" });
+    .data({ key1: "val1", key2: "val2" });
 build([cm]);
 "#,
     );

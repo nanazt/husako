@@ -6,6 +6,10 @@ use crate::schema::{PropertyInfo, SchemaInfo, TsType, has_complex_property};
 /// Properties to skip when generating spec property methods on resource builders.
 const RESOURCE_SPEC_SKIP: &[&str] = &["status", "apiVersion", "kind", "metadata"];
 
+/// Properties to skip when generating top-level property methods on resource builders.
+/// These fields have dedicated methods or must not be overridden.
+const RESOURCE_TOP_LEVEL_SKIP: &[&str] = &["apiVersion", "kind", "metadata", "spec", "status"];
+
 /// Resource factory function name matches the class name (PascalCase).
 fn to_factory_name(class_name: &str) -> String {
     class_name.to_string()
@@ -124,6 +128,20 @@ fn emit_property_methods_js_set(out: &mut String, props: &[PropertyInfo], skip: 
     }
 }
 
+/// Emit JS chainable method implementations using `set` for top-level resource fields.
+fn emit_property_methods_js_top(out: &mut String, props: &[PropertyInfo], skip: &[&str]) {
+    for prop in props {
+        if skip.contains(&prop.name.as_str()) {
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "  {}(v) {{ return this.set(\"{}\", v); }}",
+            prop.name, prop.name
+        );
+    }
+}
+
 /// Emit JS chainable method implementations using `_setSpec` for each property.
 fn emit_property_methods_js_spec(out: &mut String, props: &[PropertyInfo], skip: &[&str]) {
     for prop in props {
@@ -180,6 +198,9 @@ pub fn emit_builder_class(
             }
         }
     }
+
+    // Emit per-top-level-property methods (data, rules, subjects, etc.)
+    emit_property_methods_dts(&mut out, &schema.properties, RESOURCE_TOP_LEVEL_SKIP);
 
     let _ = writeln!(out, "}}");
 
@@ -468,6 +489,9 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
                     );
                 }
             }
+
+            // Emit per-top-level-property methods
+            emit_property_methods_js_top(&mut out, &schema.properties, RESOURCE_TOP_LEVEL_SKIP);
 
             let _ = writeln!(out, "}}");
 
@@ -878,5 +902,101 @@ mod tests {
         });
         // GVK schemas get _ResourceBuilder, not _SchemaBuilder
         assert!(!should_generate_builder(&deployment));
+    }
+
+    #[test]
+    fn emit_builder_class_with_top_level_fields() {
+        let mut schema = make_schema(
+            "ConfigMap",
+            vec![
+                PropertyInfo {
+                    name: "apiVersion".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "kind".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "metadata".to_string(),
+                    ts_type: TsType::Ref("ObjectMeta".to_string()),
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "data".to_string(),
+                    ts_type: TsType::Map(Box::new(TsType::String)),
+                    required: false,
+                    description: Some("Data contains the configuration data.".to_string()),
+                },
+                PropertyInfo {
+                    name: "immutable".to_string(),
+                    ts_type: TsType::Boolean,
+                    required: false,
+                    description: None,
+                },
+            ],
+        );
+        schema.gvk = Some(GroupVersionKind {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+        });
+
+        let all_schemas: Vec<&SchemaInfo> = vec![&schema];
+        let output = emit_builder_class(&schema, "v1", &all_schemas);
+        insta::assert_snapshot!(output);
+    }
+
+    #[test]
+    fn emit_group_version_js_with_top_level_fields() {
+        let mut schema = make_schema(
+            "ConfigMap",
+            vec![
+                PropertyInfo {
+                    name: "apiVersion".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "kind".to_string(),
+                    ts_type: TsType::String,
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "metadata".to_string(),
+                    ts_type: TsType::Ref("ObjectMeta".to_string()),
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "data".to_string(),
+                    ts_type: TsType::Map(Box::new(TsType::String)),
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "immutable".to_string(),
+                    ts_type: TsType::Boolean,
+                    required: false,
+                    description: None,
+                },
+            ],
+        );
+        schema.gvk = Some(GroupVersionKind {
+            group: String::new(),
+            version: "v1".to_string(),
+            kind: "ConfigMap".to_string(),
+        });
+
+        let schemas: Vec<&SchemaInfo> = vec![&schema];
+        let output = emit_group_version_js(&schemas);
+        insta::assert_snapshot!(output);
     }
 }
