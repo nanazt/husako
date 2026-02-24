@@ -43,6 +43,27 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         ));
     }
 
+    // Deduplicate schemas by full_name. Each schema can appear in multiple
+    // spec files (e.g. io.k8s.api.core.v1.PersistentVolumeClaim appears in
+    // both api/v1 and apis/apps/v1 specs). Keep the entry that has a GVK when
+    // there is a conflict; otherwise keep the first occurrence.
+    {
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        let mut deduped: Vec<SchemaInfo> = Vec::new();
+        for schema in all_schemas {
+            if let Some(&idx) = seen.get(&schema.full_name) {
+                // Prefer entry with GVK over entry without
+                if schema.gvk.is_some() && deduped[idx].gvk.is_none() {
+                    deduped[idx] = schema;
+                }
+            } else {
+                seen.insert(schema.full_name.clone(), deduped.len());
+                deduped.push(schema);
+            }
+        }
+        all_schemas = deduped;
+    }
+
     // CRD reclassification: schemas classified as Other but having GVK
     // should be placed into their proper group-version.
     for schema in &mut all_schemas {
