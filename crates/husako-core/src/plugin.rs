@@ -526,7 +526,10 @@ version = "0.1.0"
 
         let paths = plugin_tsconfig_paths(&plugins);
         assert_eq!(paths["fluxcd"], ".husako/plugins/fluxcd/modules/index.d.ts");
-        assert_eq!(paths["fluxcd/helm"], ".husako/plugins/fluxcd/modules/helm.d.ts");
+        assert_eq!(
+            paths["fluxcd/helm"],
+            ".husako/plugins/fluxcd/modules/helm.d.ts"
+        );
     }
 
     #[test]
