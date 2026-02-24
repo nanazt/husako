@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use husako_core::{GenerateOptions, HusakoError, RenderOptions, ScaffoldOptions, TemplateName};
+use husako_core::{
+    GenerateOptions, HusakoError, RenderOptions, ScaffoldOptions, TemplateName, TestOptions,
+};
 use husako_runtime_qjs::RuntimeError;
 
 use crate::progress::IndicatifReporter;
@@ -205,6 +207,21 @@ enum Commands {
     Plugin {
         #[command(subcommand)]
         action: PluginAction,
+    },
+
+    /// Run test files
+    Test {
+        /// Test files to run (discovers *.test.ts and *.spec.ts if omitted)
+        #[arg(value_name = "FILE")]
+        files: Vec<PathBuf>,
+
+        /// Execution timeout per file in milliseconds
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+
+        /// Maximum heap memory per file in megabytes
+        #[arg(long)]
+        max_heap_mb: Option<usize>,
     },
 }
 
@@ -1154,6 +1171,76 @@ fn main() -> ExitCode {
                     eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
                 }
+            }
+        }
+
+        Commands::Test {
+            files,
+            timeout_ms,
+            max_heap_mb,
+        } => {
+            let project_root = cwd();
+
+            // Resolve explicit file paths relative to cwd
+            let resolved_files: Vec<PathBuf> = files
+                .iter()
+                .map(|f| {
+                    if f.is_absolute() {
+                        f.clone()
+                    } else {
+                        project_root.join(f)
+                    }
+                })
+                .collect();
+
+            let options = TestOptions {
+                project_root: project_root.clone(),
+                files: resolved_files,
+                timeout_ms,
+                max_heap_mb,
+                allow_outside_root: false,
+            };
+
+            let results = match husako_core::run_tests(&options) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{} {e}", style::error_prefix());
+                    return ExitCode::from(exit_code(&e));
+                }
+            };
+
+            if results.is_empty() {
+                eprintln!("No test files found");
+                return ExitCode::SUCCESS;
+            }
+
+            let mut total_passed = 0usize;
+            let mut total_failed = 0usize;
+
+            for result in &results {
+                eprintln!("{}", style::bold(&result.file.to_string_lossy()));
+                for case in &result.cases {
+                    if case.passed {
+                        eprintln!("  {} {}", style::check_mark(), case.name);
+                        total_passed += 1;
+                    } else {
+                        eprintln!("  {} {}", style::cross_mark(), case.name);
+                        if let Some(ref err) = case.error {
+                            eprintln!("    {}", style::dim(err));
+                        }
+                        total_failed += 1;
+                    }
+                }
+            }
+
+            eprintln!();
+            let summary = format!("{total_passed} passed, {total_failed} failed");
+            if total_failed > 0 {
+                eprintln!("{} {summary}", style::cross_mark());
+                ExitCode::from(1u8)
+            } else {
+                eprintln!("{} {summary}", style::check_mark());
+                ExitCode::SUCCESS
             }
         }
     }

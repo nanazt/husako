@@ -29,6 +29,7 @@ Every state-changing command must have its side effects explicitly verified:
 | `husako plugin add` | husako.toml entry present AND `.husako/plugins/<name>/` directory exists after gen |
 | `husako plugin remove` | husako.toml entry absent AND `.husako/plugins/<name>/` directory removed |
 | `husako plugin list` | Output contains / does not contain the plugin name |
+| `husako test` | Exit 0 on all-pass, exit 1 on any failure; output contains test names and pass/fail marks |
 
 ### Validate Kubernetes YAML with kubeconform
 
@@ -88,6 +89,7 @@ All source kinds are exercised end-to-end:
 | `registry` | chart | B — bitnami HTTP → OCI delegation |
 | `git` | chart | B — prometheus-community/helm-charts |
 | `oci` | chart | F — bitnamicharts/postgresql OCI registry |
+| `husako test` | TS test runner | G — passing tests, failing tests, discovery, plugin testing |
 
 ### State isolation
 
@@ -131,6 +133,33 @@ assert_dts_exports()  # check .d.ts file has expected export symbol
 assert_k8s_valid()    # kubeconform -strict validation (standard k8s only, no cluster needed)
 assert_valid_yaml()   # ruby Psych YAML validation (any YAML; Ruby built-in, works on macOS and ubuntu-latest)
 ```
+
+## TypeScript Test Files (`husako test`)
+
+Test files for husako TypeScript code use the naming convention `*.test.ts` or `*.spec.ts`.
+They import from the `"husako/test"` builtin module:
+
+```typescript
+import { test, describe, expect } from "husako/test";
+
+describe("suite name", () => {
+  test("case name", () => {
+    expect(value).toBe(expected);
+  });
+});
+```
+
+Discovery skips `.husako/`, `node_modules/`, and all hidden directories. Discovery is recursive.
+
+Available matchers: `toBe`, `toEqual`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeTruthy`,
+`toBeFalsy`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`,
+`toContain`, `toHaveProperty`, `toHaveLength`, `toMatch`, `toThrow`. All support `.not` negation.
+
+`husako generate --skip-k8s` must be run before `husako test` so `husako/test.d.ts` and
+`tsconfig.json` path mappings are written. For plugin tests, run `husako generate` first to
+install plugins.
+
+Exit code: 0 if all tests pass, 1 if any test fails or cannot compile/run.
 
 ## Unit Test Patterns
 

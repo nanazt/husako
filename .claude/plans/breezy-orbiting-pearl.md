@@ -1,426 +1,316 @@
-# ChartSource::Oci — Direct OCI Registry Support
+# husako test — JS/TS Test Runner
 
 ## Context
 
-`husako generate` supports OCI registry charts only indirectly (when an HTTP registry's
-`index.yaml` lists `oci://` archive URLs, or when ArtifactHub points to OCI). There is no
-way to declare a direct OCI chart source in `husako.toml` or add one via `husako add`.
+Users write TypeScript code using husako builders (resource factory helpers, value transformers, etc.)
+and currently have no way to unit-test that code in isolation. husako has Rust `#[cfg(test)]` and
+E2E bash scripts, but nothing for the TypeScript layer. This plan adds a `husako test` command that
+discovers `*.test.ts` / `*.spec.ts` files and runs them through the same QuickJS runtime with a
+Jest-like assertion API exposed via a new `"husako/test"` builtin module.
 
-This adds `ChartSource::Oci { reference, version }` so users can declare:
-```toml
-[charts]
-postgresql = { source = "oci", reference = "oci://ghcr.io/org/postgresql", version = "1.2.3" }
+No changes to production behavior of `render`, `generate`, or `validate`.
+
+## Example usage
+
+```typescript
+// helpers.test.ts
+import { test, expect, describe } from "husako/test";
+import { makeDeployment } from "./helpers";
+
+describe("Deployment factory", () => {
+  test("sets replicas", () => {
+    const json = makeDeployment("my-app", 3)._render();
+    expect(json.spec.replicas).toBe(3);
+  });
+  test("sets name", () => {
+    const json = makeDeployment("my-app", 3)._render();
+    expect(json.metadata.name).toBe("my-app");
+  });
+});
 ```
 
-And use `husako add` interactively with OCI tag discovery.
-
-## Design Decisions
-
-- **Fields:** `reference` (full `oci://` URL) + `version` — chart name is derived from the
-  last path component of the reference (e.g. `oci://ghcr.io/org/postgresql` → `postgresql`).
-  No explicit `chart` field; users who need an override edit `husako.toml` directly.
-- **Tag discovery:** `list_tags()` added to `husako-helm/src/oci.rs` (auth + `GET /v2/{repo}/tags/list`).
-  Exposed as `pub` and called from `husako-core/src/version_check.rs`.
-- **Version format:** Tags stored as returned by registry (e.g. `"1.2.3"` or `"v1.2.3"`).
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `crates/husako-config/src/lib.rs` | Add `Oci { reference: String, version: String }` variant to `ChartSource` |
-| `crates/husako-config/src/edit.rs` | Add `Oci` arm in `chart_source_to_inline_table()` |
-| `crates/husako-helm/Cargo.toml` | Add `semver.workspace = true` |
-| `crates/husako-helm/src/oci.rs` | Add `pub fn list_tags()` and `pub(crate) fn chart_name_from_reference()` |
-| `crates/husako-helm/src/lib.rs` | Add `ChartSource::Oci` dispatch; derive chart name from reference |
-| `crates/husako-core/src/version_check.rs` | Add `discover_oci_tags()` and `discover_latest_oci()` |
-| `crates/husako-core/src/lib.rs` | Add `Oci` arms in `chart_info()`, outdated match (~L935), update match (~L995) |
-| `crates/husako-cli/src/main.rs` | Add `--reference` flag to `Add` command; add `"oci"` arm in `build_chart_target()` |
-| `crates/husako-cli/src/interactive.rs` | Add `"oci"` before `"git"` in source list; add `prompt_oci_chart()` |
-| `scripts/e2e.sh` | Add Scenario C: OCI chart source |
-| `.worktrees/docs-site/docs/guide/helm.md` | Add `### oci` section |
-| `.worktrees/docs-site/docs/guide/configuration.md` | Add `oci` to chart source table |
-| `CLAUDE.md` | Update "4 types" → "5 types", add `oci` to chart source list |
-
-## Implementation
-
-### Step 1 — `husako-config/src/lib.rs`
-
-Add after `Git` variant in `ChartSource`:
-```rust
-/// Fetch directly from an OCI registry.
-/// `postgresql = { source = "oci", reference = "oci://ghcr.io/org/postgresql", version = "1.2.3" }`
-#[serde(rename = "oci")]
-Oci {
-    reference: String,
-    version: String,
-},
-```
-
-Add unit test to `parse_charts_section` group:
-```rust
-#[test]
-fn parse_oci_chart_source() {
-    let toml = r#"[charts]
-postgresql = { source = "oci", reference = "oci://ghcr.io/org/postgresql", version = "1.2.3" }
-"#;
-    let config: HusakoConfig = toml::from_str(toml).unwrap();
-    assert!(matches!(
-        config.charts["postgresql"],
-        ChartSource::Oci { ref reference, ref version }
-        if reference == "oci://ghcr.io/org/postgresql" && version == "1.2.3"
-    ));
-}
-```
-
-### Step 2 — `husako-config/src/edit.rs`
-
-In `chart_source_to_inline_table()`, add arm:
-```rust
-ChartSource::Oci { reference, version } => {
-    t.insert("source", "oci".into());
-    t.insert("reference", reference.as_str().into());
-    t.insert("version", version.as_str().into());
-}
-```
-
-### Step 3 — `husako-helm/src/oci.rs`
-
-Add after `resolve()`:
-
-```rust
-/// Helper: extract chart name from OCI reference (last path component, before any tag suffix).
-/// `oci://ghcr.io/org/postgresql` → `"postgresql"`
-/// `oci://ghcr.io/org/postgresql:1.2.3` → `"postgresql"`
-pub(crate) fn chart_name_from_reference(reference: &str) -> &str {
-    let without_scheme = reference.strip_prefix("oci://").unwrap_or(reference);
-    let path_part = without_scheme.split('/').last().unwrap_or(without_scheme);
-    path_part.split(':').next().unwrap_or(path_part)
-}
-
-/// Fetch available tags from an OCI registry for the given reference.
-/// Uses the same anonymous bearer token auth flow as `resolve()`.
-/// Returns stable semver tags sorted descending, up to `limit` starting at `offset`.
-pub fn list_tags(
-    reference: &str,
-    limit: usize,
-    offset: usize,
-) -> Result<Vec<String>, HelmError> {
-    let (host, repo, _) = parse_oci_reference(reference)?;
-    let token = get_token(&host, &repo).ok();  // anonymous; ignore auth errors
-
-    let url = format!("https://{host}/v2/{repo}/tags/list?n=200");
-    let mut req = ureq::get(&url);
-    if let Some(token) = &token {
-        req = req.set("Authorization", &format!("Bearer {token}"));
-    }
-
-    let body: serde_json::Value = req.call()
-        .map_err(|e| HelmError::Http(e.to_string()))?
-        .into_json()
-        .map_err(|e| HelmError::Http(e.to_string()))?;
-
-    let mut tags: Vec<String> = body["tags"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|v| v.as_str().map(str::to_owned))
-        .filter(|tag| {
-            // Accept stable semver (with or without leading 'v')
-            let stripped = tag.strip_prefix('v').unwrap_or(tag);
-            semver::Version::parse(stripped)
-                .map(|v| v.pre.is_empty())
-                .unwrap_or(false)
-        })
-        .collect();
-
-    tags.sort_by(|a, b| {
-        let va = semver::Version::parse(a.strip_prefix('v').unwrap_or(a)).ok();
-        let vb = semver::Version::parse(b.strip_prefix('v').unwrap_or(b)).ok();
-        vb.cmp(&va)
-    });
-
-    Ok(tags.into_iter().skip(offset).take(limit).collect())
-}
-```
-
-Add unit tests:
-```rust
-#[test]
-fn chart_name_from_reference_basic() {
-    assert_eq!(chart_name_from_reference("oci://ghcr.io/org/postgresql"), "postgresql");
-}
-#[test]
-fn chart_name_from_reference_with_tag() {
-    assert_eq!(chart_name_from_reference("oci://ghcr.io/org/postgresql:1.2.3"), "postgresql");
-}
-```
-
-Note: `parse_oci_reference` and `get_token` are already in `oci.rs` — reuse directly.
-Use `reqwest::blocking::Client` (same as the rest of `oci.rs`).
-Add `semver.workspace = true` to `crates/husako-helm/Cargo.toml` (it's in workspace deps but not yet used in husako-helm).
-
-The `list_tags()` function uses the same `reqwest::blocking::Client` pattern as `resolve()`:
-```rust
-pub fn list_tags(reference: &str, limit: usize, offset: usize) -> Result<Vec<String>, HelmError> {
-    let (host, repo, _) = parse_oci_reference(reference)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| HelmError::Http(e.to_string()))?;
-
-    let token = get_token(&client, &host, &repo).ok();
-    let url = format!("https://{host}/v2/{repo}/tags/list?n=200");
-    let mut builder = client.get(&url);
-    if let Some(token) = &token {
-        builder = builder.bearer_auth(token);
-    }
-    let body: serde_json::Value = builder.send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| HelmError::Http(e.to_string()))?
-        .json()
-        .map_err(|e| HelmError::Http(e.to_string()))?;
-    // ... filter + sort semver tags ...
-}
-```
-(Exact signatures of `get_token` and `parse_oci_reference` must be verified against current oci.rs before implementation.)
-
-### Step 4 — `husako-helm/src/lib.rs`
-
-In `resolve()`, add `ChartSource::Oci` arm:
-```rust
-ChartSource::Oci { reference, version } => {
-    let chart = crate::oci::chart_name_from_reference(reference);
-    crate::oci::resolve(name, reference, chart, version, cache_dir)
-}
-```
-
-### Step 5 — `husako-core/src/version_check.rs`
-
-Add two functions:
-```rust
-/// Fetch up to `limit` available OCI tags for `reference`, starting at `offset`.
-pub fn discover_oci_tags(
-    reference: &str,
-    limit: usize,
-    offset: usize,
-) -> Result<Vec<String>, HusakoError> {
-    husako_helm::oci::list_tags(reference, limit, offset)
-        .map_err(|e| HusakoError::Helm(e.to_string()))
-}
-
-/// Return the latest stable OCI tag for `reference`, or None if unavailable.
-pub fn discover_latest_oci(reference: &str) -> Result<Option<String>, HusakoError> {
-    let tags = discover_oci_tags(reference, 1, 0)?;
-    Ok(tags.into_iter().next())
-}
-```
-
-### Step 6 — `husako-core/src/lib.rs`
-
-**`chart_info()` (~L743)** — add `Oci` arm:
-```rust
-husako_config::ChartSource::Oci { reference, version } => DependencyInfo {
-    name: name.to_string(),
-    source_type: "oci".to_string(),
-    identifier: reference.clone(),
-    current_version: Some(version.clone()),
-    latest_version: None,
-},
-```
-
-**Outdated check match (~L935)** — add `Oci` arm:
-```rust
-husako_config::ChartSource::Oci { reference, version } => {
-    match version_check::discover_latest_oci(reference) {
-        Ok(Some(latest)) => { /* compare and record */ }
-        Ok(None) => { /* no tags found, skip */ }
-        Err(e) => { /* record error */ }
-    }
-}
-```
-
-**Update match (~L995)** — add `Oci` arm:
-```rust
-husako_config::ChartSource::Oci { ref version, reference } => {
-    match version_check::discover_latest_oci(reference) {
-        Ok(Some(latest)) => { /* update if newer */ }
-        _ => {}
-    }
-}
-```
-
-### Step 7 — `husako-cli/src/interactive.rs`
-
-**Source list** — add `"oci"` before `"git"`:
-```rust
-.items(["artifacthub", "registry", "oci", "git", "file"])
-```
-
-**Dispatch** — shift git/file indices and add oci arm:
-```rust
-2 => prompt_oci_chart()?,
-3 => prompt_git_chart()?,   // was 2
-4 => prompt_file_chart()?,  // was 3
-```
-
-**New function `prompt_oci_chart()`:**
-```rust
-fn prompt_oci_chart() -> Result<AddTarget, String> {
-    let reference = text_input::run(
-        "OCI reference",
-        Some("oci://ghcr.io/org/chart-name"),
-        validate_oci_reference,
-    )?;
-
-    let default_name = husako_helm::oci::chart_name_from_reference(&reference).to_string();
-    let limit = 20;
-
-    let fetch = |offset: usize| {
-        husako_core::version_check::discover_oci_tags(&reference, limit, offset)
-            .map_err(|e| e.to_string())
-    };
-
-    let (name, version) = name_version_select::run(&default_name, limit, fetch)
-        .map_err(|e| e.to_string())?;
-
-    Ok(AddTarget::Chart {
-        name,
-        source: ChartSource::Oci { reference, version },
-    })
-}
-```
-
-**Validation helper** (add alongside existing validators):
-```rust
-fn validate_oci_reference(s: &str) -> Result<(), String> {
-    if s.starts_with("oci://") && s.len() > 6 {
-        Ok(())
-    } else {
-        Err("Must start with oci://".to_string())
-    }
-}
-```
-
-Note: `husako_helm::oci::chart_name_from_reference` needs to be accessible from CLI crate.
-Check `husako-cli/Cargo.toml` — if it depends on `husako-helm` already, use directly; otherwise
-route through `husako-core` or expose from `husako-config`.
-
-Actually `husako-cli` depends on `husako-core` and `husako-config`, not directly on `husako-helm`.
-So expose `chart_name_from_reference` as a helper in `husako-core` or just duplicate the logic
-inline in `prompt_oci_chart()` (it's a one-liner).
-
-**Simpler approach:** inline the derivation in `prompt_oci_chart()`:
-```rust
-let default_name = reference
-    .trim_end_matches('/')
-    .rsplit('/')
-    .next()
-    .unwrap_or("chart")
-    .split(':')
-    .next()
-    .unwrap_or("chart")
-    .to_string();
-```
-
-### Step 8 — `husako-cli/src/main.rs` (non-interactive flags)
-
-**Add `--reference` arg** to `Add` command (after `--package`):
-```rust
-/// OCI reference (e.g. oci://ghcr.io/org/chart-name)
-#[arg(long)]
-reference: Option<String>,
-```
-
-Update the `source` help text: `"Source type (release, cluster, git, file, registry, artifacthub, oci)"`.
-
-**Add `"oci"` arm in `build_chart_target()`**:
-```rust
-"oci" => {
-    let reference = reference.ok_or("--reference is required for oci source")?;
-    let version = version.ok_or("--version is required for oci source")?;
-    husako_config::ChartSource::Oci { reference, version }
-}
-```
-
-Pass `reference` through the existing call to `build_chart_target()` at the call site (~L585).
-
-### Step 9 — `scripts/e2e.sh`
-
-Add Scenario C after Scenario B. Use a fixed known version of a stable OCI chart:
 ```bash
-# ── Scenario C: OCI chart source ────────────────────────────────────────────
-run_scenario_c() {
-  local dir; dir=$(mktemp -d)
-  echo "── C: OCI chart source ──"
-  cd "$dir"
-  "$HUSAKO" new . --name test-oci
+husako test                      # discover *.test.ts + *.spec.ts under project root
+husako test helpers.test.ts      # explicit file(s)
+```
 
-  "$HUSAKO" -y add postgresql --chart --source oci \
-    --reference "oci://registry-1.docker.io/bitnamicharts/postgresql" \
-    --version "16.4.0"
+## New files
 
-  "$HUSAKO" generate
+### `crates/husako-sdk/src/js/husako_test.js`
 
-  assert_file ".husako/types/helm/postgresql.d.ts"
-  assert_file ".husako/types/helm/postgresql.js"
-  assert_dts_exports ".husako/types/helm/postgresql.d.ts" "PostgresqlValues"
+Jest-like test API as a plain ES module. Key design:
 
-  pass "Scenario C: OCI chart"
-  cd - > /dev/null
-  rm -rf "$dir"
+- `test(name, fn)` / `it(name, fn)` — register a test case (sync or async fn)
+- `describe(name, fn)` — synchronously groups tests; prefixes test names with `"suite > "`
+  by pushing/popping a `_suiteStack` array
+- `expect(value)` — returns an `Expect` instance; `expect(v).not.toBe(x)` via a negation flag
+
+`Expect` methods: `.toBe()`, `.toEqual()` (JSON.stringify comparison), `.toBeDefined()`,
+`.toBeNull()`, `.toBeUndefined()`, `.toBeTruthy()`, `.toBeFalsy()`,
+`.toBeGreaterThan/LessThan/OrEqual()`, `.toContain()`, `.toHaveProperty()`,
+`.toHaveLength()`, `.toMatch()`, `.toThrow()`
+
+Runner: `globalThis.__husako_run_all_tests` is set as an `async` function that iterates
+`_tests`, `await`s each `fn()`, catches errors, and returns `JSON.stringify(results)`.
+Rust calls this after module evaluation.
+
+Result JSON shape:
+```json
+[{ "name": "suite > test name", "passed": true, "error": null }, ...]
+```
+
+### `crates/husako-sdk/src/dts/husako_test.d.ts`
+
+TypeScript declarations for the `"husako/test"` module — `Expect` interface + function exports.
+Written to `.husako/types/husako/test.d.ts` during `husako generate` so IDEs pick it up.
+
+## Modified files
+
+### `crates/husako-sdk/src/lib.rs`
+
+Add two constants after the existing ones:
+```rust
+pub const HUSAKO_TEST_MODULE: &str = include_str!("js/husako_test.js");
+pub const HUSAKO_TEST_DTS: &str = include_str!("dts/husako_test.d.ts");
+```
+
+### `crates/husako-runtime-qjs/src/lib.rs`
+
+Add public types:
+```rust
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TestCaseResult { pub name: String, pub passed: bool, pub error: Option<String> }
+
+pub type ExecuteTestsOptions = ExecuteOptions;  // same fields, separate name for clarity
+```
+
+Add `execute_tests(js_source: &str, options: &ExecuteTestsOptions) -> Result<Vec<TestCaseResult>, RuntimeError>`:
+- Same runtime setup as `execute()` (timeout, heap limit, module resolver chain)
+- Additionally registers `"husako/test"` in both `BuiltinResolver` and `BuiltinLoader`
+- Does **NOT** register `__husako_build`, does **NOT** check build call count
+- All JS interaction happens inside a single `ctx.with()` closure (same pattern as `execute()` —
+  `promise.finish::<()>()` must be inside `ctx.with()`, and `__husako_run_all_tests()` is called
+  in the same closure immediately after):
+  ```rust
+  let json_str: String = ctx.with(|ctx| {
+      let promise = Module::evaluate(ctx.clone(), "main", js_source)
+          .map_err(|e| execution_error(&ctx, e))?;
+      promise.finish::<()>().map_err(|e| execution_error(&ctx, e))?;
+
+      // Module evaluated — now run the registered tests
+      let run_fn: Function = ctx.globals()
+          .get("__husako_run_all_tests")
+          .map_err(|_| RuntimeError::Execution(
+              "no tests found — did you import from 'husako/test'?".into()
+          ))?;
+      let promise: Value = run_fn.call(()).map_err(|e| execution_error(&ctx, e))?;
+      Promise::from_value(promise)
+          .map_err(|e| RuntimeError::Execution(e.to_string()))?
+          .finish::<String>()
+          .map_err(|e| execution_error(&ctx, e))
+  })?;
+  serde_json::from_str(&json_str)
+  ```
+
+Add unit tests: `execute_tests_all_pass`, `execute_tests_failure_captured`,
+`execute_tests_describe_prefixes_name`, `execute_tests_not_negation`,
+`execute_tests_no_build_call_required`, `execute_tests_async_test_function`
+
+### `crates/husako-core/src/lib.rs`
+
+Add public types:
+```rust
+pub struct TestOptions {
+    pub project_root: PathBuf,
+    pub files: Vec<PathBuf>,   // empty = discover
+    pub timeout_ms: Option<u64>,
+    pub max_heap_mb: Option<usize>,
+    pub allow_outside_root: bool,
+}
+
+pub struct TestResult {
+    pub file: PathBuf,          // relative to project_root
+    pub cases: Vec<husako_runtime_qjs::TestCaseResult>,
+}
+
+pub use husako_runtime_qjs::TestCaseResult;
+```
+
+Add `discover_test_files(root: &Path) -> Vec<PathBuf>`:
+- Recursive `std::fs::read_dir` (no new deps)
+- Collect `*.test.ts` + `*.spec.ts`
+- Skip dirs: `.husako`, `node_modules`, any dir starting with `.`
+
+Add `run_test_file(source, filename, options) -> Result<Vec<TestCaseResult>, HusakoError>`:
+- Compile TS→JS via `husako_compile_oxc::compile()`
+- Derive `generated_types_dir` as `options.project_root.join(".husako/types").canonicalize().ok()`
+- Load `plugin_modules` via the same `load_plugin_modules(&options.project_root)` helper that `render()` uses
+  (reads from `.husako/plugins/` — already installed by `husako generate`)
+- Build `ExecuteOptions` and call `husako_runtime_qjs::execute_tests()`
+
+Add `run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError>`:
+- Determine files: `options.files` if non-empty, else `discover_test_files()`
+- For each file, call `run_test_file()`; on compile/runtime error wrap as a synthetic
+  `TestCaseResult { passed: false, error: Some(e.to_string()) }` so the test summary stays accurate
+- Return `Vec<TestResult>`
+
+In **`generate()`**: after writing `husako/_base.d.ts`, also write:
+```
+.husako/types/husako/test.d.ts  ←  husako_sdk::HUSAKO_TEST_DTS
+```
+
+In **`write_tsconfig()`** (wherever `"husako/_base"` path is added): also add:
+```json
+"husako/test": [".husako/types/husako/test.d.ts"]
+```
+
+Add unit tests: `discover_test_files_finds_test_ts`,
+`discover_test_files_excludes_husako_dir`, `discover_test_files_excludes_node_modules`
+
+### `crates/husako-cli/src/main.rs`
+
+Add to `Commands` enum:
+```rust
+/// Run test files
+Test {
+    #[arg(value_name = "FILE")]
+    files: Vec<PathBuf>,
+    #[arg(long)]
+    timeout_ms: Option<u64>,
+    #[arg(long)]
+    max_heap_mb: Option<usize>,
 }
 ```
 
-### Step 10 — Docs
+Handler in `match cli.command`:
+1. Resolve explicit file paths relative to cwd
+2. Build `TestOptions`, call `husako_core::run_tests()`; on `Err` → `eprintln!` + `exit_code(&e)`
+3. If empty → `"No test files found"` + `ExitCode::SUCCESS`
+4. For each file: print filename header (`eprintln!`), then per case: `✔ name` / `✘ name` + `dim(error)`
+5. Print summary: `N passed, M failed`
+6. Test failures are handled directly: `ExitCode::from(1u8)` if `total_failed > 0`, else `SUCCESS`.
+   This bypasses `exit_code()` — no new `HusakoError` variant needed.
 
-**`docs/guide/helm.md`** — add `### oci` section after the `### registry` section:
+### `scripts/e2e.sh` — Scenario G: husako test
+
+Add `scenario_g()` after the existing scenario F. Uses a temp dir. Tests:
+
+1. **G1**: passing tests (all green) → exit 0
+   - Write `calc.ts` helper that exports an `add(a, b)` function using `_ResourceBuilder` pattern (or just plain TS arithmetic)
+   - Write `calc.test.ts` with `describe` + `test` + `expect().toBe()`, `expect().toEqual()`
+   - Run `husako test calc.test.ts` → assert exit 0, output contains "passed"
+
+2. **G2**: failing test → exit 1
+   - Write `fail.test.ts` with one deliberately failing assertion
+   - Run `husako test fail.test.ts` → assert exit 1, output contains "failed"
+
+3. **G3**: auto-discovery
+   - Drop `*.test.ts` in subdir, run `husako test` (no args) → assert both files found and run
+
+4. **G4**: plugin testing
+   - Use `husako.toml` with `[plugins] myplugin = { source = "path", path = "./myplugin" }`
+   - Write minimal `myplugin/plugin.toml` + `myplugin/index.js` exporting a helper
+   - Write `plugin.test.ts` that `import`s the helper by plugin name: `import { greet } from "myplugin"`
+   - Run `husako generate --skip-k8s` then `husako test plugin.test.ts` → assert pass
+
+Append `scenario_g` to the call list at the bottom of the script.
+
+Update `.claude/testing.md`:
+- Add `husako test` to the "verify side effects" table
+- Add `scenario_g` row to the E2E source kind coverage table
+- Document test file naming convention (`*.test.ts`, `*.spec.ts`)
+
+### `.worktrees/docs-site/docs/reference/cli.md`
+
+Add `## husako test` section (following the existing per-command H2 pattern):
+
 ```markdown
-### oci
+## husako test
 
-Fetches `values.schema.json` directly from an OCI registry using the
-OCI Distribution API. Use this when you have a full `oci://` reference to the chart:
+Run TypeScript test files using the built-in `"husako/test"` assertion module.
 
-```toml
-[charts]
-postgresql = { source = "oci", reference = "oci://registry-1.docker.io/bitnamicharts/postgresql", version = "16.4.0" }
-grafana    = { source = "oci", reference = "oci://ghcr.io/grafana/grafana", version = "8.8.2" }
+```
+husako test [FILE...] [options]
 ```
 
-The chart name for type generation is derived from the last path component of the
-reference. Public registries (Docker Hub, GHCR) work with anonymous access. Private
-registries requiring credentials are not yet supported.
+| Flag | Description |
+|------|-------------|
+| `--timeout-ms <ms>` | Execution timeout per file in milliseconds |
+| `--max-heap-mb <mb>` | Maximum heap memory per file in megabytes |
+
+With no FILE arguments, husako discovers all `*.test.ts` and `*.spec.ts` files under the
+project root (excluding `.husako/` and `node_modules/`).
+
+Test files import from `"husako/test"`:
+
+```typescript
+import { test, describe, expect } from "husako/test";
 ```
 
-**`docs/guide/configuration.md`** — add `oci` row to the chart sources table and `### oci` sub-section parallel to the existing `### registry`, `### artifacthub`, etc. sections.
+Exit code is 0 if all tests pass, 1 if any test fails.
 
-### Step 11 — `CLAUDE.md`
+See [Writing Tests](/guide/testing) for full examples and the assertion API reference.
 
-Update line ~189:
+---
 ```
-- **Chart dependencies**: `[charts]` declares Helm chart sources with 5 types: `registry`, `artifacthub`, `git`, `file`, `oci`
-```
+
+Also create `.worktrees/docs-site/docs/guide/testing.md` — new guide page covering:
+- When to write husako tests (unit-testing resource factory helpers)
+- `test()`, `describe()`, `expect()` API with examples
+- Full `Expect` method reference table
+- How to test with k8s builders (using `_render()`)
+- Plugin testing workflow (`husako.toml` path source)
+- Running tests (discovery vs explicit files)
+
+Update `.worktrees/docs-site/docs/.vitepress/config.ts` (or equivalent sidebar config):
+- Add `{ text: 'Testing', link: '/guide/testing' }` to the Guide sidebar section
+
+## Implementation order
+
+1. `husako_test.js` + `husako_test.d.ts` (new JS/DTS files)
+2. `husako-sdk/src/lib.rs` (two new constants)
+3. `husako-runtime-qjs/src/lib.rs` (`TestCaseResult`, `execute_tests()`, unit tests)
+4. `husako-core/src/lib.rs` (`TestOptions`, `TestResult`, `discover_test_files()`, `run_test_file()`, `run_tests()`, generate/tsconfig changes, unit tests)
+5. `husako-cli/src/main.rs` (`Test` command + handler)
+6. `scripts/e2e.sh` — Scenario G (4 substeps + append to call list)
+7. `.claude/testing.md` — document `husako test` patterns
+8. `.worktrees/docs-site/docs/reference/cli.md` — add `## husako test`
+9. `.worktrees/docs-site/docs/guide/testing.md` — new guide page
 
 ## Verification
 
 ```bash
-# Unit tests
-cargo test -p husako-config parse_oci_chart_source
-cargo test -p husako-helm chart_name_from_reference
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 
-# Clippy
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+# Smoke test
+mkdir /tmp/ht-smoke && cd /tmp/ht-smoke
+husako new . --template simple
+husako generate --skip-k8s
+cat > hello.test.ts << 'EOF'
+import { test, expect, describe } from "husako/test";
+describe("math", () => {
+  test("addition", () => { expect(1 + 1).toBe(2); });
+  test("failure", () => { expect(1).toBe(999); });
+});
+EOF
+husako test hello.test.ts
+# ✔ math > addition
+# ✘ math > failure
+#   Expected 1 to be 999
+# ✘ 1 passed, 1 failed  (exit 1)
 
-# Manual: husako add → oci → enter reference → pick version
+# E2E
 cargo build --bin husako
-echo '{}' > /tmp/test-husako.toml  # or use husako new in a temp dir
-./target/debug/husako add  # select "oci", enter oci://ghcr.io/grafana/grafana
-
-# Manual: husako generate with OCI source
-# husako.toml: [charts] grafana = { source = "oci", reference = "oci://...", version = "..." }
-bash scripts/e2e.sh  # if OCI chart added to e2e
+HUSAKO_BIN=./target/debug/husako bash scripts/e2e.sh
+# Scenario G should pass all 4 substeps
 ```
 
-## Branch
+## Scope exclusions (deferred)
 
-Create `feat/chart-source-oci` from `master`.
+- `beforeEach` / `afterEach` hooks
+- Per-test timeout
+- Watch mode (`husako test --watch`)
+- Coverage reporting
+- `husako/test` available in non-test render files (intentionally blocked)

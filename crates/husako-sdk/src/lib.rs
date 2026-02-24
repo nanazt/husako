@@ -1,8 +1,10 @@
 pub const HUSAKO_MODULE: &str = include_str!("js/husako.js");
 pub const HUSAKO_BASE: &str = include_str!("js/husako_base.js");
+pub const HUSAKO_TEST_MODULE: &str = include_str!("js/husako_test.js");
 
 pub const HUSAKO_DTS: &str = include_str!("dts/husako.d.ts");
 pub const HUSAKO_BASE_DTS: &str = include_str!("dts/husako_base.d.ts");
+pub const HUSAKO_TEST_DTS: &str = include_str!("dts/husako_test.d.ts");
 
 // Template files for `husako new`
 pub const TEMPLATE_GITIGNORE: &str = include_str!("templates/gitignore.txt");

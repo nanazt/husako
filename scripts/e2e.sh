@@ -700,6 +700,102 @@ TS
   )
 }
 
+# ── Scenario G: husako test ────────────────────────────────────────────────
+
+scenario_g() {
+  echo
+  echo "── G: husako test ──"
+  local tmpdir; tmpdir=$(mktemp -d)
+  (
+    trap 'rm -rf "$tmpdir"' EXIT
+    cd "$tmpdir"
+
+    # Minimal project — no k8s types needed for pure TS logic tests
+    init_project ""
+    "$HUSAKO" gen --skip-k8s
+
+    # ── G1: passing tests → exit 0
+    echo "  G1: passing tests"
+    cat > calc.ts << 'TS'
+export function add(a: number, b: number): number { return a + b; }
+TS
+    cat > calc.test.ts << 'TS'
+import { describe, test, expect } from "husako/test";
+import { add } from "./calc";
+describe("add", () => {
+  test("two plus two", () => { expect(add(2, 2)).toBe(4); });
+  test("toEqual", () => { expect({ x: 1 }).toEqual({ x: 1 }); });
+});
+TS
+    local test_out; test_out=$("$HUSAKO" test calc.test.ts 2>&1)
+    local test_exit=$?
+    if [ "$test_exit" -eq 0 ]; then
+      pass "G1: exit 0 on all-pass"
+    else
+      fail "G1: expected exit 0, got $test_exit"
+    fi
+    assert_contains "G1: output contains 'passed'" "passed" "$test_out"
+
+    # ── G2: failing test → exit 1
+    echo "  G2: failing test"
+    cat > fail.test.ts << 'TS'
+import { test, expect } from "husako/test";
+test("will fail", () => { expect(1).toBe(999); });
+TS
+    "$HUSAKO" test fail.test.ts 2>&1 || true
+    local fail_exit=$?
+    # Run again capturing exit code properly
+    set +e
+    "$HUSAKO" test fail.test.ts > /dev/null 2>&1
+    fail_exit=$?
+    set -e
+    if [ "$fail_exit" -eq 1 ]; then
+      pass "G2: exit 1 on failing test"
+    else
+      fail "G2: expected exit 1, got $fail_exit"
+    fi
+    local fail_out; fail_out=$("$HUSAKO" test fail.test.ts 2>&1 || true)
+    assert_contains "G2: output contains 'failed'" "failed" "$fail_out"
+
+    # ── G3: auto-discovery
+    echo "  G3: auto-discovery"
+    mkdir -p subdir
+    cat > subdir/extra.test.ts << 'TS'
+import { test, expect } from "husako/test";
+test("in subdir", () => { expect(true).toBeTruthy(); });
+TS
+    local disc_out; disc_out=$("$HUSAKO" test 2>&1)
+    assert_contains "G3: found calc.test.ts" "calc.test.ts" "$disc_out"
+    assert_contains "G3: found fail.test.ts" "fail.test.ts" "$disc_out"
+    assert_contains "G3: found extra.test.ts" "extra.test.ts" "$disc_out"
+
+    # ── G4: plugin testing
+    echo "  G4: plugin testing"
+    mkdir -p myplugin
+    printf '[plugin]\nname = "myplugin"\nversion = "0.1.0"\n\n[modules]\nmyplugin = "index.js"\n' > myplugin/plugin.toml
+    cat > myplugin/index.js << 'JS'
+export function greet(name) { return "Hello, " + name + "!"; }
+JS
+    # Write husako.toml with plugin
+    printf '[plugins]\nmyplugin = { source = "path", path = "./myplugin" }\n' > husako.toml
+    "$HUSAKO" gen --skip-k8s
+
+    cat > plugin.test.ts << 'TS'
+import { test, expect } from "husako/test";
+import { greet } from "myplugin";
+test("greet", () => { expect(greet("World")).toBe("Hello, World!"); });
+TS
+    local plugin_out; plugin_out=$("$HUSAKO" test plugin.test.ts 2>&1)
+    local plugin_exit=$?
+    if [ "$plugin_exit" -eq 0 ]; then
+      pass "G4: plugin test passes"
+    else
+      fail "G4: plugin test failed (exit $plugin_exit): $plugin_out"
+    fi
+    assert_contains "G4: output contains 'passed'" "passed" "$plugin_out"
+  )
+}
+
 # ── run all scenarios ──────────────────────────────────────────────────────
 
 scenario_a
@@ -708,6 +804,7 @@ scenario_c
 scenario_d
 scenario_e
 scenario_f
+scenario_g
 
 read -r PASS FAIL < "$_COUNT_FILE"
 echo
