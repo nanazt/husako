@@ -951,6 +951,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "husako-config",
+ "mockito",
  "reqwest",
  "serde",
  "serde_json",
