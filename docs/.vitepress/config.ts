@@ -67,6 +67,7 @@ export default defineConfig({
           { text: 'Configuration',     link: '/guide/configuration' },
           { text: 'Templates',         link: '/guide/templates' },
           { text: 'Helm Chart Values', link: '/guide/helm' },
+          { text: 'Testing',          link: '/guide/testing' },
           {
             text: 'Plugins',
             link: '/guide/plugins/',

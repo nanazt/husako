@@ -253,6 +253,37 @@ Lists installed plugins with name, version, source, and module count.
 
 ---
 
+## husako test
+
+Run TypeScript test files using the built-in `"husako/test"` assertion module.
+
+```
+husako test [FILE...] [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--timeout-ms <ms>` | Execution timeout per file in milliseconds |
+| `--max-heap-mb <mb>` | Maximum heap memory per file in megabytes |
+
+With no `FILE` arguments, husako discovers all `*.test.ts` and `*.spec.ts` files under the
+project root, excluding `.husako/` and `node_modules/`.
+
+Test files import from `"husako/test"`:
+
+```typescript
+import { test, describe, expect } from "husako/test";
+```
+
+Exit code is 0 if all tests pass, 1 if any test fails.
+
+Run `husako generate` (or `husako generate --skip-k8s`) before `husako test` to ensure
+`husako/test.d.ts` and `tsconfig.json` path mappings are written.
+
+See [Writing Tests](/guide/testing) for full examples and the assertion API reference.
+
+---
+
 ## Global flags
 
 | Flag | Description |

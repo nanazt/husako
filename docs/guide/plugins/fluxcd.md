@@ -155,7 +155,7 @@ hard-coded type checks. It works the same way for `Kustomization` linking to a `
 ```typescript
 import { HelmRelease } from "fluxcd";
 import { HelmRepository } from "fluxcd/source";
-import { Values } from "helm/ingress-nginx";
+import { IngressNginx } from "helm/ingress-nginx";
 import { metadata, build } from "husako";
 
 const helmRepo = HelmRepository("ingress-nginx-repo")
@@ -163,7 +163,7 @@ const helmRepo = HelmRepository("ingress-nginx-repo")
   .url("https://kubernetes.github.io/ingress-nginx")
   .interval("1h");
 
-const values = Values()
+const values = IngressNginx()
   .replicaCount(2)
   .controller({
     service: { type: "LoadBalancer" },

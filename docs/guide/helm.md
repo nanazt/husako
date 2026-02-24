@@ -58,12 +58,12 @@ This fetches `values.schema.json` for each chart in `[charts]` and writes typed 
 
 ## Using the generated types
 
-Import the `Values` builder from `"helm/<chart-name>"` and use it to construct typed values:
+Import the chart builder from `"helm/<chart-name>"` and use it to construct typed values. The exported name is the config key converted to PascalCase — `ingress-nginx` becomes `IngressNginx`:
 
 ```typescript
-import { Values } from "helm/ingress-nginx";
+import { IngressNginx } from "helm/ingress-nginx";
 
-const values = Values()
+const values = IngressNginx()
   .replicaCount(2)
   .controller({
     service: { type: "LoadBalancer" },
@@ -73,8 +73,8 @@ const values = Values()
   });
 ```
 
-The `Values` type reflects the chart's `values.schema.json`. Your editor shows autocomplete
-and catches typos. When you call `._toJSON()` on a `Values` builder, it resolves to a plain
+The builder type reflects the chart's `values.schema.json`. Your editor shows autocomplete
+and catches typos. When you call `._toJSON()` on the builder, it resolves to a plain
 object matching the chart's schema.
 
 To use this with a `HelmRelease`, pass the builder to `.values()`:
@@ -82,7 +82,7 @@ To use this with a `HelmRelease`, pass the builder to `.values()`:
 ```typescript
 import { HelmRelease } from "fluxcd";
 import { HelmRepository } from "fluxcd/source";
-import { Values } from "helm/ingress-nginx";
+import { IngressNginx } from "helm/ingress-nginx";
 
 const repo = HelmRepository("ingress-nginx-repo")
   .url("https://kubernetes.github.io/ingress-nginx");
@@ -92,7 +92,7 @@ const release = HelmRelease("ingress-nginx")
   .chart("ingress-nginx", "4.11.0")
   .sourceRef(repo)
   .values(
-    Values()
+    IngressNginx()
       .replicaCount(2)
       .controller({ service: { type: "LoadBalancer" } })
   );
@@ -114,6 +114,17 @@ extracts `values.schema.json` from the chart archive:
 ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingress-nginx", chart = "ingress-nginx", version = "4.11.0" }
 ```
 
+OCI registries are also supported. Use an `oci://` URL as the `repo` value:
+
+```toml
+[charts]
+postgresql = { source = "registry", repo = "oci://registry-1.docker.io/bitnamicharts/postgresql", chart = "postgresql", version = "16.4.0" }
+```
+
+husako fetches the chart tarball from the OCI registry using the OCI Distribution API and
+extracts `values.schema.json` from it. Anonymous access works for public registries such as
+Docker Hub and GHCR. Private registries requiring credentials are not yet supported.
+
 ### artifacthub
 
 Resolves the chart using the ArtifactHub API. Useful when you don't know the registry URL:
@@ -122,6 +133,12 @@ Resolves the chart using the ArtifactHub API. Useful when you don't know the reg
 [charts]
 cert-manager = { source = "artifacthub", repo = "cert-manager", chart = "cert-manager", version = "v1.16.2" }
 ```
+
+husako first checks the `values_schema` field in the ArtifactHub API response.
+If it is absent, husako automatically retries using the chart's registry URL from the
+ArtifactHub entry — both HTTP and OCI registries are supported.
+Charts on private OCI registries that require credentials cannot be fetched automatically —
+download `values.schema.json` manually and use `source = "file"` instead.
 
 ### git
 
