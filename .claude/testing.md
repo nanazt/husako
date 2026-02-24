@@ -42,8 +42,8 @@ This validates that the YAML is structurally correct using kubeconform's built-i
 (no cluster required). The CI workflow installs kubeconform automatically.
 
 **Custom resource outputs** (CRDs, FluxCD objects) and non-k8s YAML (Helm values) use
-`assert_valid_yaml` instead, which validates YAML syntax via PyYAML (pre-installed on
-ubuntu-latest). Locally: fails gracefully if PyYAML is absent.
+`assert_valid_yaml` instead, which validates YAML syntax via Ruby's built-in Psych parser
+(no extra dependencies — works on macOS and ubuntu-latest out of the box):
 
 ```bash
 assert_valid_yaml "HelmRelease" "$yaml"
@@ -129,7 +129,7 @@ assert_toml_field()   # check husako.toml has field=value on the same line
 assert_toml_key_absent()  # check dep name is not a top-level TOML key
 assert_dts_exports()  # check .d.ts file has expected export symbol
 assert_k8s_valid()    # kubeconform -strict validation (standard k8s only, no cluster needed)
-assert_valid_yaml()   # python3 yaml.safe_load_all validation (any YAML; PyYAML pre-installed on ubuntu-latest)
+assert_valid_yaml()   # ruby Psych YAML validation (any YAML; Ruby built-in, works on macOS and ubuntu-latest)
 ```
 
 ## Unit Test Patterns

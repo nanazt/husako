@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test suite for husako CLI.
 # Tests all CLI commands and all source kinds against real network sources.
-# Requires: kubectl (for k8s YAML validation), python3 with PyYAML
+# Requires: kubeconform (for k8s YAML validation), ruby (for generic YAML validation)
 # Usage:
 #   bash scripts/e2e.sh                                        # use target/release/husako
 #   HUSAKO_BIN=./target/debug/husako bash scripts/e2e.sh       # use debug binary
@@ -64,12 +64,13 @@ assert_no_dir() {
   fi
 }
 
-# Validate YAML is structurally valid using python3's yaml parser (PyYAML).
-# PyYAML is pre-installed on ubuntu-latest. For custom resources (CRDs, FluxCD)
-# where assert_k8s_valid is inappropriate, this is the right validator.
+# Validate YAML is structurally valid using Ruby's built-in Psych parser.
+# Ruby + Psych are pre-installed on macOS and ubuntu-latest with no extra deps.
+# Use for any YAML including CRD-based resources (FluxCD, cert-manager) and
+# Helm values where assert_k8s_valid (kubeconform) is not appropriate.
 assert_valid_yaml() {
   local desc="$1" yaml="$2"
-  if echo "$yaml" | python3 -c "import sys,yaml; list(yaml.safe_load_all(sys.stdin))" 2>/dev/null; then
+  if echo "$yaml" | ruby -e "require 'yaml'; YAML.parse_stream(STDIN.read)" 2>/dev/null; then
     pass "$desc is valid YAML"
   else
     fail "$desc is not valid YAML"
@@ -119,10 +120,10 @@ assert_dts_exports() {
   fi
 }
 
-# Check kubectl is available
-require_kubectl() {
-  if ! command -v kubectl > /dev/null 2>&1; then
-    echo "ERROR: kubectl not found. Install kubectl first."
+# Check kubeconform is available
+require_kubeconform() {
+  if ! command -v kubeconform > /dev/null 2>&1; then
+    echo "ERROR: kubeconform not found. Install it from https://github.com/yannh/kubeconform/releases"
     exit 1
   fi
 }
@@ -147,7 +148,7 @@ TS
 
 # ── prerequisite checks ────────────────────────────────────────────────────
 
-require_kubectl
+require_kubeconform
 
 if [ ! -f "$HUSAKO" ]; then
   echo "ERROR: husako binary not found at $HUSAKO"
@@ -408,7 +409,7 @@ TS
     assert_contains "render → kind: Example" "kind: Example" "$ex_yaml"
     assert_contains "render → group e2e.husako.io" "e2e.husako.io" "$ex_yaml"
     assert_contains "render → spec.message: hello" "hello" "$ex_yaml"
-    # Custom resources: validate YAML structure (kubectl dry-run requires server-side for CRDs)
+    # Custom resources: validate YAML structure (kubeconform skips unknown CRD schemas)
     assert_valid_yaml "render example" "$ex_yaml"
 
     # ── C2: resource git source (cert-manager CRDs)
