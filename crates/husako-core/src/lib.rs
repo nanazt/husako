@@ -597,8 +597,9 @@ pub struct CleanResult {
 }
 
 pub fn clean(options: &CleanOptions) -> Result<CleanResult, HusakoError> {
-    let cache_dir = options.project_root.join(".husako/cache");
-    let types_dir = options.project_root.join(".husako/types");
+    let husako_dir = options.project_root.join(".husako");
+    let cache_dir = husako_dir.join("cache");
+    let types_dir = husako_dir.join("types");
 
     let mut result = CleanResult {
         cache_removed: false,
@@ -607,18 +608,37 @@ pub fn clean(options: &CleanOptions) -> Result<CleanResult, HusakoError> {
         types_size: 0,
     };
 
-    if options.cache && cache_dir.exists() {
-        result.cache_size = dir_size(&cache_dir);
-        std::fs::remove_dir_all(&cache_dir)
-            .map_err(|e| HusakoError::GenerateIo(format!("remove {}: {e}", cache_dir.display())))?;
-        result.cache_removed = true;
-    }
+    if options.cache && options.types {
+        // Full clean (--all): remove the entire .husako/ directory so nothing is left behind.
+        if cache_dir.exists() {
+            result.cache_size = dir_size(&cache_dir);
+            result.cache_removed = true;
+        }
+        if types_dir.exists() {
+            result.types_size = dir_size(&types_dir);
+            result.types_removed = true;
+        }
+        if husako_dir.exists() {
+            std::fs::remove_dir_all(&husako_dir).map_err(|e| {
+                HusakoError::GenerateIo(format!("remove {}: {e}", husako_dir.display()))
+            })?;
+        }
+    } else {
+        if options.cache && cache_dir.exists() {
+            result.cache_size = dir_size(&cache_dir);
+            std::fs::remove_dir_all(&cache_dir).map_err(|e| {
+                HusakoError::GenerateIo(format!("remove {}: {e}", cache_dir.display()))
+            })?;
+            result.cache_removed = true;
+        }
 
-    if options.types && types_dir.exists() {
-        result.types_size = dir_size(&types_dir);
-        std::fs::remove_dir_all(&types_dir)
-            .map_err(|e| HusakoError::GenerateIo(format!("remove {}: {e}", types_dir.display())))?;
-        result.types_removed = true;
+        if options.types && types_dir.exists() {
+            result.types_size = dir_size(&types_dir);
+            std::fs::remove_dir_all(&types_dir).map_err(|e| {
+                HusakoError::GenerateIo(format!("remove {}: {e}", types_dir.display()))
+            })?;
+            result.types_removed = true;
+        }
     }
 
     Ok(result)
@@ -2273,6 +2293,8 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".husako/cache")).unwrap();
         std::fs::create_dir_all(root.join(".husako/types")).unwrap();
+        // Simulate leftover plugins directory (from a previous plugin remove)
+        std::fs::create_dir_all(root.join(".husako/plugins")).unwrap();
 
         let opts = CleanOptions {
             project_root: root.to_path_buf(),
@@ -2282,6 +2304,8 @@ mod tests {
         let result = clean(&opts).unwrap();
         assert!(result.cache_removed);
         assert!(result.types_removed);
+        // Entire .husako/ must be gone, not just the subdirs
+        assert!(!root.join(".husako").exists());
     }
 
     #[test]
