@@ -30,19 +30,19 @@ Every state-changing command must have its side effects explicitly verified:
 | `husako plugin remove` | husako.toml entry absent AND `.husako/plugins/<name>/` directory removed |
 | `husako plugin list` | Output contains / does not contain the plugin name |
 
-### Validate Kubernetes YAML with kubectl
+### Validate Kubernetes YAML with kubeconform
 
-Standard k8s resource outputs must pass `kubectl apply --dry-run=client -f -`:
+Standard k8s resource outputs must pass `kubeconform -strict -`:
 
 ```bash
 assert_k8s_valid "Deployment" "$yaml"
 ```
 
-This validates that the YAML is structurally correct and the `apiVersion`, `kind`,
-`metadata.name` fields are present with correct values.
+This validates that the YAML is structurally correct using kubeconform's built-in schemas
+(no cluster required). The CI workflow installs kubeconform automatically.
 
-**Custom resource outputs** (CRDs, FluxCD objects) cannot be validated with client-side dry-run
-because kubectl doesn't know their schema without the CRD installed. Use YAML validation instead:
+**Custom resource outputs** (CRDs, FluxCD objects) cannot be validated with kubeconform
+because it doesn't know their schema without explicit schema references. Use YAML validation instead:
 
 ```bash
 assert_valid_yaml "HelmRelease" "$yaml"
@@ -127,7 +127,7 @@ assert_no_dir()       # directory absence assertion
 assert_toml_field()   # check husako.toml has field=value on the same line
 assert_toml_key_absent()  # check dep name is not a top-level TOML key
 assert_dts_exports()  # check .d.ts file has expected export symbol
-assert_k8s_valid()    # kubectl --dry-run=client validation (standard k8s only)
+assert_k8s_valid()    # kubeconform -strict validation (standard k8s only, no cluster needed)
 assert_valid_yaml()   # python3 yaml.safe_load_all validation (any YAML)
 ```
 

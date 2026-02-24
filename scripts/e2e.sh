@@ -95,15 +95,15 @@ assert_toml_key_absent() {
   fi
 }
 
-# Validate k8s YAML via kubectl dry-run (client-side only, no cluster needed)
+# Validate k8s YAML via kubeconform (uses built-in schemas, no cluster needed)
 # Only use for standard k8s resources (Deployment, ConfigMap, etc.) —
 # not for CRD-based custom resources which require server-side validation.
 assert_k8s_valid() {
   local desc="$1" yaml="$2"
-  if echo "$yaml" | kubectl apply --dry-run=client -f - 2>&1 | grep -qv "^error"; then
-    pass "kubectl dry-run: $desc"
+  if echo "$yaml" | kubeconform -strict 2>&1; then
+    pass "k8s validate: $desc"
   else
-    fail "kubectl dry-run: $desc"
+    fail "k8s validate: $desc"
   fi
 }
 

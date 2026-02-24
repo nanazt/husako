@@ -41,10 +41,11 @@ const e2e = new Job("ubuntu-latest").steps((s) =>
       },
     })
     .add({
-      name: "Install kubectl",
+      name: "Install kubeconform",
       run: [
-        'curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"',
-        "chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl",
+        'VER=$(curl -sL "https://api.github.com/repos/yannh/kubeconform/releases/latest" | grep \'"tag_name"\' | cut -d\'"\' -f4)',
+        'curl -sL "https://github.com/yannh/kubeconform/releases/download/${VER}/kubeconform-linux-amd64.tar.gz" | tar xz',
+        "chmod +x kubeconform && sudo mv kubeconform /usr/local/bin/kubeconform",
       ].join("\n"),
     })
     .add({
