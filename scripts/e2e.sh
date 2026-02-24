@@ -15,13 +15,20 @@ if [ -n "${HUSAKO_BIN:-}" ]; then
 else
   HUSAKO="$PROJECT_ROOT/target/release/husako"
 fi
-PASS=0
-FAIL=0
+_COUNT_FILE=$(mktemp)
+echo "0 0" > "$_COUNT_FILE"
+trap 'rm -f "$_COUNT_FILE"' EXIT
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
-pass() { echo "  ✓ $1"; ((PASS++)) || true; }
-fail() { echo "  ✗ $1"; ((FAIL++)) || true; }
+pass() {
+  echo "  ✓ $1"
+  local p f; read -r p f < "$_COUNT_FILE"; echo "$((p+1)) $f" > "$_COUNT_FILE"
+}
+fail() {
+  echo "  ✗ $1"
+  local p f; read -r p f < "$_COUNT_FILE"; echo "$p $((f+1))" > "$_COUNT_FILE"
+}
 
 assert_contains() {
   local desc="$1" pattern="$2" content="$3"
@@ -561,11 +568,11 @@ scenario_e() {
     fi
     assert_toml_field "source" "path" "fluxcd plugin source=path"
 
-    # Side-effect: plugin list shows fluxcd (output on stderr)
+    "$HUSAKO" gen
+
+    # Side-effect: plugin list shows fluxcd (installed by gen)
     local plugin_list; plugin_list=$("$HUSAKO" plugin list 2>&1)
     assert_contains "plugin list shows fluxcd" "fluxcd" "$plugin_list"
-
-    "$HUSAKO" gen
 
     # Side-effect: plugin module files installed
     assert_file ".husako/plugins/fluxcd/modules/index.js"
@@ -699,6 +706,7 @@ scenario_d
 scenario_e
 scenario_f
 
+read -r PASS FAIL < "$_COUNT_FILE"
 echo
 echo "══════════════════════════════════════════════"
 printf "  Results: %d passed, %d failed\n" "$PASS" "$FAIL"
