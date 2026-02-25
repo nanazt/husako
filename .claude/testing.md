@@ -90,12 +90,14 @@ All source kinds are exercised end-to-end:
 | `git` | chart | B — prometheus-community/helm-charts |
 | `oci` | chart | F — bitnamicharts/postgresql OCI registry |
 | `husako test` | TS test runner | G — passing tests, failing tests, discovery, plugin testing |
+| `husako test` | SDK unit tests | G5 — husako/base/matchers |
 
 ### State isolation
 
 - Read-only tests (Scenario A) use the committed `test/e2e/` fixture directory
 - State-modifying tests (B, C, D, E, F) use `tempfile::TempDir` — auto-cleaned on drop
 - Scenario G tests use `e2e_tmpdir()` — creates `TempDir` inside `test/e2e/` to avoid macOS `/tmp` symlink mismatch
+- SDK unit tests (Scenario G5) use `crates/husako-sdk/tests/` directly — no tempdir, no network, no husako gen
 
 ### Stderr vs stdout
 
@@ -244,6 +246,9 @@ cargo test -p husako-core schema_source
 
 # E2E local only (Scenario G — no network)
 cargo test -p husako --test e2e_g
+
+# SDK unit tests only (Scenario G5, no network)
+cargo test -p husako --test e2e_g g5_sdk_unit_tests
 
 # E2E full (all scenarios A-G — requires network + kubeconform)
 cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
