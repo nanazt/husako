@@ -153,7 +153,7 @@ fn cpu_name() -> String {
     {
         if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo")
             && let Some(line) = content.lines().find(|l| l.starts_with("model name"))
-            && let Some(name) = line.splitn(2, ':').nth(1)
+            && let Some((_, name)) = line.split_once(':')
         {
             return name.trim().to_owned();
         }
