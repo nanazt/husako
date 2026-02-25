@@ -61,7 +61,7 @@ pub struct TestResult {
     pub cases: Vec<TestCaseResult>,
 }
 
-pub fn render(
+pub async fn render(
     source: &str,
     filename: &str,
     options: &RenderOptions,
@@ -112,7 +112,7 @@ pub fn render(
     }
 
     let execute_start = std::time::Instant::now();
-    let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
 
     if options.verbose {
         eprintln!("[execute] done ({}ms)", execute_start.elapsed().as_millis());
@@ -174,7 +174,7 @@ pub struct GenerateOptions {
     pub config: Option<husako_config::HusakoConfig>,
 }
 
-pub fn generate(
+pub async fn generate(
     options: &GenerateOptions,
     progress: &dyn ProgressReporter,
 ) -> Result<(), HusakoError> {
@@ -184,7 +184,7 @@ pub fn generate(
     let installed_plugins = if let Some(config) = &options.config
         && !config.plugins.is_empty()
     {
-        plugin::install_plugins(config, &options.project_root, progress)?
+        plugin::install_plugins(config, &options.project_root, progress).await?
     } else {
         Vec::new()
     };
@@ -234,7 +234,7 @@ pub fn generate(
                 cache_dir: options.project_root.join(".husako/cache"),
                 offline: openapi_opts.offline,
             })?;
-            let result = client.fetch_all_specs()?;
+            let result = client.fetch_all_specs().await?;
             task.finish_ok("Fetched OpenAPI specs");
             Some(result)
         } else if let Some(config) = &merged_config
@@ -242,12 +242,10 @@ pub fn generate(
         {
             // Config-driven mode (includes merged plugin presets)
             let cache_dir = options.project_root.join(".husako/cache");
-            Some(schema_source::resolve_all(
-                config,
-                &options.project_root,
-                &cache_dir,
-                progress,
-            )?)
+            Some(
+                schema_source::resolve_all(config, &options.project_root, &cache_dir, progress)
+                    .await?,
+            )
         } else {
             None
         };
@@ -261,6 +259,8 @@ pub fn generate(
                 write_file(&types_dir.join(rel_path), content)?;
             }
             task.finish_ok("Generated k8s types");
+            // Drop the large generated-file map off the async executor.
+            drop_in_background(result);
         }
     }
 
@@ -270,7 +270,7 @@ pub fn generate(
     {
         let cache_dir = options.project_root.join(".husako/cache");
         let chart_schemas =
-            husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir)?;
+            husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir).await?;
 
         for (chart_name, schema) in &chart_schemas {
             let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
@@ -279,6 +279,8 @@ pub fn generate(
             write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
             task.finish_ok(&format!("{chart_name}: chart types generated"));
         }
+        // Drop the large schema map off the async executor.
+        drop_in_background(chart_schemas);
     }
 
     // 6. Write/update tsconfig.json (includes plugin module paths)
@@ -286,6 +288,11 @@ pub fn generate(
     write_tsconfig(&options.project_root, merged_config.as_ref(), &plugin_paths)?;
 
     Ok(())
+}
+
+/// Drop a large value on a blocking thread to avoid holding the async executor.
+fn drop_in_background<T: Send + 'static>(value: T) {
+    drop(tokio::task::spawn_blocking(move || drop(value)));
 }
 
 fn write_file(path: &std::path::Path, content: &str) -> Result<(), HusakoError> {
@@ -895,7 +902,7 @@ pub struct OutdatedEntry {
     pub up_to_date: bool,
 }
 
-pub fn check_outdated(
+pub async fn check_outdated(
     project_root: &Path,
     progress: &dyn ProgressReporter,
 ) -> Result<Vec<OutdatedEntry>, HusakoError> {
@@ -910,7 +917,7 @@ pub fn check_outdated(
         match source {
             husako_config::SchemaSource::Release { version } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_release() {
+                match version_check::discover_latest_release().await {
                     Ok(latest) => {
                         let up_to_date = version_check::versions_match(version, &latest);
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -988,7 +995,7 @@ pub fn check_outdated(
                 version,
             } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_registry(repo, chart) {
+                match version_check::discover_latest_registry(repo, chart).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1016,7 +1023,7 @@ pub fn check_outdated(
             }
             husako_config::ChartSource::ArtifactHub { package, version } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_artifacthub(package) {
+                match version_check::discover_latest_artifacthub(package).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1075,7 +1082,7 @@ pub fn check_outdated(
             }
             husako_config::ChartSource::Oci { reference, version } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_oci(reference) {
+                match version_check::discover_latest_oci(reference).await {
                     Ok(Some(latest)) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1138,11 +1145,11 @@ pub struct UpdateResult {
     pub failed: Vec<(String, String)>,
 }
 
-pub fn update_dependencies(
+pub async fn update_dependencies(
     options: &UpdateOptions,
     progress: &dyn ProgressReporter,
 ) -> Result<UpdateResult, HusakoError> {
-    let outdated = check_outdated(&options.project_root, progress)?;
+    let outdated = check_outdated(&options.project_root, progress).await?;
 
     let mut result = UpdateResult {
         updated: Vec::new(),
@@ -1231,7 +1238,7 @@ pub fn update_dependencies(
             skip_k8s: false,
             config,
         };
-        match generate(&gen_options, progress) {
+        match generate(&gen_options, progress).await {
             Ok(()) => task.finish_ok("Types regenerated"),
             Err(e) => task.finish_err(&format!("Type generation failed: {e}")),
         }
@@ -1586,7 +1593,7 @@ pub struct ValidateResult {
     pub validation_errors: Vec<String>,
 }
 
-pub fn validate_file(
+pub async fn validate_file(
     source: &str,
     filename: &str,
     options: &RenderOptions,
@@ -1615,7 +1622,7 @@ pub fn validate_file(
         plugin_modules,
     };
 
-    let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
 
     let resource_count = if let serde_json::Value::Array(arr) = &value {
         arr.len()
@@ -1786,7 +1793,7 @@ fn collect_test_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn run_test_file(
+async fn run_test_file(
     source: &str,
     filename: &str,
     options: &TestOptions,
@@ -1815,10 +1822,10 @@ fn run_test_file(
         plugin_modules,
     };
 
-    Ok(husako_runtime_qjs::execute_tests(&js, &exec_options)?)
+    Ok(husako_runtime_qjs::execute_tests(&js, &exec_options).await?)
 }
 
-pub fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> {
+pub async fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> {
     let files = if options.files.is_empty() {
         discover_test_files(&options.project_root)
     } else {
@@ -1836,7 +1843,7 @@ pub fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> 
         let cases = match std::fs::read_to_string(abs_path) {
             Ok(source) => {
                 let filename = abs_path.to_string_lossy();
-                match run_test_file(&source, &filename, options) {
+                match run_test_file(&source, &filename, options).await {
                     Ok(cases) => cases,
                     Err(e) => vec![TestCaseResult {
                         name: "<file error>".to_string(),
@@ -1888,29 +1895,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn end_to_end_render() {
+    #[tokio::test]
+    async fn end_to_end_render() {
         let ts = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
-        let yaml = render(ts, "test.ts", &test_options()).unwrap();
+        let yaml = render(ts, "test.ts", &test_options()).await.unwrap();
         assert!(yaml.contains("apiVersion: v1"));
         assert!(yaml.contains("kind: Namespace"));
         assert!(yaml.contains("name: test"));
     }
 
-    #[test]
-    fn compile_error_propagates() {
+    #[tokio::test]
+    async fn compile_error_propagates() {
         let ts = "const = ;";
-        let err = render(ts, "bad.ts", &test_options()).unwrap_err();
+        let err = render(ts, "bad.ts", &test_options()).await.unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
-    #[test]
-    fn missing_build_propagates() {
+    #[tokio::test]
+    async fn missing_build_propagates() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = render(ts, "test.ts", &test_options()).unwrap_err();
+        let err = render(ts, "test.ts", &test_options()).await.unwrap_err();
         assert!(matches!(
             err,
             HusakoError::Runtime(husako_runtime_qjs::RuntimeError::BuildNotCalled)
@@ -1928,7 +1935,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         // Check static .d.ts files exist
         assert!(root.join(".husako/types/husako.d.ts").exists());
@@ -1972,7 +1982,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
@@ -2177,7 +2190,10 @@ mod tests {
             skip_k8s: true,
             config: Some(config),
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         // Check chart type files exist
         assert!(root.join(".husako/types/helm/my-chart.d.ts").exists());
@@ -2212,7 +2228,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         // No helm path in tsconfig when no charts
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
@@ -2311,7 +2330,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
@@ -2691,7 +2713,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         let report = debug_project(tmp.path()).unwrap();
         assert_eq!(report.config_ok, Some(true));
@@ -2709,30 +2734,32 @@ mod tests {
         assert!(!report.types_exist);
     }
 
-    #[test]
-    fn validate_valid_ts() {
+    #[tokio::test]
+    async fn validate_valid_ts() {
         let ts = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let options = test_options();
-        let result = validate_file(ts, "test.ts", &options).unwrap();
+        let result = validate_file(ts, "test.ts", &options).await.unwrap();
         assert_eq!(result.resource_count, 1);
         assert!(result.validation_errors.is_empty());
     }
 
-    #[test]
-    fn validate_compile_error() {
+    #[tokio::test]
+    async fn validate_compile_error() {
         let ts = "const = ;";
         let options = test_options();
-        let err = validate_file(ts, "bad.ts", &options).unwrap_err();
+        let err = validate_file(ts, "bad.ts", &options).await.unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
-    #[test]
-    fn validate_runtime_error() {
+    #[tokio::test]
+    async fn validate_runtime_error() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = validate_file(ts, "test.ts", &test_options()).unwrap_err();
+        let err = validate_file(ts, "test.ts", &test_options())
+            .await
+            .unwrap_err();
         assert!(matches!(err, HusakoError::Runtime(_)));
     }
 
@@ -2842,7 +2869,10 @@ mod tests {
             skip_k8s: true,
             config: None,
         };
-        generate(&opts, &progress::SilentProgress).unwrap();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(generate(&opts, &progress::SilentProgress))
+            .unwrap();
 
         assert!(root.join(".husako/types/husako/test.d.ts").exists());
 

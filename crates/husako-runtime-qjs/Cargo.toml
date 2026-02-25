@@ -10,6 +10,7 @@ repository.workspace = true
 husako-compile-oxc = { path = "../husako-compile-oxc", version = "0" }
 husako-sdk = { path = "../husako-sdk", version = "0" }
 rquickjs.workspace = true
+tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

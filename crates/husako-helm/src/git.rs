@@ -9,7 +9,7 @@ use crate::HelmError;
 /// 2. Shallow-clone the repo at the specified tag
 /// 3. Read `values.schema.json` from the specified path within the repo
 /// 4. Cache and return
-pub fn resolve(
+pub async fn resolve(
     name: &str,
     repo: &str,
     tag: &str,
@@ -35,12 +35,13 @@ pub fn resolve(
     let temp_dir = tempfile::tempdir()
         .map_err(|e| HelmError::Io(format!("chart '{name}': create temp dir: {e}")))?;
 
-    let output = std::process::Command::new("git")
+    let output = tokio::process::Command::new("git")
         .args(["clone", "--depth", "1", "--branch", tag, repo])
         .arg(temp_dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .output()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': git clone failed: {e}")))?;
 
     if !output.status.success() {
@@ -85,8 +86,8 @@ pub fn resolve(
 mod tests {
     use super::*;
 
-    #[test]
-    fn cache_hit_returns_cached_schema() {
+    #[tokio::test]
+    async fn cache_hit_returns_cached_schema() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
         let cache_key = crate::cache_hash(
@@ -107,13 +108,14 @@ mod tests {
             "charts/my-chart/values.schema.json",
             cache_dir,
         )
+        .await
         .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
     }
 
-    #[test]
-    fn cache_invalid_json_returns_error() {
+    #[tokio::test]
+    async fn cache_invalid_json_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
         let cache_key = crate::cache_hash(
@@ -130,6 +132,7 @@ mod tests {
             "charts/my-chart/values.schema.json",
             cache_dir,
         )
+        .await
         .unwrap_err();
         assert!(err.to_string().contains("parse cached schema"));
     }

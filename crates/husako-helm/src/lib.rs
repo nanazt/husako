@@ -29,7 +29,7 @@ pub(crate) fn cache_hash(s: &str) -> String {
 }
 
 /// Resolve a single chart source to its `values.schema.json` content.
-pub fn resolve(
+pub async fn resolve(
     name: &str,
     source: &ChartSource,
     project_root: &Path,
@@ -41,31 +41,50 @@ pub fn resolve(
             repo,
             chart,
             version,
-        } => registry::resolve(name, repo, chart, version, cache_dir),
+        } => registry::resolve(name, repo, chart, version, cache_dir).await,
         ChartSource::ArtifactHub { package, version } => {
-            artifacthub::resolve(name, package, version, cache_dir)
+            artifacthub::resolve(name, package, version, cache_dir).await
         }
-        ChartSource::Git { repo, tag, path } => git::resolve(name, repo, tag, path, cache_dir),
+        ChartSource::Git { repo, tag, path } => {
+            git::resolve(name, repo, tag, path, cache_dir).await
+        }
         ChartSource::Oci { reference, version } => {
             let chart = crate::oci::chart_name_from_reference(reference);
-            crate::oci::resolve(name, reference, chart, version, cache_dir)
+            crate::oci::resolve(name, reference, chart, version, cache_dir).await
         }
     }
 }
 
 /// Resolve all chart sources from config.
 ///
-/// Returns `chart_name → JSON Schema value`.
-pub fn resolve_all(
+/// Returns `chart_name → JSON Schema value`. Tasks run concurrently via `JoinSet`.
+pub async fn resolve_all(
     charts: &HashMap<String, ChartSource>,
     project_root: &Path,
     cache_dir: &Path,
 ) -> Result<HashMap<String, serde_json::Value>, HelmError> {
-    let mut result = HashMap::new();
-    for (name, source) in charts {
-        let schema = resolve(name, source, project_root, cache_dir)?;
-        result.insert(name.clone(), schema);
+    if charts.is_empty() {
+        return Ok(HashMap::new());
     }
+
+    let mut set = tokio::task::JoinSet::new();
+    for (name, source) in charts {
+        let name = name.clone();
+        let source = source.clone();
+        let project_root = project_root.to_path_buf();
+        let cache_dir = cache_dir.to_path_buf();
+        set.spawn(async move {
+            let schema = resolve(&name, &source, &project_root, &cache_dir).await?;
+            Ok::<_, HelmError>((name, schema))
+        });
+    }
+
+    let mut result = HashMap::new();
+    while let Some(res) = set.join_next().await {
+        let (name, schema) = res.map_err(|e| HelmError::Io(format!("task panicked: {e}")))??;
+        result.insert(name, schema);
+    }
+
     Ok(result)
 }
 
@@ -88,8 +107,8 @@ mod tests {
         assert_ne!(h1, h2);
     }
 
-    #[test]
-    fn resolve_oci_uses_chart_name_from_reference() {
+    #[tokio::test]
+    async fn resolve_oci_uses_chart_name_from_reference() {
         // Verify the dispatch builds cache path using the last path component as chart name.
         // We use the cache-hit path to avoid network access.
         let tmp = tempfile::tempdir().unwrap();
@@ -111,20 +130,24 @@ mod tests {
             reference: reference.to_string(),
             version: "16.4.0".to_string(),
         };
-        let result = resolve("test", &source, tmp.path(), tmp.path()).unwrap();
+        let result = resolve("test", &source, tmp.path(), tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
     }
 
-    #[test]
-    fn resolve_all_empty() {
+    #[tokio::test]
+    async fn resolve_all_empty() {
         let charts = HashMap::new();
         let tmp = tempfile::tempdir().unwrap();
-        let result = resolve_all(&charts, tmp.path(), &tmp.path().join("cache")).unwrap();
+        let result = resolve_all(&charts, tmp.path(), &tmp.path().join("cache"))
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn resolve_all_file_source() {
+    #[tokio::test]
+    async fn resolve_all_file_source() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("values.schema.json"),
@@ -140,7 +163,9 @@ mod tests {
             },
         );
 
-        let result = resolve_all(&charts, tmp.path(), &tmp.path().join("cache")).unwrap();
+        let result = resolve_all(&charts, tmp.path(), &tmp.path().join("cache"))
+            .await
+            .unwrap();
         assert_eq!(result.len(), 1);
         assert!(result.contains_key("my-chart"));
     }

@@ -167,8 +167,12 @@ fn prompt_oci_chart() -> Result<AddTarget, String> {
     let reference_clone = reference.clone();
     let nv =
         crate::name_version_select::run(&default_name, is_valid_name, move |limit, offset| {
-            husako_core::version_check::discover_oci_tags(&reference_clone, limit, offset)
-                .map_err(|e| e.to_string())
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    husako_core::version_check::discover_oci_tags(&reference_clone, limit, offset),
+                )
+            })
+            .map_err(|e| e.to_string())
         })?
         .ok_or_else(|| "cancelled".to_string())?;
 
@@ -195,8 +199,14 @@ fn prompt_registry_chart() -> Result<AddTarget, String> {
         .map_err(|e| e.to_string())?;
 
     let result = crate::name_version_select::run(&chart, is_valid_name, |limit, offset| {
-        husako_core::version_check::discover_registry_versions(&repo, &chart, limit, offset)
-            .map_err(|e| e.to_string())
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                husako_core::version_check::discover_registry_versions(
+                    &repo, &chart, limit, offset,
+                ),
+            )
+        })
+        .map_err(|e| e.to_string())
     })?
     .ok_or_else(|| "cancelled".to_string())?;
 
@@ -231,7 +241,10 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
         .map_err(|e| e.to_string())?;
 
     eprintln!("{}", crate::style::dim("Searching ArtifactHub..."));
-    let result = match husako_core::version_check::search_artifacthub(&query, 0) {
+    let result = match tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(husako_core::version_check::search_artifacthub(&query, 0))
+    }) {
         Ok(r) => r,
         Err(e) => {
             eprintln!(
@@ -263,8 +276,12 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
         &mut has_more,
         || {
             let offset = next_offset.get();
-            let result = husako_core::version_check::search_artifacthub(&query, offset)
-                .map_err(|e| e.to_string())?;
+            let result = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(
+                    husako_core::version_check::search_artifacthub(&query, offset),
+                )
+            })
+            .map_err(|e| e.to_string())?;
             next_offset.set(offset + husako_core::version_check::ARTIFACTHUB_PAGE_SIZE);
             let new_items = format_packages(&result.packages);
             packages.borrow_mut().extend(result.packages);
@@ -281,8 +298,16 @@ fn prompt_artifacthub_chart() -> Result<AddTarget, String> {
     let package_id = format!("{}/{}", pkg.repository.name, pkg.name);
 
     let result = crate::name_version_select::run(&pkg.name, is_valid_name, |limit, offset| {
-        husako_core::version_check::discover_artifacthub_versions(&package_id, limit, offset)
-            .map_err(|e| e.to_string())
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                husako_core::version_check::discover_artifacthub_versions(
+                    &package_id,
+                    limit,
+                    offset,
+                ),
+            )
+        })
+        .map_err(|e| e.to_string())
     })?
     .ok_or_else(|| "cancelled".to_string())?;
 
@@ -323,8 +348,12 @@ fn prompt_artifacthub_manual() -> Result<AddTarget, String> {
 
     let default_name = package.rsplit('/').next().unwrap_or(&package);
     let result = crate::name_version_select::run(default_name, is_valid_name, |limit, offset| {
-        husako_core::version_check::discover_artifacthub_versions(&package, limit, offset)
-            .map_err(|e| e.to_string())
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(
+                husako_core::version_check::discover_artifacthub_versions(&package, limit, offset),
+            )
+        })
+        .map_err(|e| e.to_string())
     })?
     .ok_or_else(|| "cancelled".to_string())?;
 
@@ -395,7 +424,13 @@ fn prompt_release_version() -> Result<String, String> {
     prompt_version_select(
         "Fetching Kubernetes versions...",
         "Kubernetes version (e.g. 1.35)",
-        || husako_core::version_check::discover_recent_releases(5, 0).map_err(|e| e.to_string()),
+        || {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(husako_core::version_check::discover_recent_releases(5, 0))
+            })
+            .map_err(|e| e.to_string())
+        },
     )
 }
 

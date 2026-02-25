@@ -16,8 +16,7 @@ jobs:
         path: test/e2e/.husako/cache
     - name: Install kubeconform
       run: |-
-        VER=$(curl -sL "https://api.github.com/repos/yannh/kubeconform/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
-        curl -sL "https://github.com/yannh/kubeconform/releases/download/${VER}/kubeconform-linux-amd64.tar.gz" | tar xz
+        curl -sL "https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz" | tar xz
         chmod +x kubeconform && sudo mv kubeconform /usr/local/bin/kubeconform
     - name: E2E tests
       run: cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored

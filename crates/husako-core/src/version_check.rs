@@ -42,19 +42,19 @@ pub struct ArtifactHubSearchResult {
 pub const ARTIFACTHUB_PAGE_SIZE: usize = 20;
 
 /// Search ArtifactHub for Helm charts matching the query.
-pub fn search_artifacthub(
+pub async fn search_artifacthub(
     query: &str,
     offset: usize,
 ) -> Result<ArtifactHubSearchResult, HusakoError> {
-    search_artifacthub_from(query, offset, ARTIFACTHUB_BASE)
+    search_artifacthub_from(query, offset, ARTIFACTHUB_BASE).await
 }
 
-fn search_artifacthub_from(
+async fn search_artifacthub_from(
     query: &str,
     offset: usize,
     base_url: &str,
 ) -> Result<ArtifactHubSearchResult, HusakoError> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -69,10 +69,12 @@ fn search_artifacthub_from(
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("ArtifactHub search: {e}")))?;
 
     let mut packages: Vec<ArtifactHubPackage> = resp
         .json::<serde_json::Value>()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub search: {e}")))?
         .get("packages")
         .cloned()
@@ -91,16 +93,19 @@ fn search_artifacthub_from(
 }
 
 /// Discover the N most recent stable Kubernetes release versions (major.minor).
-pub fn discover_recent_releases(limit: usize, offset: usize) -> Result<Vec<String>, HusakoError> {
-    discover_recent_releases_from(limit, offset, GITHUB_API_BASE)
+pub async fn discover_recent_releases(
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<String>, HusakoError> {
+    discover_recent_releases_from(limit, offset, GITHUB_API_BASE).await
 }
 
-fn discover_recent_releases_from(
+async fn discover_recent_releases_from(
     limit: usize,
     offset: usize,
     base_url: &str,
 ) -> Result<Vec<String>, HusakoError> {
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
@@ -110,10 +115,12 @@ fn discover_recent_releases_from(
             "{base_url}/repos/kubernetes/kubernetes/tags?per_page=100"
         ))
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("GitHub API: {e}")))?;
 
     let tags: Vec<serde_json::Value> = resp
         .json()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse tags: {e}")))?;
 
     let mut versions: Vec<semver::Version> = Vec::new();
@@ -146,14 +153,14 @@ fn discover_recent_releases_from(
 }
 
 /// Discover available versions for a chart from a Helm registry.
-pub fn discover_registry_versions(
+pub async fn discover_registry_versions(
     repo: &str,
     chart: &str,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
     let url = format!("{}/index.yaml", repo.trim_end_matches('/'));
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
@@ -161,10 +168,12 @@ pub fn discover_registry_versions(
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("fetch registry index: {e}")))?;
 
     let text = resp
         .text()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("read registry index: {e}")))?;
 
     let index: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
@@ -201,12 +210,12 @@ pub fn discover_registry_versions(
 }
 
 /// Discover the latest stable Kubernetes release version from GitHub API.
-pub fn discover_latest_release() -> Result<String, HusakoError> {
-    discover_latest_release_from(GITHUB_API_BASE)
+pub async fn discover_latest_release() -> Result<String, HusakoError> {
+    discover_latest_release_from(GITHUB_API_BASE).await
 }
 
-fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
-    let client = reqwest::blocking::Client::builder()
+async fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
@@ -216,10 +225,12 @@ fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
             "{base_url}/repos/kubernetes/kubernetes/tags?per_page=100"
         ))
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("GitHub API: {e}")))?;
 
     let tags: Vec<serde_json::Value> = resp
         .json()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse tags: {e}")))?;
 
     let mut best: Option<semver::Version> = None;
@@ -247,9 +258,9 @@ fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
 }
 
 /// Discover the latest version from a Helm chart registry's index.yaml.
-pub fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, HusakoError> {
+pub async fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, HusakoError> {
     let url = format!("{}/index.yaml", repo.trim_end_matches('/'));
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
@@ -257,10 +268,12 @@ pub fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, Husak
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("fetch registry index: {e}")))?;
 
     let text = resp
         .text()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("read registry index: {e}")))?;
 
     let index: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
@@ -293,16 +306,19 @@ pub fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, Husak
 }
 
 /// Discover the latest version from ArtifactHub API.
-pub fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError> {
-    discover_latest_artifacthub_from(package, ARTIFACTHUB_BASE)
+pub async fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError> {
+    discover_latest_artifacthub_from(package, ARTIFACTHUB_BASE).await
 }
 
-fn discover_latest_artifacthub_from(package: &str, base_url: &str) -> Result<String, HusakoError> {
+async fn discover_latest_artifacthub_from(
+    package: &str,
+    base_url: &str,
+) -> Result<String, HusakoError> {
     let url = format!(
         "{base_url}/api/v1/packages/helm/{}",
         package.trim_start_matches('/')
     );
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .build()
         .map_err(|e| HusakoError::GenerateIo(format!("HTTP client: {e}")))?;
@@ -310,10 +326,12 @@ fn discover_latest_artifacthub_from(package: &str, base_url: &str) -> Result<Str
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("ArtifactHub API: {e}")))?;
 
     let data: serde_json::Value = resp
         .json()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub response: {e}")))?;
 
     data["version"]
@@ -328,15 +346,15 @@ fn discover_latest_artifacthub_from(package: &str, base_url: &str) -> Result<Str
 
 /// Discover available versions for a package from ArtifactHub API.
 /// Returns up to `limit` stable versions, sorted newest first.
-pub fn discover_artifacthub_versions(
+pub async fn discover_artifacthub_versions(
     package: &str,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
-    discover_artifacthub_versions_from(package, limit, offset, ARTIFACTHUB_BASE)
+    discover_artifacthub_versions_from(package, limit, offset, ARTIFACTHUB_BASE).await
 }
 
-fn discover_artifacthub_versions_from(
+async fn discover_artifacthub_versions_from(
     package: &str,
     limit: usize,
     offset: usize,
@@ -346,7 +364,7 @@ fn discover_artifacthub_versions_from(
         "{base_url}/api/v1/packages/helm/{}",
         package.trim_start_matches('/')
     );
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("husako")
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -355,10 +373,12 @@ fn discover_artifacthub_versions_from(
     let resp = client
         .get(&url)
         .send()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("ArtifactHub API: {e}")))?;
 
     let data: serde_json::Value = resp
         .json()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub response: {e}")))?;
 
     let versions = parse_artifacthub_versions(&data, limit, offset);
@@ -393,6 +413,10 @@ fn parse_artifacthub_versions(
 }
 
 /// Discover the latest tag from a git repository using `git ls-remote --tags`.
+///
+/// Intentionally sync: called only from dialoguer's sync interactive UI layer
+/// which already runs inside `tokio::task::block_in_place`. Converting to async
+/// here would require plumbing the Handle through the sync closure boundary.
 pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError> {
     let output = std::process::Command::new("git")
         .args(["ls-remote", "--tags", "--sort=-v:refname", repo])
@@ -433,6 +457,7 @@ pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError
 
 /// Discover recent stable tags from a git repository.
 /// Returns up to `limit` stable semver tags, sorted newest first.
+/// Intentionally sync — see `discover_latest_git_tag` for rationale.
 pub fn discover_git_tags(
     repo: &str,
     limit: usize,
@@ -484,18 +509,19 @@ pub fn discover_git_tags(
 }
 
 /// Fetch up to `limit` available stable OCI tags for `reference`, starting at `offset`.
-pub fn discover_oci_tags(
+pub async fn discover_oci_tags(
     reference: &str,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
     husako_helm::oci::list_tags(reference, limit, offset)
+        .await
         .map_err(|e| HusakoError::GenerateIo(e.to_string()))
 }
 
 /// Return the latest stable OCI tag for `reference`, or None if no tags found.
-pub fn discover_latest_oci(reference: &str) -> Result<Option<String>, HusakoError> {
-    let tags = discover_oci_tags(reference, 1, 0)?;
+pub async fn discover_latest_oci(reference: &str) -> Result<Option<String>, HusakoError> {
+    let tags = discover_oci_tags(reference, 1, 0).await?;
     Ok(tags.into_iter().next())
 }
 
@@ -758,9 +784,9 @@ vwx234\trefs/tags/v1.7.0^{}\n";
 
     // ── search_artifacthub_from (mockito) ─────────────────────────────────────
 
-    #[test]
-    fn search_artifacthub_returns_packages() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn search_artifacthub_returns_packages() {
+        let mut server = mockito::Server::new_async().await;
         let resp = serde_json::json!({
             "packages": [
                 {"name": "postgresql", "version": "16.4.0", "repository": {"name": "bitnami"}},
@@ -773,17 +799,20 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let result = search_artifacthub_from("postgres", 0, &server.url()).unwrap();
+        let result = search_artifacthub_from("postgres", 0, &server.url())
+            .await
+            .unwrap();
         assert_eq!(result.packages.len(), 2);
         assert_eq!(result.packages[0].name, "postgresql");
         assert!(!result.has_more);
     }
 
-    #[test]
-    fn search_artifacthub_empty_result() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn search_artifacthub_empty_result() {
+        let mut server = mockito::Server::new_async().await;
         let resp = serde_json::json!({"packages": []});
         let _m = server
             .mock("GET", "/api/v1/packages/search")
@@ -791,18 +820,21 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let result = search_artifacthub_from("nonexistent", 0, &server.url()).unwrap();
+        let result = search_artifacthub_from("nonexistent", 0, &server.url())
+            .await
+            .unwrap();
         assert!(result.packages.is_empty());
         assert!(!result.has_more);
     }
 
     // ── discover_recent_releases_from (mockito) ───────────────────────────────
 
-    #[test]
-    fn discover_recent_releases_dedupes_minor() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_recent_releases_dedupes_minor() {
+        let mut server = mockito::Server::new_async().await;
         let tags = serde_json::json!([
             {"name": "v1.35.1"},
             {"name": "v1.35.0"},
@@ -814,18 +846,21 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(tags.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let versions = discover_recent_releases_from(10, 0, &server.url()).unwrap();
+        let versions = discover_recent_releases_from(10, 0, &server.url())
+            .await
+            .unwrap();
         // v1.35.1 and v1.35.0 share the same minor → only one "1.35" entry
         assert_eq!(versions, vec!["1.35", "1.34"]);
     }
 
     // ── discover_latest_release_from (mockito) ────────────────────────────────
 
-    #[test]
-    fn discover_latest_release_returns_highest() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_latest_release_returns_highest() {
+        let mut server = mockito::Server::new_async().await;
         let tags = serde_json::json!([
             {"name": "v1.35.0-alpha.1"},
             {"name": "v1.34.0"},
@@ -837,17 +872,18 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(tags.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let version = discover_latest_release_from(&server.url()).unwrap();
+        let version = discover_latest_release_from(&server.url()).await.unwrap();
         assert_eq!(version, "1.34");
     }
 
     // ── discover_latest_artifacthub_from (mockito) ────────────────────────────
 
-    #[test]
-    fn discover_latest_artifacthub_extracts_version() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_latest_artifacthub_extracts_version() {
+        let mut server = mockito::Server::new_async().await;
         let resp = serde_json::json!({
             "name": "postgresql",
             "version": "16.4.0",
@@ -858,26 +894,30 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let version =
-            discover_latest_artifacthub_from("bitnami/postgresql", &server.url()).unwrap();
+        let version = discover_latest_artifacthub_from("bitnami/postgresql", &server.url())
+            .await
+            .unwrap();
         assert_eq!(version, "16.4.0");
     }
 
-    #[test]
-    fn discover_latest_artifacthub_missing_version_field() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_latest_artifacthub_missing_version_field() {
+        let mut server = mockito::Server::new_async().await;
         let resp = serde_json::json!({"name": "postgresql"});
         let _m = server
             .mock("GET", "/api/v1/packages/helm/bitnami/postgresql")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
-        let err =
-            discover_latest_artifacthub_from("bitnami/postgresql", &server.url()).unwrap_err();
+        let err = discover_latest_artifacthub_from("bitnami/postgresql", &server.url())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no version field"));
     }
 
@@ -891,76 +931,91 @@ vwx234\trefs/tags/v1.7.0^{}\n";
         format!("apiVersion: v1\nentries:\n  {chart}:\n{entries}")
     }
 
-    #[test]
-    fn discover_registry_versions_filters_prerelease_and_sorts() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_registry_versions_filters_prerelease_and_sorts() {
+        let mut server = mockito::Server::new_async().await;
         let index = make_index_yaml("my-chart", &["1.0.0-beta.1", "2.0.0", "1.0.0", "3.0.0"]);
         let _m = server
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
-        let versions = discover_registry_versions(&server.url(), "my-chart", 10, 0).unwrap();
+        let versions = discover_registry_versions(&server.url(), "my-chart", 10, 0)
+            .await
+            .unwrap();
         assert_eq!(versions, vec!["3.0.0", "2.0.0", "1.0.0"]);
     }
 
-    #[test]
-    fn discover_registry_versions_applies_offset_and_limit() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_registry_versions_applies_offset_and_limit() {
+        let mut server = mockito::Server::new_async().await;
         let index = make_index_yaml("my-chart", &["5.0.0", "4.0.0", "3.0.0", "2.0.0", "1.0.0"]);
         let _m = server
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
         // Skip the first (5.0.0), take next 2 (4.0.0, 3.0.0)
-        let versions = discover_registry_versions(&server.url(), "my-chart", 2, 1).unwrap();
+        let versions = discover_registry_versions(&server.url(), "my-chart", 2, 1)
+            .await
+            .unwrap();
         assert_eq!(versions, vec!["4.0.0", "3.0.0"]);
     }
 
-    #[test]
-    fn discover_registry_versions_chart_not_found() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_registry_versions_chart_not_found() {
+        let mut server = mockito::Server::new_async().await;
         let index = make_index_yaml("other-chart", &["1.0.0"]);
         let _m = server
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
-        let err = discover_registry_versions(&server.url(), "my-chart", 10, 0).unwrap_err();
+        let err = discover_registry_versions(&server.url(), "my-chart", 10, 0)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
 
     // ── discover_latest_registry (mockito) ────────────────────────────────────
 
-    #[test]
-    fn discover_latest_registry_returns_highest_stable() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_latest_registry_returns_highest_stable() {
+        let mut server = mockito::Server::new_async().await;
         let index = make_index_yaml("my-chart", &["1.0.0-rc.1", "2.0.0", "1.5.0"]);
         let _m = server
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
-        let version = discover_latest_registry(&server.url(), "my-chart").unwrap();
+        let version = discover_latest_registry(&server.url(), "my-chart")
+            .await
+            .unwrap();
         assert_eq!(version, "2.0.0");
     }
 
-    #[test]
-    fn discover_latest_registry_all_prerelease_returns_error() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn discover_latest_registry_all_prerelease_returns_error() {
+        let mut server = mockito::Server::new_async().await;
         let index = make_index_yaml("my-chart", &["1.0.0-alpha.1", "2.0.0-beta.1"]);
         let _m = server
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
-        let err = discover_latest_registry(&server.url(), "my-chart").unwrap_err();
+        let err = discover_latest_registry(&server.url(), "my-chart")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("no versions found"));
     }
 }

@@ -31,6 +31,7 @@ pub enum RuntimeError {
     MemoryLimit(usize),
 }
 
+#[derive(Clone)]
 pub struct ExecuteOptions {
     pub entry_path: PathBuf,
     pub project_root: PathBuf,
@@ -72,7 +73,8 @@ fn execution_error(ctx: &Ctx<'_>, err: Error) -> RuntimeError {
     RuntimeError::Execution(err.to_string())
 }
 
-pub fn execute(
+/// Synchronous QuickJS execution — runs on a blocking thread via [`execute`].
+fn execute_sync(
     js_source: &str,
     options: &ExecuteOptions,
 ) -> Result<serde_json::Value, RuntimeError> {
@@ -189,7 +191,8 @@ pub fn execute(
     }
 }
 
-pub fn execute_tests(
+/// Synchronous QuickJS test runner — runs on a blocking thread via [`execute_tests`].
+fn execute_tests_sync(
     js_source: &str,
     options: &ExecuteTestsOptions,
 ) -> Result<Vec<TestCaseResult>, RuntimeError> {
@@ -261,6 +264,35 @@ pub fn execute_tests(
 
     serde_json::from_str(&json_str)
         .map_err(|e| RuntimeError::Execution(format!("test result parse error: {e}")))
+}
+
+/// Execute a compiled JavaScript source in QuickJS.
+///
+/// Runs on tokio's blocking thread pool so it does not block the async runtime.
+/// QuickJS execution is CPU-bound; `spawn_blocking` is the correct pattern here.
+pub async fn execute(
+    js_source: &str,
+    options: &ExecuteOptions,
+) -> Result<serde_json::Value, RuntimeError> {
+    let js_source = js_source.to_string();
+    let options = options.clone();
+    tokio::task::spawn_blocking(move || execute_sync(&js_source, &options))
+        .await
+        .map_err(|e| RuntimeError::Init(e.to_string()))?
+}
+
+/// Execute a TypeScript test file in QuickJS.
+///
+/// Runs on tokio's blocking thread pool so it does not block the async runtime.
+pub async fn execute_tests(
+    js_source: &str,
+    options: &ExecuteTestsOptions,
+) -> Result<Vec<TestCaseResult>, RuntimeError> {
+    let js_source = js_source.to_string();
+    let options = options.clone();
+    tokio::task::spawn_blocking(move || execute_tests_sync(&js_source, &options))
+        .await
+        .map_err(|e| RuntimeError::Init(e.to_string()))?
 }
 
 fn validate_and_convert(val: &Value<'_>, path: &str) -> Result<serde_json::Value, RuntimeError> {
@@ -380,73 +412,73 @@ mod tests {
         }
     }
 
-    #[test]
-    fn basic_build() {
+    #[tokio::test]
+    async fn basic_build() {
         let js = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace" }; } }]);
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &test_options()).await.unwrap();
         assert!(result.is_array());
         assert_eq!(result[0]["kind"], "Namespace");
     }
 
-    #[test]
-    fn no_build_call() {
+    #[tokio::test]
+    async fn no_build_call() {
         let js = r#"
             import { build } from "husako";
             const x = 42;
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::BuildNotCalled));
     }
 
-    #[test]
-    fn double_build_call() {
+    #[tokio::test]
+    async fn double_build_call() {
         let js = r#"
             import { build } from "husako";
             build([]);
             build([]);
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::BuildCalledMultiple(2)));
     }
 
-    #[test]
-    fn strict_json_undefined() {
+    #[tokio::test]
+    async fn strict_json_undefined() {
         let js = r#"
             import { build } from "husako";
             build({ _render() { return { a: undefined }; } });
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
         assert!(err.to_string().contains("undefined"));
     }
 
-    #[test]
-    fn strict_json_function() {
+    #[tokio::test]
+    async fn strict_json_function() {
         let js = r#"
             import { build } from "husako";
             build({ _render() { return { fn: () => {} }; } });
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
         assert!(err.to_string().contains("function"));
     }
 
-    #[test]
-    fn strict_json_bigint() {
+    #[tokio::test]
+    async fn strict_json_bigint() {
         let js = r#"
             import { build } from "husako";
             build({ _render() { return { n: BigInt(1) }; } });
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(matches!(err, RuntimeError::StrictJson { .. }));
         assert!(err.to_string().contains("bigint"));
     }
 
-    #[test]
-    fn strict_json_date_object() {
+    #[tokio::test]
+    async fn strict_json_date_object() {
         // In QuickJS, Date is Type::Object with no enumerable own properties.
         // convert_value iterates its (empty) own props and returns `{}`.
         // This is the correct behavior — Date is not explicitly rejected by
@@ -456,13 +488,13 @@ mod tests {
             const d = new Date(0);
             build({ _render() { return { ts: d.toISOString() }; } });
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &test_options()).await.unwrap();
         assert!(result[0]["ts"].is_string());
         assert_eq!(result[0]["ts"], "1970-01-01T00:00:00.000Z");
     }
 
-    #[test]
-    fn strict_json_map_and_set() {
+    #[tokio::test]
+    async fn strict_json_map_and_set() {
         // Map and Set are Type::Object in QuickJS. Their internal data is not exposed
         // as enumerable own properties, so convert_value returns `{}` for each.
         // Accessing .size (a number) is valid JSON and works correctly.
@@ -472,7 +504,7 @@ mod tests {
             const s = new Set([1, 2, 3]);
             build({ _render() { return { mapSize: m.size, setSize: s.size }; } });
         "#;
-        let result = execute(js, &test_options()).unwrap();
+        let result = execute(js, &test_options()).await.unwrap();
         assert_eq!(result[0]["mapSize"], 1);
         assert_eq!(result[0]["setSize"], 3);
     }
@@ -524,8 +556,8 @@ export class ConfigMap extends _ResourceBuilder {
         (dir, opts)
     }
 
-    #[test]
-    fn deployment_builder_basic() {
+    #[tokio::test]
+    async fn deployment_builder_basic() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
@@ -533,14 +565,14 @@ export class ConfigMap extends _ResourceBuilder {
             const d = new Deployment().metadata(name("test"));
             build([d]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["apiVersion"], "apps/v1");
         assert_eq!(result[0]["kind"], "Deployment");
         assert_eq!(result[0]["metadata"]["name"], "test");
     }
 
-    #[test]
-    fn namespace_builder() {
+    #[tokio::test]
+    async fn namespace_builder() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
@@ -548,14 +580,14 @@ export class ConfigMap extends _ResourceBuilder {
             const ns = new Namespace().metadata(name("my-ns"));
             build([ns]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["apiVersion"], "v1");
         assert_eq!(result[0]["kind"], "Namespace");
         assert_eq!(result[0]["metadata"]["name"], "my-ns");
     }
 
-    #[test]
-    fn metadata_fragment_immutability() {
+    #[tokio::test]
+    async fn metadata_fragment_immutability() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, label } from "husako";
@@ -567,7 +599,7 @@ export class ConfigMap extends _ResourceBuilder {
             const db = new Deployment().metadata(b);
             build([da, db]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         let a_labels = &result[0]["metadata"]["labels"];
         let b_labels = &result[1]["metadata"]["labels"];
         assert_eq!(a_labels["env"], "dev");
@@ -576,8 +608,8 @@ export class ConfigMap extends _ResourceBuilder {
         assert_eq!(b_labels["team"], "b");
     }
 
-    #[test]
-    fn merge_metadata_labels() {
+    #[tokio::test]
+    async fn merge_metadata_labels() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name, label, merge } from "husako";
@@ -586,14 +618,14 @@ export class ConfigMap extends _ResourceBuilder {
             const d = new Deployment().metadata(m);
             build([d]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["metadata"]["name"], "test");
         assert_eq!(result[0]["metadata"]["labels"]["a"], "1");
         assert_eq!(result[0]["metadata"]["labels"]["b"], "2");
     }
 
-    #[test]
-    fn cpu_normalization() {
+    #[tokio::test]
+    async fn cpu_normalization() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, cpu, requests } from "husako";
@@ -603,7 +635,7 @@ export class ConfigMap extends _ResourceBuilder {
             const d3 = new Deployment().resources(requests(cpu("250m")));
             build([d1, d2, d3]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(
             result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["cpu"],
             "1"
@@ -618,17 +650,17 @@ export class ConfigMap extends _ResourceBuilder {
         );
     }
 
-    #[test]
-    fn memory_normalization() {
+    #[tokio::test]
+    async fn memory_normalization() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, memory, requests } from "husako";
             import { Deployment } from "k8s/apps/v1";
             const d1 = new Deployment().resources(requests(memory(4)));
-            const d2 = new Deployment().resources(requests(memory("512Mi")));
+            let d2 = new Deployment().resources(requests(memory("512Mi")));
             build([d1, d2]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(
             result[0]["spec"]["template"]["spec"]["containers"][0]["resources"]["requests"]["memory"],
             "4Gi"
@@ -639,8 +671,8 @@ export class ConfigMap extends _ResourceBuilder {
         );
     }
 
-    #[test]
-    fn resources_requests_and_limits() {
+    #[tokio::test]
+    async fn resources_requests_and_limits() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, cpu, memory, requests, limits } from "husako";
@@ -650,7 +682,7 @@ export class ConfigMap extends _ResourceBuilder {
             );
             build([d]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         let res = &result[0]["spec"]["template"]["spec"]["containers"][0]["resources"];
         assert_eq!(res["requests"]["cpu"], "1");
         assert_eq!(res["requests"]["memory"], "2Gi");
@@ -660,19 +692,19 @@ export class ConfigMap extends _ResourceBuilder {
 
     // --- Milestone 8: Dynamic resources ---
 
-    #[test]
-    fn k8s_import_without_generate_fails() {
+    #[tokio::test]
+    async fn k8s_import_without_generate_fails() {
         let js = r#"
             import { build } from "husako";
             import { Deployment } from "k8s/apps/v1";
             build([new Deployment()]);
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(err.to_string().contains("husako generate"));
     }
 
-    #[test]
-    fn spec_generic_setter() {
+    #[tokio::test]
+    async fn spec_generic_setter() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
@@ -682,13 +714,13 @@ export class ConfigMap extends _ResourceBuilder {
                 .spec({ replicas: 3, selector: { matchLabels: { app: "test" } } });
             build([d]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["spec"]["replicas"], 3);
         assert_eq!(result[0]["spec"]["selector"]["matchLabels"]["app"], "test");
     }
 
-    #[test]
-    fn set_generic_top_level() {
+    #[tokio::test]
+    async fn set_generic_top_level() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name } from "husako";
@@ -698,14 +730,14 @@ export class ConfigMap extends _ResourceBuilder {
                 .set("data", { key1: "val1", key2: "val2" });
             build([cm]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["kind"], "ConfigMap");
         assert_eq!(result[0]["data"]["key1"], "val1");
         assert_eq!(result[0]["data"]["key2"], "val2");
     }
 
-    #[test]
-    fn spec_overrides_resources() {
+    #[tokio::test]
+    async fn spec_overrides_resources() {
         let (_dir, opts) = test_options_with_k8s();
         let js = r#"
             import { build, name, cpu, requests } from "husako";
@@ -716,7 +748,7 @@ export class ConfigMap extends _ResourceBuilder {
                 .spec({ replicas: 5 });
             build([d]);
         "#;
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         // .spec() should win over .resources()
         assert_eq!(result[0]["spec"]["replicas"], 5);
         assert!(result[0]["spec"]["template"].is_null());
@@ -724,8 +756,8 @@ export class ConfigMap extends _ResourceBuilder {
 
     // --- Milestone 8: Safety & Diagnostics ---
 
-    #[test]
-    fn timeout_infinite_loop() {
+    #[tokio::test]
+    async fn timeout_infinite_loop() {
         let js = r#"
             import { build } from "husako";
             while(true) {}
@@ -733,12 +765,12 @@ export class ConfigMap extends _ResourceBuilder {
         "#;
         let mut opts = test_options();
         opts.timeout_ms = Some(100);
-        let err = execute(js, &opts).unwrap_err();
+        let err = execute(js, &opts).await.unwrap_err();
         assert!(matches!(err, RuntimeError::Timeout(100)));
     }
 
-    #[test]
-    fn memory_limit_exceeded() {
+    #[tokio::test]
+    async fn memory_limit_exceeded() {
         let js = r#"
             import { build } from "husako";
             const arr = [];
@@ -747,12 +779,12 @@ export class ConfigMap extends _ResourceBuilder {
         "#;
         let mut opts = test_options();
         opts.max_heap_mb = Some(1);
-        let err = execute(js, &opts).unwrap_err();
+        let err = execute(js, &opts).await.unwrap_err();
         assert!(matches!(err, RuntimeError::MemoryLimit(1)));
     }
 
-    #[test]
-    fn limits_do_not_interfere_with_normal_execution() {
+    #[tokio::test]
+    async fn limits_do_not_interfere_with_normal_execution() {
         let js = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace" }; } }]);
@@ -760,25 +792,25 @@ export class ConfigMap extends _ResourceBuilder {
         let mut opts = test_options();
         opts.timeout_ms = Some(5000);
         opts.max_heap_mb = Some(256);
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["kind"], "Namespace");
     }
 
     // --- Helm chart module tests ---
 
-    #[test]
-    fn helm_import_without_generate_fails() {
+    #[tokio::test]
+    async fn helm_import_without_generate_fails() {
         let js = r#"
             import { build } from "husako";
             import { values } from "helm/my-chart";
             build([]);
         "#;
-        let err = execute(js, &test_options()).unwrap_err();
+        let err = execute(js, &test_options()).await.unwrap_err();
         assert!(err.to_string().contains("husako generate"));
     }
 
-    #[test]
-    fn helm_import_with_generated_module() {
+    #[tokio::test]
+    async fn helm_import_with_generated_module() {
         let dir = tempfile::tempdir().unwrap();
         let helm_dir = dir.path().join("helm");
         std::fs::create_dir_all(&helm_dir).unwrap();
@@ -810,7 +842,7 @@ export function values() { return new Values(); }
             build([{ _render() { return v._toJSON(); } }]);
         "#;
 
-        let result = execute(js, &opts).unwrap();
+        let result = execute(js, &opts).await.unwrap();
         assert_eq!(result[0]["replicaCount"], 3);
     }
 
@@ -828,72 +860,72 @@ export function values() { return new Values(); }
         }
     }
 
-    #[test]
-    fn execute_tests_all_pass() {
+    #[tokio::test]
+    async fn execute_tests_all_pass() {
         let js = r#"
             import { test, expect } from "husako/test";
             test("one plus one", () => { expect(1 + 1).toBe(2); });
             test("string equality", () => { expect("hello").toBe("hello"); });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 2);
         assert!(results[0].passed);
         assert!(results[1].passed);
         assert!(results[0].error.is_none());
     }
 
-    #[test]
-    fn execute_tests_failure_captured() {
+    #[tokio::test]
+    async fn execute_tests_failure_captured() {
         let js = r#"
             import { test, expect } from "husako/test";
             test("will fail", () => { expect(1).toBe(999); });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert!(!results[0].passed);
         let err = results[0].error.as_deref().unwrap_or("");
         assert!(err.contains("999"), "error should mention expected value");
     }
 
-    #[test]
-    fn execute_tests_describe_prefixes_name() {
+    #[tokio::test]
+    async fn execute_tests_describe_prefixes_name() {
         let js = r#"
             import { describe, test, expect } from "husako/test";
             describe("math", () => {
                 test("addition", () => { expect(1 + 1).toBe(2); });
             });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "math > addition");
         assert!(results[0].passed);
     }
 
-    #[test]
-    fn execute_tests_not_negation() {
+    #[tokio::test]
+    async fn execute_tests_not_negation() {
         let js = r#"
             import { test, expect } from "husako/test";
             test("not equal", () => { expect(1).not.toBe(2); });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].passed);
     }
 
-    #[test]
-    fn execute_tests_no_build_call_required() {
+    #[tokio::test]
+    async fn execute_tests_no_build_call_required() {
         // execute_tests should succeed without husako.build() being called
         let js = r#"
             import { test, expect } from "husako/test";
             test("pure logic", () => { expect(2 * 3).toBe(6); });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].passed);
     }
 
-    #[test]
-    fn execute_tests_async_test_function() {
+    #[tokio::test]
+    async fn execute_tests_async_test_function() {
         let js = r#"
             import { test, expect } from "husako/test";
             test("async test", async () => {
@@ -901,7 +933,7 @@ export function values() { return new Values(); }
                 expect(result).toBe(42);
             });
         "#;
-        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        let results = execute_tests(js, &test_options_for_tests()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].passed);
     }

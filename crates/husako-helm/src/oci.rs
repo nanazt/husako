@@ -22,7 +22,7 @@ const TAR_GZ_MEDIA_TYPE: &str = "application/tar+gzip";
 /// 6. Download blob (.tgz)
 /// 7. Extract `values.schema.json` (reuses registry::extract_values_schema)
 /// 8. Cache and return
-pub(crate) fn resolve(
+pub(crate) async fn resolve(
     name: &str,
     reference: &str,
     chart: &str,
@@ -47,17 +47,25 @@ pub(crate) fn resolve(
     let (host, repo, ref_tag) = parse_oci_reference(reference)?;
     let tag = ref_tag.as_deref().unwrap_or(version);
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| HelmError::Io(format!("chart '{name}': build HTTP client: {e}")))?;
 
-    let token = get_token(&client, name, &host, &repo)?;
+    let token = get_token(&client, name, &host, &repo).await?;
     let token_ref = token.as_deref();
 
-    let manifest = fetch_manifest(&client, name, &host, &repo, tag, token_ref)?;
+    let manifest = fetch_manifest(
+        client.clone(),
+        name.to_owned(),
+        host.clone(),
+        repo.clone(),
+        tag.to_owned(),
+        token_ref.map(str::to_owned),
+    )
+    .await?;
     let layer_digest = find_chart_layer_digest(name, &manifest)?;
-    let blob_bytes = download_blob(&client, name, &host, &repo, &layer_digest, token_ref)?;
+    let blob_bytes = download_blob(&client, name, &host, &repo, &layer_digest, token_ref).await?;
 
     let schema = crate::registry::extract_values_schema(name, chart, &blob_bytes)?;
 
@@ -90,15 +98,22 @@ pub(crate) fn chart_name_from_reference(reference: &str) -> &str {
 ///
 /// Uses the same anonymous bearer-token auth flow as `resolve()`.
 /// Returns tags sorted descending by semver, up to `limit` starting at `offset`.
-pub fn list_tags(reference: &str, limit: usize, offset: usize) -> Result<Vec<String>, HelmError> {
+pub async fn list_tags(
+    reference: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<String>, HelmError> {
     let (host, repo, _) = parse_oci_reference(reference)?;
 
-    let client = reqwest::blocking::Client::builder()
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| HelmError::Io(format!("list_tags: build HTTP client: {e}")))?;
 
-    let token = get_token(&client, "list_tags", &host, &repo).ok().flatten();
+    let token = get_token(&client, "list_tags", &host, &repo)
+        .await
+        .ok()
+        .flatten();
 
     let url = format!(
         "{}://{host}/v2/{repo}/tags/list?n=200",
@@ -109,11 +124,21 @@ pub fn list_tags(reference: &str, limit: usize, offset: usize) -> Result<Vec<Str
         builder = builder.bearer_auth(tok);
     }
 
-    let body: serde_json::Value = builder
+    let resp = builder
         .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| HelmError::Io(format!("list_tags: fetch tags for {reference}: {e}")))?
+        .await
+        .map_err(|e| HelmError::Io(format!("list_tags: fetch tags for {reference}: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(HelmError::Io(format!(
+            "list_tags: fetch tags for {reference} returned {}",
+            resp.status()
+        )));
+    }
+
+    let body: serde_json::Value = resp
         .json()
+        .await
         .map_err(|e| HelmError::Io(format!("list_tags: parse tags response: {e}")))?;
 
     let mut tags: Vec<semver::Version> = body["tags"]
@@ -206,8 +231,8 @@ fn registry_scheme(host: &str) -> &'static str {
 /// Attempt to obtain an anonymous bearer token for the registry.
 ///
 /// Returns `Ok(None)` when the registry accepts requests without authentication.
-fn get_token(
-    client: &reqwest::blocking::Client,
+async fn get_token(
+    client: &reqwest::Client,
     name: &str,
     host: &str,
     repo: &str,
@@ -218,6 +243,7 @@ fn get_token(
         .get(&ping_url)
         .header("User-Agent", "husako")
         .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': OCI ping {ping_url}: {e}")))?;
 
     if ping_resp.status().is_success() {
@@ -257,6 +283,7 @@ fn get_token(
         .get(&token_url)
         .header("User-Agent", "husako")
         .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': OCI token fetch {token_url}: {e}")))?;
 
     if !token_resp.status().is_success() {
@@ -268,6 +295,7 @@ fn get_token(
 
     let body: serde_json::Value = token_resp
         .json()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': parse token response: {e}")))?;
 
     let token = body
@@ -331,60 +359,65 @@ fn parse_www_authenticate(header: &str) -> Option<(String, Option<String>, Optio
 /// Fetch the OCI manifest for the given reference.
 ///
 /// Handles OCI image index by picking the first manifest entry and recursing once.
+/// Uses a boxed future to support async recursion.
 fn fetch_manifest(
-    client: &reqwest::blocking::Client,
-    name: &str,
-    host: &str,
-    repo: &str,
-    tag_or_digest: &str,
-    token: Option<&str>,
-) -> Result<serde_json::Value, HelmError> {
-    let scheme = registry_scheme(host);
-    let url = format!("{scheme}://{host}/v2/{repo}/manifests/{tag_or_digest}");
+    client: reqwest::Client,
+    name: String,
+    host: String,
+    repo: String,
+    tag_or_digest: String,
+    token: Option<String>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, HelmError>> + Send>>
+{
+    Box::pin(async move {
+        let scheme = registry_scheme(&host);
+        let url = format!("{scheme}://{host}/v2/{repo}/manifests/{tag_or_digest}");
 
-    let mut req = client
-        .get(&url)
-        .header("Accept", MANIFEST_ACCEPT)
-        .header("User-Agent", "husako");
+        let mut req = client
+            .get(&url)
+            .header("Accept", MANIFEST_ACCEPT)
+            .header("User-Agent", "husako");
 
-    if let Some(tok) = token {
-        req = req.bearer_auth(tok);
-    }
+        if let Some(ref tok) = token {
+            req = req.bearer_auth(tok);
+        }
 
-    let resp = req
-        .send()
-        .map_err(|e| HelmError::Io(format!("chart '{name}': fetch manifest {url}: {e}")))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| HelmError::Io(format!("chart '{name}': fetch manifest {url}: {e}")))?;
 
-    if !resp.status().is_success() {
-        return Err(HelmError::Io(format!(
-            "chart '{name}': fetch manifest {url} returned {}",
-            resp.status()
-        )));
-    }
+        if !resp.status().is_success() {
+            return Err(HelmError::Io(format!(
+                "chart '{name}': fetch manifest {url} returned {}",
+                resp.status()
+            )));
+        }
 
-    let manifest: serde_json::Value = resp
-        .json()
-        .map_err(|e| HelmError::Io(format!("chart '{name}': parse manifest from {url}: {e}")))?;
+        let manifest: serde_json::Value = resp.json().await.map_err(|e| {
+            HelmError::Io(format!("chart '{name}': parse manifest from {url}: {e}"))
+        })?;
 
-    // Handle OCI image index (multi-platform manifest list): pick the first entry
-    if manifest.get("manifests").is_some() {
-        let digest = manifest
-            .get("manifests")
-            .and_then(|m| m.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|entry| entry.get("digest"))
-            .and_then(|d| d.as_str())
-            .ok_or_else(|| {
-                HelmError::NotFound(format!(
-                    "chart '{name}': OCI image index has no manifest entries"
-                ))
-            })?
-            .to_owned();
+        // Handle OCI image index (multi-platform manifest list): pick the first entry
+        if manifest.get("manifests").is_some() {
+            let digest = manifest
+                .get("manifests")
+                .and_then(|m| m.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|entry| entry.get("digest"))
+                .and_then(|d| d.as_str())
+                .ok_or_else(|| {
+                    HelmError::NotFound(format!(
+                        "chart '{name}': OCI image index has no manifest entries"
+                    ))
+                })?
+                .to_owned();
 
-        return fetch_manifest(client, name, host, repo, &digest, token);
-    }
+            return fetch_manifest(client, name, host, repo, digest, token).await;
+        }
 
-    Ok(manifest)
+        Ok(manifest)
+    })
 }
 
 /// Find the digest of the Helm chart content layer in an OCI manifest.
@@ -423,8 +456,8 @@ fn find_chart_layer_digest(name: &str, manifest: &serde_json::Value) -> Result<S
 }
 
 /// Download a blob from an OCI registry.
-fn download_blob(
-    client: &reqwest::blocking::Client,
+async fn download_blob(
+    client: &reqwest::Client,
     name: &str,
     host: &str,
     repo: &str,
@@ -442,6 +475,7 @@ fn download_blob(
 
     let resp = req
         .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': download blob {url}: {e}")))?;
 
     if !resp.status().is_success() {
@@ -452,6 +486,7 @@ fn download_blob(
     }
 
     resp.bytes()
+        .await
         .map(|b| b.to_vec())
         .map_err(|e| HelmError::Io(format!("chart '{name}': read blob bytes from {url}: {e}")))
 }
@@ -609,8 +644,8 @@ mod tests {
 
     // ── cache hit ─────────────────────────────────────────────────────────────
 
-    #[test]
-    fn cache_hit_returns_cached_schema() {
+    #[tokio::test]
+    async fn cache_hit_returns_cached_schema() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
         let reference = "oci://registry-1.docker.io/bitnamicharts/postgresql";
@@ -623,7 +658,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", reference, "postgresql", "16.4.0", cache_dir).unwrap();
+        let result = resolve("test", reference, "postgresql", "16.4.0", cache_dir)
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicaCount"].is_object());
     }
@@ -650,11 +687,15 @@ mod tests {
         encoder.finish().unwrap()
     }
 
-    #[test]
-    fn oci_full_flow_no_auth() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn oci_full_flow_no_auth() {
+        let mut server = mockito::Server::new_async().await;
 
-        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+        let _m_ping = server
+            .mock("GET", "/v2/")
+            .with_status(200)
+            .create_async()
+            .await;
 
         let manifest = serde_json::json!({
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -670,25 +711,29 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.oci.image.manifest.v1+json")
             .with_body(manifest.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let blob = make_chart_tgz("mychart");
         let _m_blob = server
             .mock("GET", "/v2/myorg/mychart/blobs/sha256:fakedigest")
             .with_status(200)
             .with_body(blob)
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
-        let result = resolve("test", &reference, "mychart", "1.0.0", tmp.path()).unwrap();
+        let result = resolve("test", &reference, "mychart", "1.0.0", tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicaCount"].is_object());
     }
 
-    #[test]
-    fn oci_full_flow_bearer_auth() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn oci_full_flow_bearer_auth() {
+        let mut server = mockito::Server::new_async().await;
         let host = server.host_with_port();
 
         // Ping returns 401 with WWW-Authenticate pointing back to our mock server
@@ -699,7 +744,8 @@ mod tests {
             .mock("GET", "/v2/")
             .with_status(401)
             .with_header("www-authenticate", &www_auth)
-            .create();
+            .create_async()
+            .await;
 
         // Token endpoint — match path + query params separately
         let _m_token = server
@@ -714,7 +760,8 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"token":"test-bearer-token"}"#)
-            .create();
+            .create_async()
+            .await;
 
         let manifest = serde_json::json!({
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -731,7 +778,8 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.oci.image.manifest.v1+json")
             .with_body(manifest.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let blob = make_chart_tgz("mychart");
         let _m_blob = server
@@ -739,20 +787,27 @@ mod tests {
             .match_header("authorization", "Bearer test-bearer-token")
             .with_status(200)
             .with_body(blob)
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{host}/myorg/mychart");
-        let result = resolve("test", &reference, "mychart", "2.0.0", tmp.path()).unwrap();
+        let result = resolve("test", &reference, "mychart", "2.0.0", tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicaCount"].is_object());
     }
 
-    #[test]
-    fn list_tags_returns_sorted_semver_tags() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn list_tags_returns_sorted_semver_tags() {
+        let mut server = mockito::Server::new_async().await;
 
-        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+        let _m_ping = server
+            .mock("GET", "/v2/")
+            .with_status(200)
+            .create_async()
+            .await;
 
         let tags_resp = serde_json::json!({
             "name": "myorg/mychart",
@@ -764,19 +819,24 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(tags_resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
-        let tags = list_tags(&reference, 10, 0).unwrap();
+        let tags = list_tags(&reference, 10, 0).await.unwrap();
         // Sorted descending, only stable semver, max 10
         assert_eq!(tags, vec!["2.0.0", "1.5.0", "1.0.0"]);
     }
 
-    #[test]
-    fn list_tags_offset_and_limit() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn list_tags_offset_and_limit() {
+        let mut server = mockito::Server::new_async().await;
 
-        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+        let _m_ping = server
+            .mock("GET", "/v2/")
+            .with_status(200)
+            .create_async()
+            .await;
 
         let tags_resp = serde_json::json!({
             "name": "myorg/mychart",
@@ -788,18 +848,23 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(tags_resp.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
-        let tags = list_tags(&reference, 1, 1).unwrap();
+        let tags = list_tags(&reference, 1, 1).await.unwrap();
         assert_eq!(tags, vec!["2.0.0"]);
     }
 
-    #[test]
-    fn oci_image_index_picks_first_manifest() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn oci_image_index_picks_first_manifest() {
+        let mut server = mockito::Server::new_async().await;
 
-        let _m_ping = server.mock("GET", "/v2/").with_status(200).create();
+        let _m_ping = server
+            .mock("GET", "/v2/")
+            .with_status(200)
+            .create_async()
+            .await;
 
         // First request returns an image index
         let index = serde_json::json!({
@@ -814,7 +879,8 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.oci.image.index.v1+json")
             .with_body(index.to_string())
-            .create();
+            .create_async()
+            .await;
 
         // Second request (recurse with digest) returns the actual manifest
         let manifest = serde_json::json!({
@@ -831,18 +897,22 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/vnd.oci.image.manifest.v1+json")
             .with_body(manifest.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let blob = make_chart_tgz("multichart");
         let _m_blob = server
             .mock("GET", "/v2/myorg/multichart/blobs/sha256:indexblob")
             .with_status(200)
             .with_body(blob)
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{}/myorg/multichart", server.host_with_port());
-        let result = resolve("test", &reference, "multichart", "3.0.0", tmp.path()).unwrap();
+        let result = resolve("test", &reference, "multichart", "3.0.0", tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
     }
 }

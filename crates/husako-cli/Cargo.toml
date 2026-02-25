@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tokio = { workspace = true }
 husako-config = { path = "../husako-config", version = "0" }
 husako-core = { path = "../husako-core", version = "0" }
 husako-openapi = { path = "../husako-openapi", version = "0" }

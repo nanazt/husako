@@ -251,7 +251,8 @@ enum PluginAction {
     List,
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
@@ -308,7 +309,7 @@ fn main() -> ExitCode {
                 verbose,
             };
 
-            match husako_core::render(&source, &filename, &options) {
+            match husako_core::render(&source, &filename, &options).await {
                 Ok(yaml) => {
                     print!("{yaml}");
                     ExitCode::SUCCESS
@@ -361,7 +362,7 @@ fn main() -> ExitCode {
                 config,
             };
 
-            match husako_core::generate(&options, &progress) {
+            match husako_core::generate(&options, &progress).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
@@ -723,7 +724,7 @@ fn main() -> ExitCode {
             let project_root = cwd();
             let progress = IndicatifReporter::new();
 
-            match husako_core::check_outdated(&project_root, &progress) {
+            match husako_core::check_outdated(&project_root, &progress).await {
                 Ok(entries) => {
                     if entries.is_empty() {
                         eprintln!("No versioned dependencies found");
@@ -778,7 +779,7 @@ fn main() -> ExitCode {
                 dry_run,
             };
 
-            match husako_core::update_dependencies(&options, &progress) {
+            match husako_core::update_dependencies(&options, &progress).await {
                 Ok(result) => {
                     for entry in &result.updated {
                         let prefix = if dry_run { "Would update" } else { "Updated" };
@@ -1153,7 +1154,7 @@ fn main() -> ExitCode {
                 verbose: false,
             };
 
-            match husako_core::validate_file(&source, &filename, &options) {
+            match husako_core::validate_file(&source, &filename, &options).await {
                 Ok(result) => {
                     eprintln!("{} {} compiles successfully", style::check_mark(), file);
                     eprintln!(
@@ -1201,7 +1202,7 @@ fn main() -> ExitCode {
                 allow_outside_root: false,
             };
 
-            let results = match husako_core::run_tests(&options) {
+            let results = match husako_core::run_tests(&options).await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
@@ -1311,7 +1312,10 @@ fn select_k8s_version() -> Result<String, Option<String>> {
 
     // Fetch initial page of versions (show feedback while loading)
     eprintln!("{}", style::dim("Fetching Kubernetes versions..."));
-    let initial = husako_core::version_check::discover_recent_releases(10, 0);
+    let initial = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(husako_core::version_check::discover_recent_releases(10, 0))
+    });
     // Clear the loading message
     let _ = console::Term::stderr().clear_last_lines(1);
 
@@ -1333,9 +1337,12 @@ fn select_k8s_version() -> Result<String, Option<String>> {
 
             let result =
                 search_select::run("Kubernetes version:", &mut items, &mut has_more, || {
-                    let new_versions =
-                        husako_core::version_check::discover_recent_releases(10, next_offset)
-                            .map_err(|e| e.to_string())?;
+                    let new_versions = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(
+                            husako_core::version_check::discover_recent_releases(10, next_offset),
+                        )
+                    })
+                    .map_err(|e| e.to_string())?;
                     let more = new_versions.len() == 10;
                     next_offset += 10;
                     Ok((new_versions, more))

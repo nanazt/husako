@@ -12,7 +12,7 @@ use crate::progress::ProgressReporter;
 /// Returns a merged `HashMap<String, Value>` where keys are discovery paths
 /// (e.g., `"apis/cert-manager.io/v1"`) and values are OpenAPI spec JSON.
 /// Later sources override for the same key.
-pub fn resolve_all(
+pub async fn resolve_all(
     config: &HusakoConfig,
     project_root: &Path,
     cache_dir: &Path,
@@ -25,10 +25,12 @@ pub fn resolve_all(
         let specs = match source {
             SchemaSource::File { path } => resolve_file(path, project_root)?,
             SchemaSource::Cluster { cluster } => {
-                resolve_cluster(config, cluster.as_deref(), cache_dir)?
+                resolve_cluster(config, cluster.as_deref(), cache_dir).await?
             }
-            SchemaSource::Release { version } => resolve_release(version, cache_dir)?,
-            SchemaSource::Git { repo, tag, path } => resolve_git(repo, tag, path, cache_dir)?,
+            SchemaSource::Release { version } => resolve_release(version, cache_dir).await?,
+            SchemaSource::Git { repo, tag, path } => {
+                resolve_git(repo, tag, path, cache_dir).await?
+            }
         };
 
         if specs.is_empty() {
@@ -184,7 +186,7 @@ fn derive_discovery_key(name: &str) -> String {
 }
 
 /// Resolve a cluster-based schema source.
-fn resolve_cluster(
+async fn resolve_cluster(
     config: &HusakoConfig,
     cluster_name: Option<&str>,
     cache_dir: &Path,
@@ -215,18 +217,21 @@ fn resolve_cluster(
         offline: false,
     })?;
 
-    let specs = client.fetch_all_specs()?;
+    let specs = client.fetch_all_specs().await?;
     Ok(specs)
 }
 
 /// Resolve a GitHub release schema source.
-fn resolve_release(version: &str, cache_dir: &Path) -> Result<HashMap<String, Value>, HusakoError> {
-    let specs = husako_openapi::release::fetch_release_specs(version, cache_dir)?;
+async fn resolve_release(
+    version: &str,
+    cache_dir: &Path,
+) -> Result<HashMap<String, Value>, HusakoError> {
+    let specs = husako_openapi::release::fetch_release_specs(version, cache_dir).await?;
     Ok(specs)
 }
 
 /// Resolve a git-based schema source.
-fn resolve_git(
+async fn resolve_git(
     repo: &str,
     tag: &str,
     path: &str,
@@ -244,18 +249,19 @@ fn resolve_git(
     let temp_dir = tempfile::tempdir()
         .map_err(|e| HusakoError::GenerateIo(format!("create temp dir: {e}")))?;
 
-    let status = std::process::Command::new("git")
+    let output = tokio::process::Command::new("git")
         .args(["clone", "--depth", "1", "--branch", tag, repo])
         .arg(temp_dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .status()
+        .output()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("git clone failed: {e}")))?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(HusakoError::GenerateIo(format!(
-            "git clone {repo} at tag {tag} failed (exit {})",
-            status.code().unwrap_or(-1)
+            "git clone {repo} at tag {tag} failed: {stderr}"
         )));
     }
 
