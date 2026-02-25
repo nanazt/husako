@@ -249,19 +249,19 @@ async fn resolve_git(
     let temp_dir = tempfile::tempdir()
         .map_err(|e| HusakoError::GenerateIo(format!("create temp dir: {e}")))?;
 
-    let status = tokio::process::Command::new("git")
+    let output = tokio::process::Command::new("git")
         .args(["clone", "--depth", "1", "--branch", tag, repo])
         .arg(temp_dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .status()
+        .output()
         .await
         .map_err(|e| HusakoError::GenerateIo(format!("git clone failed: {e}")))?;
 
-    if !status.success() {
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(HusakoError::GenerateIo(format!(
-            "git clone {repo} at tag {tag} failed (exit {})",
-            status.code().unwrap_or(-1)
+            "git clone {repo} at tag {tag} failed: {stderr}"
         )));
     }
 
