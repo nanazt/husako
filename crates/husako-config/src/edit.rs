@@ -91,6 +91,41 @@ pub fn add_plugin(doc: &mut DocumentMut, name: &str, source: &PluginSource) {
     doc["plugins"][name] = Item::Value(toml_edit::Value::InlineTable(inline));
 }
 
+/// Write a cluster connection entry to husako.toml.
+///
+/// `cluster_name = None`       → `[cluster]` section
+/// `cluster_name = Some(name)` → `[clusters.name]` section
+///
+/// Does nothing if the section already exists (non-destructive).
+pub fn add_cluster_config(doc: &mut DocumentMut, cluster_name: Option<&str>, server: &str) {
+    match cluster_name {
+        None => {
+            if doc.get("cluster").is_none() {
+                let mut t = Table::new();
+                t.insert("server", value(server));
+                doc["cluster"] = Item::Table(t);
+            }
+        }
+        Some(name) => {
+            // Ensure [clusters] outer table exists (implicit — no [clusters] header)
+            if doc.get("clusters").is_none() {
+                let mut outer = Table::new();
+                outer.set_implicit(true);
+                doc["clusters"] = Item::Table(outer);
+            }
+            // Add [clusters.name] subtable only if absent
+            if doc["clusters"]
+                .as_table()
+                .is_none_or(|t| !t.contains_key(name))
+            {
+                let mut inner = Table::new();
+                inner.insert("server", value(server));
+                doc["clusters"][name] = Item::Table(inner);
+            }
+        }
+    }
+}
+
 /// Remove a plugin entry. Returns true if found and removed.
 pub fn remove_plugin(doc: &mut DocumentMut, name: &str) -> bool {
     if let Some(table) = doc.get_mut("plugins").and_then(|t| t.as_table_like_mut()) {
@@ -495,6 +530,45 @@ mod tests {
         let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
 
         assert!(!remove_plugin(&mut doc, "nonexistent"));
+    }
+
+    #[test]
+    fn add_cluster_config_single() {
+        let (_tmp, path) = create_test_toml("[resources]\n");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_cluster_config(&mut doc, None, "https://k8s.local:6443");
+
+        let output = doc.to_string();
+        assert!(output.contains("[cluster]"));
+        assert!(output.contains("https://k8s.local:6443"));
+    }
+
+    #[test]
+    fn add_cluster_config_named() {
+        let (_tmp, path) = create_test_toml("[resources]\n");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_cluster_config(&mut doc, Some("dev"), "https://dev:6443");
+
+        let output = doc.to_string();
+        assert!(output.contains("[clusters.dev]"));
+        assert!(output.contains("https://dev:6443"));
+        // No standalone [clusters] header
+        assert!(!output.contains("\n[clusters]\n"));
+    }
+
+    #[test]
+    fn add_cluster_config_no_overwrite() {
+        let (_tmp, path) = create_test_toml("[cluster]\nserver = \"https://existing:6443\"\n");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        // Should not overwrite the existing entry
+        add_cluster_config(&mut doc, None, "https://new:6443");
+
+        let output = doc.to_string();
+        assert!(output.contains("https://existing:6443"));
+        assert!(!output.contains("https://new:6443"));
     }
 
     #[test]

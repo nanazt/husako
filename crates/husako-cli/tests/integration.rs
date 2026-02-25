@@ -2391,3 +2391,86 @@ fn add_cluster_not_configured_fails() {
         .code(2)
         .stderr(predicates::str::contains("not configured"));
 }
+
+const KUBECONFIG_WITH_CURRENT_CONTEXT: &str = r#"
+apiVersion: v1
+kind: Config
+current-context: my-ctx
+clusters:
+  - name: my-cluster
+    cluster:
+      server: https://k8s.local:6443
+contexts:
+  - name: my-ctx
+    context:
+      cluster: my-cluster
+      user: my-user
+users:
+  - name: my-user
+    user:
+      token: tok
+"#;
+
+const KUBECONFIG_WITH_DEV_CONTEXT: &str = r#"
+apiVersion: v1
+kind: Config
+current-context: dev
+clusters:
+  - name: dev-cluster
+    cluster:
+      server: https://dev:6443
+contexts:
+  - name: dev
+    context:
+      cluster: dev-cluster
+      user: dev-user
+users:
+  - name: dev-user
+    user:
+      token: tok
+"#;
+
+#[test]
+fn add_cluster_writes_cluster_config_from_kubeconfig() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+    let kube_dir = dir.path().join(".kube");
+    std::fs::create_dir_all(&kube_dir).unwrap();
+    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_CURRENT_CONTEXT).unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "--yes"])
+        .env("HOME", dir.path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("will add [cluster]"))
+        .stderr(predicates::str::contains("Added [cluster] to husako.toml"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("[cluster]"));
+    assert!(content.contains("https://k8s.local:6443"));
+}
+
+#[test]
+fn add_cluster_named_writes_clusters_section_from_kubeconfig() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+    let kube_dir = dir.path().join(".kube");
+    std::fs::create_dir_all(&kube_dir).unwrap();
+    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_DEV_CONTEXT).unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "dev", "--yes"])
+        .env("HOME", dir.path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("will add [clusters.dev]"))
+        .stderr(predicates::str::contains(
+            "Added [clusters.dev] to husako.toml",
+        ));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("https://dev:6443"));
+}

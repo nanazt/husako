@@ -578,11 +578,47 @@ async fn main() -> ExitCode {
             {
                 Ok(None) => ExitCode::SUCCESS, // user cancelled cluster confirmation
                 Ok(Some(result)) => {
+                    // Write [cluster] / [clusters.*] if URL came from kubeconfig
+                    if let AddResult::Resource {
+                        cluster_config: Some(ref cc),
+                        ..
+                    } = result
+                    {
+                        let (mut doc, doc_path) =
+                            match husako_config::edit::load_document(&project_root) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    eprintln!("{} {e}", style::error_prefix());
+                                    return ExitCode::from(2u8);
+                                }
+                            };
+                        husako_config::edit::add_cluster_config(
+                            &mut doc,
+                            cc.cluster_name.as_deref(),
+                            &cc.server,
+                        );
+                        if let Err(e) = husako_config::edit::save_document(&doc, &doc_path) {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(2u8);
+                        }
+                        let section = match &cc.cluster_name {
+                            None => "[cluster]".to_string(),
+                            Some(n) => format!("[clusters.{}]", n),
+                        };
+                        eprintln!(
+                            "{} Added {} to husako.toml",
+                            style::check_mark(),
+                            style::bold(&section)
+                        );
+                    }
+
                     let target = match &result {
-                        AddResult::Resource { name, source } => husako_core::AddTarget::Resource {
-                            name: name.clone(),
-                            source: source.clone(),
-                        },
+                        AddResult::Resource { name, source, .. } => {
+                            husako_core::AddTarget::Resource {
+                                name: name.clone(),
+                                source: source.clone(),
+                            }
+                        }
                         AddResult::Chart { name, source } => husako_core::AddTarget::Chart {
                             name: name.clone(),
                             source: source.clone(),
@@ -1331,10 +1367,16 @@ fn select_k8s_version() -> Result<String, Option<String>> {
 
 // --- husako add (URL auto-detect, no interactive) ---
 
+struct ClusterConfigToAdd {
+    cluster_name: Option<String>, // None = [cluster], Some("dev") = [clusters.dev]
+    server: String,
+}
+
 enum AddResult {
     Resource {
         name: String,
         source: husako_config::SchemaSource,
+        cluster_config: Option<ClusterConfigToAdd>,
     },
     Chart {
         name: String,
@@ -1365,6 +1407,7 @@ async fn resolve_add_target(
         return Ok(Some(AddResult::Resource {
             name: dep_name,
             source: SchemaSource::Release { version: ver },
+            cluster_config: None,
         }));
     }
 
@@ -1376,8 +1419,8 @@ async fn resolve_add_target(
             &cluster_val
         };
 
-        // Try husako.toml first, then kubeconfig as fallback
-        let server_url = husako_config::load(project_root)
+        // Stage 1: husako.toml
+        let config_server = husako_config::load(project_root)
             .ok()
             .flatten()
             .and_then(|cfg| {
@@ -1387,18 +1430,22 @@ async fn resolve_add_target(
                     cfg.clusters.get(&cluster_val).map(|c| c.server.clone())
                 }
             });
-        let server_url = server_url.or_else(|| {
+
+        // Stage 2: kubeconfig fallback (only if husako.toml had nothing)
+        let kube_server = if config_server.is_none() {
             let ctx = if cluster_val.is_empty() {
                 None
             } else {
                 Some(cluster_val.as_str())
             };
             husako_openapi::kubeconfig::server_for_context(ctx)
-        });
+        } else {
+            None
+        };
 
         // Fail early if the cluster is not configured anywhere
-        let server_url = match server_url {
-            Some(url) => url,
+        let server_url = match config_server.as_deref().or(kube_server.as_deref()) {
+            Some(url) => url.to_string(),
             None => {
                 let msg = if cluster_val.is_empty() {
                     "cluster is not configured — add [cluster] to husako.toml or set a current-context in kubeconfig".to_string()
@@ -1412,12 +1459,34 @@ async fn resolve_add_target(
             }
         };
 
+        // cluster_config is Some only when URL came from kubeconfig (not husako.toml)
+        let cluster_config = kube_server.map(|s| ClusterConfigToAdd {
+            cluster_name: if cluster_val.is_empty() {
+                None
+            } else {
+                Some(cluster_val.clone())
+            },
+            server: s,
+        });
+
         // Always show cluster identity (visible even with --yes, useful for audit)
         eprintln!(
             "  Cluster: {}  {}",
             style::dep_name(display_name),
             style::dim(&server_url),
         );
+        if cluster_config.is_some() {
+            let section = if cluster_val.is_empty() {
+                "[cluster]".to_string()
+            } else {
+                format!("[clusters.{}]", cluster_val)
+            };
+            eprintln!(
+                "  {} will add {} to husako.toml",
+                style::arrow_mark(),
+                style::bold(&section)
+            );
+        }
 
         if !yes {
             eprintln!(
@@ -1444,6 +1513,7 @@ async fn resolve_add_target(
             source: SchemaSource::Cluster {
                 cluster: cluster_name,
             },
+            cluster_config,
         }));
     }
 
@@ -1516,6 +1586,7 @@ async fn resolve_add_target(
                                 tag: br,
                                 path,
                             },
+                            cluster_config: None,
                         })),
                         SourceKind::Chart => Ok(Some(AddResult::Chart {
                             name: dep_name,
@@ -1553,6 +1624,7 @@ async fn resolve_add_target(
                                 tag: resolved_tag,
                                 path,
                             },
+                            cluster_config: None,
                         })),
                         SourceKind::Chart => Ok(Some(AddResult::Chart {
                             name: dep_name,
@@ -1596,6 +1668,7 @@ async fn resolve_add_target(
                     SourceKind::Resource => Ok(Some(AddResult::Resource {
                         name: dep_name,
                         source: SchemaSource::File { path },
+                        cluster_config: None,
                     })),
                     SourceKind::Chart => Ok(Some(AddResult::Chart {
                         name: dep_name,
