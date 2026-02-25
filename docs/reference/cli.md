@@ -45,7 +45,7 @@ Output goes to `.husako/` (auto-managed, gitignored).
 
 ## husako render
 
-Compile a TypeScript entry file and emit YAML to stdout.
+Compile a TypeScript entry file and emit YAML to stdout or a file.
 
 ```
 husako render <file-or-alias> [options]
@@ -55,6 +55,7 @@ The file argument is resolved as: direct path → entry alias from `husako.toml`
 
 | Flag | Description |
 |------|-------------|
+| `-o, --output <path>` | Write YAML to a file or directory instead of stdout. If `<path>` ends with `.yaml` or `.yml`, writes to that exact file. Otherwise treated as a directory: writes `<path>/<name>.yaml` where `<name>` is the entry alias or the file stem. Parent directories are created automatically. |
 | `--allow-outside-root` | Allow imports outside the project root |
 | `--timeout-ms <ms>` | Execution timeout in milliseconds |
 | `--max-heap-mb <mb>` | Maximum heap memory in megabytes |
