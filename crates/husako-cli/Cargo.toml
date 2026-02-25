@@ -24,4 +24,5 @@ husako-dts = { path = "../husako-dts", version = "0" }
 predicates = "3"
 insta.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 tempfile.workspace = true

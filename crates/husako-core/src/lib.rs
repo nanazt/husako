@@ -44,6 +44,23 @@ pub struct RenderOptions {
     pub verbose: bool,
 }
 
+pub use husako_runtime_qjs::TestCaseResult;
+
+pub struct TestOptions {
+    pub project_root: PathBuf,
+    /// Explicit files to run; empty means discover `*.test.ts` / `*.spec.ts`.
+    pub files: Vec<PathBuf>,
+    pub timeout_ms: Option<u64>,
+    pub max_heap_mb: Option<usize>,
+    pub allow_outside_root: bool,
+}
+
+pub struct TestResult {
+    /// Path relative to `project_root`.
+    pub file: PathBuf,
+    pub cases: Vec<TestCaseResult>,
+}
+
 pub fn render(
     source: &str,
     filename: &str,
@@ -189,6 +206,12 @@ pub fn generate(
         husako_sdk::HUSAKO_BASE_DTS,
     )?;
 
+    // Write static husako/test.d.ts for IDE support
+    write_file(
+        &types_dir.join("husako/test.d.ts"),
+        husako_sdk::HUSAKO_TEST_DTS,
+    )?;
+
     // 4. Generate k8s types
     // Priority: --skip-k8s → CLI flags → husako.toml [schemas] → skip
     if !options.skip_k8s {
@@ -285,6 +308,7 @@ fn write_tsconfig(
     let mut paths = serde_json::json!({
         "husako": [".husako/types/husako.d.ts"],
         "husako/_base": [".husako/types/husako/_base.d.ts"],
+        "husako/test": [".husako/types/husako/test.d.ts"],
         "k8s/*": [".husako/types/k8s/*"]
     });
 
@@ -1722,6 +1746,121 @@ fn load_plugin_modules(project_root: &Path) -> std::collections::HashMap<String,
     modules
 }
 
+// --- husako test ---
+
+/// Recursively discover `*.test.ts` and `*.spec.ts` files under `root`.
+///
+/// Skips `.husako`, `node_modules`, and any directory starting with `.`.
+pub fn discover_test_files(root: &Path) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    collect_test_files(root, &mut results);
+    results.sort();
+    results
+}
+
+fn collect_test_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            // Skip .husako, node_modules, and any hidden directory
+            if name.starts_with('.') || name == "node_modules" {
+                continue;
+            }
+            collect_test_files(&path, out);
+        } else if path.is_file() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if name.ends_with(".test.ts") || name.ends_with(".spec.ts") {
+                out.push(path);
+            }
+        }
+    }
+}
+
+fn run_test_file(
+    source: &str,
+    filename: &str,
+    options: &TestOptions,
+) -> Result<Vec<TestCaseResult>, HusakoError> {
+    let js = husako_compile_oxc::compile(source, filename)?;
+
+    let entry_path = std::path::Path::new(filename)
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(filename));
+
+    let generated_types_dir = options
+        .project_root
+        .join(".husako/types")
+        .canonicalize()
+        .ok();
+
+    let plugin_modules = load_plugin_modules(&options.project_root);
+
+    let exec_options = husako_runtime_qjs::ExecuteTestsOptions {
+        entry_path,
+        project_root: options.project_root.clone(),
+        allow_outside_root: options.allow_outside_root,
+        timeout_ms: options.timeout_ms,
+        max_heap_mb: options.max_heap_mb,
+        generated_types_dir,
+        plugin_modules,
+    };
+
+    Ok(husako_runtime_qjs::execute_tests(&js, &exec_options)?)
+}
+
+pub fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> {
+    let files = if options.files.is_empty() {
+        discover_test_files(&options.project_root)
+    } else {
+        options.files.clone()
+    };
+
+    let mut results = Vec::new();
+
+    for abs_path in &files {
+        let rel_path = abs_path
+            .strip_prefix(&options.project_root)
+            .unwrap_or(abs_path)
+            .to_path_buf();
+
+        let cases = match std::fs::read_to_string(abs_path) {
+            Ok(source) => {
+                let filename = abs_path.to_string_lossy();
+                match run_test_file(&source, &filename, options) {
+                    Ok(cases) => cases,
+                    Err(e) => vec![TestCaseResult {
+                        name: "<file error>".to_string(),
+                        passed: false,
+                        error: Some(e.to_string()),
+                    }],
+                }
+            }
+            Err(e) => vec![TestCaseResult {
+                name: "<read error>".to_string(),
+                passed: false,
+                error: Some(format!("could not read {}: {e}", abs_path.display())),
+            }],
+        };
+
+        results.push(TestResult {
+            file: rel_path,
+            cases,
+        });
+    }
+
+    Ok(results)
+}
+
 fn new_tsconfig(husako_paths: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "compilerOptions": {
@@ -2633,5 +2772,82 @@ mod tests {
         let detail = dependency_detail(tmp.path(), "my-chart").unwrap();
         assert_eq!(detail.info.name, "my-chart");
         assert_eq!(detail.info.source_type, "file");
+    }
+
+    // --- husako test: discover_test_files ---
+
+    #[test]
+    fn discover_test_files_finds_test_ts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::write(root.join("foo.test.ts"), "").unwrap();
+        std::fs::write(root.join("bar.spec.ts"), "").unwrap();
+        std::fs::write(root.join("foo.ts"), "").unwrap();
+
+        let found = discover_test_files(root);
+        let names: Vec<_> = found
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert!(names.contains(&"foo.test.ts"));
+        assert!(names.contains(&"bar.spec.ts"));
+        assert!(!names.contains(&"foo.ts"));
+    }
+
+    #[test]
+    fn discover_test_files_excludes_husako_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::create_dir(root.join(".husako")).unwrap();
+        std::fs::write(root.join(".husako/hidden.test.ts"), "").unwrap();
+        std::fs::write(root.join("visible.test.ts"), "").unwrap();
+
+        let found = discover_test_files(root);
+        let names: Vec<_> = found
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert!(names.contains(&"visible.test.ts"));
+        assert!(!names.contains(&"hidden.test.ts"));
+    }
+
+    #[test]
+    fn discover_test_files_excludes_node_modules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::create_dir(root.join("node_modules")).unwrap();
+        std::fs::write(root.join("node_modules/pkg.test.ts"), "").unwrap();
+        std::fs::write(root.join("real.test.ts"), "").unwrap();
+
+        let found = discover_test_files(root);
+        let names: Vec<_> = found
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect();
+        assert!(names.contains(&"real.test.ts"));
+        assert!(!names.contains(&"pkg.test.ts"));
+    }
+
+    #[test]
+    fn generate_writes_test_dts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        let opts = GenerateOptions {
+            project_root: root.clone(),
+            openapi: None,
+            skip_k8s: true,
+            config: None,
+        };
+        generate(&opts, &progress::SilentProgress).unwrap();
+
+        assert!(root.join(".husako/types/husako/test.d.ts").exists());
+
+        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+        assert!(parsed["compilerOptions"]["paths"]["husako/test"].is_array());
     }
 }

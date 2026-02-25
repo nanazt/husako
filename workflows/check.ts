@@ -49,12 +49,8 @@ const e2e = new Job("ubuntu-latest").steps((s) =>
       ].join("\n"),
     })
     .add({
-      name: "Build husako binary",
-      run: "cargo build --release --bin husako",
-    })
-    .add({
       name: "E2E tests",
-      run: "bash scripts/e2e.sh",
+      run: "cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored",
     }),
 );
 

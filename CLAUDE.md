@@ -39,8 +39,11 @@ Before committing, always run in this order:
 3. `cargo test --workspace --all-features` — confirm tests pass
 4. For changes touching `husako-helm`, `husako-core`, `husako-dts`, `husako-runtime-qjs`, or `husako-cli`:
    ```bash
-   cargo build --bin husako
-   bash scripts/e2e.sh
+   # E2E local (Scenario G — no network required)
+   cargo test -p husako --test e2e_g
+
+   # E2E full (all scenarios — requires network + kubeconform)
+   cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
    ```
 
 **Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification.

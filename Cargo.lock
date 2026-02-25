@@ -886,6 +886,7 @@ dependencies = [
  "insta",
  "predicates",
  "serde_json",
+ "serde_yaml_ng",
  "tempfile",
 ]
 
@@ -983,6 +984,7 @@ dependencies = [
  "husako-compile-oxc",
  "husako-sdk",
  "rquickjs",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

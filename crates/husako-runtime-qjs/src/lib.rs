@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use rquickjs::loader::{BuiltinLoader, BuiltinResolver};
-use rquickjs::{Context, Ctx, Error, Function, Module, Runtime, Value};
+use rquickjs::{Context, Ctx, Error, Function, Module, Promise, Runtime, Value};
 
 use loader::HusakoFileLoader;
 use resolver::{HusakoFileResolver, HusakoK8sResolver, PluginResolver};
@@ -40,6 +40,16 @@ pub struct ExecuteOptions {
     pub generated_types_dir: Option<PathBuf>,
     /// Plugin module mappings: import specifier → absolute `.js` path.
     pub plugin_modules: std::collections::HashMap<String, PathBuf>,
+}
+
+/// Same fields as `ExecuteOptions`; separate name for clarity in the test runner path.
+pub type ExecuteTestsOptions = ExecuteOptions;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TestCaseResult {
+    pub name: String,
+    pub passed: bool,
+    pub error: Option<String>,
 }
 
 /// Extract a meaningful error message from rquickjs errors.
@@ -177,6 +187,80 @@ pub fn execute(
             .ok_or_else(|| RuntimeError::Execution("build() captured no value".into())),
         n => Err(RuntimeError::BuildCalledMultiple(n)),
     }
+}
+
+pub fn execute_tests(
+    js_source: &str,
+    options: &ExecuteTestsOptions,
+) -> Result<Vec<TestCaseResult>, RuntimeError> {
+    let rt = Runtime::new().map_err(|e| RuntimeError::Init(e.to_string()))?;
+
+    let timed_out = Rc::new(Cell::new(false));
+    if let Some(ms) = options.timeout_ms {
+        let flag = timed_out.clone();
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            if Instant::now() > deadline {
+                flag.set(true);
+                true
+            } else {
+                false
+            }
+        })));
+    }
+
+    if let Some(mb) = options.max_heap_mb {
+        rt.set_memory_limit(mb * 1024 * 1024);
+    }
+
+    let ctx = Context::full(&rt).map_err(|e| RuntimeError::Init(e.to_string()))?;
+
+    let resolver = (
+        BuiltinResolver::default()
+            .with_module("husako")
+            .with_module("husako/_base")
+            .with_module("husako/test"),
+        PluginResolver::new(options.plugin_modules.clone()),
+        HusakoK8sResolver::new(options.generated_types_dir.clone()),
+        HusakoFileResolver::new(
+            &options.project_root,
+            options.allow_outside_root,
+            &options.entry_path,
+        ),
+    );
+    let loader = (
+        BuiltinLoader::default()
+            .with_module("husako", husako_sdk::HUSAKO_MODULE)
+            .with_module("husako/_base", husako_sdk::HUSAKO_BASE)
+            .with_module("husako/test", husako_sdk::HUSAKO_TEST_MODULE),
+        HusakoFileLoader::new(),
+    );
+    rt.set_loader(resolver, loader);
+
+    let json_str: String = ctx.with(|ctx| {
+        let promise = Module::evaluate(ctx.clone(), "main", js_source)
+            .map_err(|e| execution_error(&ctx, e))?;
+        promise
+            .finish::<()>()
+            .map_err(|e| execution_error(&ctx, e))?;
+
+        // Module evaluated — now run the registered tests
+        let run_fn: Function = ctx.globals().get("__husako_run_all_tests").map_err(|_| {
+            RuntimeError::Execution("no tests found — did you import from 'husako/test'?".into())
+        })?;
+        let promise: Value = run_fn.call(()).map_err(|e| execution_error(&ctx, e))?;
+        Promise::from_value(promise)
+            .map_err(|e| RuntimeError::Execution(e.to_string()))?
+            .finish::<String>()
+            .map_err(|e| execution_error(&ctx, e))
+    })?;
+
+    if timed_out.get() {
+        return Err(RuntimeError::Timeout(options.timeout_ms.unwrap()));
+    }
+
+    serde_json::from_str(&json_str)
+        .map_err(|e| RuntimeError::Execution(format!("test result parse error: {e}")))
 }
 
 fn validate_and_convert(val: &Value<'_>, path: &str) -> Result<serde_json::Value, RuntimeError> {
@@ -728,5 +812,97 @@ export function values() { return new Values(); }
 
         let result = execute(js, &opts).unwrap();
         assert_eq!(result[0]["replicaCount"], 3);
+    }
+
+    // --- execute_tests tests ---
+
+    fn test_options_for_tests() -> ExecuteTestsOptions {
+        ExecuteTestsOptions {
+            entry_path: PathBuf::from("/tmp/test.ts"),
+            project_root: PathBuf::from("/tmp"),
+            allow_outside_root: false,
+            timeout_ms: None,
+            max_heap_mb: None,
+            generated_types_dir: None,
+            plugin_modules: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn execute_tests_all_pass() {
+        let js = r#"
+            import { test, expect } from "husako/test";
+            test("one plus one", () => { expect(1 + 1).toBe(2); });
+            test("string equality", () => { expect("hello").toBe("hello"); });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].passed);
+        assert!(results[1].passed);
+        assert!(results[0].error.is_none());
+    }
+
+    #[test]
+    fn execute_tests_failure_captured() {
+        let js = r#"
+            import { test, expect } from "husako/test";
+            test("will fail", () => { expect(1).toBe(999); });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+        let err = results[0].error.as_deref().unwrap_or("");
+        assert!(err.contains("999"), "error should mention expected value");
+    }
+
+    #[test]
+    fn execute_tests_describe_prefixes_name() {
+        let js = r#"
+            import { describe, test, expect } from "husako/test";
+            describe("math", () => {
+                test("addition", () => { expect(1 + 1).toBe(2); });
+            });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "math > addition");
+        assert!(results[0].passed);
+    }
+
+    #[test]
+    fn execute_tests_not_negation() {
+        let js = r#"
+            import { test, expect } from "husako/test";
+            test("not equal", () => { expect(1).not.toBe(2); });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+    }
+
+    #[test]
+    fn execute_tests_no_build_call_required() {
+        // execute_tests should succeed without husako.build() being called
+        let js = r#"
+            import { test, expect } from "husako/test";
+            test("pure logic", () => { expect(2 * 3).toBe(6); });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+    }
+
+    #[test]
+    fn execute_tests_async_test_function() {
+        let js = r#"
+            import { test, expect } from "husako/test";
+            test("async test", async () => {
+                const result = await Promise.resolve(42);
+                expect(result).toBe(42);
+            });
+        "#;
+        let results = execute_tests(js, &test_options_for_tests()).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
     }
 }

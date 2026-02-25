@@ -9,9 +9,9 @@
 2. **Integration tests** — `tests/` dir in crates that need cross-function flows
    (e.g., `husako-core`). Use `assert_cmd` for CLI exit codes, `insta` for YAML snapshots.
 
-3. **E2E tests** — `scripts/e2e.sh`. Tests the full binary against real network sources.
-   Network access is allowed. Run with `bash scripts/e2e.sh` (release binary) or
-   `HUSAKO_BIN=./target/debug/husako bash scripts/e2e.sh`.
+3. **E2E tests** — `crates/husako-cli/tests/e2e_*.rs`. Tests the full binary against real network
+   sources using `assert_cmd`. Local tests (Scenario G) always run; network tests (A–F) are tagged
+   `#[ignore]` and run in CI via `--include-ignored`.
 
 ## E2E Test Principles
 
@@ -29,6 +29,7 @@ Every state-changing command must have its side effects explicitly verified:
 | `husako plugin add` | husako.toml entry present AND `.husako/plugins/<name>/` directory exists after gen |
 | `husako plugin remove` | husako.toml entry absent AND `.husako/plugins/<name>/` directory removed |
 | `husako plugin list` | Output contains / does not contain the plugin name |
+| `husako test` | Exit 0 on all-pass, exit 1 on any failure; output contains test names and pass/fail marks |
 
 ### Validate Kubernetes YAML with kubeconform
 
@@ -88,23 +89,27 @@ All source kinds are exercised end-to-end:
 | `registry` | chart | B — bitnami HTTP → OCI delegation |
 | `git` | chart | B — prometheus-community/helm-charts |
 | `oci` | chart | F — bitnamicharts/postgresql OCI registry |
+| `husako test` | TS test runner | G — passing tests, failing tests, discovery, plugin testing |
 
 ### State isolation
 
-- Read-only tests (Scenario A) use the committed `test/e2e/` directory
-- State-modifying tests (B, C, D, E) use `mktemp -d` temp dirs
-- Temp dirs are cleaned with `trap 'rm -rf "$tmpdir"' EXIT` inside subshell `()`
+- Read-only tests (Scenario A) use the committed `test/e2e/` fixture directory
+- State-modifying tests (B, C, D, E, F) use `tempfile::TempDir` — auto-cleaned on drop
+- Scenario G tests use `e2e_tmpdir()` — creates `TempDir` inside `test/e2e/` to avoid macOS `/tmp` symlink mismatch
 
 ### Stderr vs stdout
 
 husako diagnostic output (list, info, debug, validate, outdated, plugin list) goes to stderr.
-Capture it with `2>&1`:
-
-```bash
-local list_out; list_out=$("$HUSAKO" list 2>&1)
-```
-
 Only `husako render` writes to stdout.
+
+In Rust tests, capture both and check appropriately:
+```rust
+let output = husako_at(dir).args(["list"]).output().unwrap();
+let stderr = String::from_utf8_lossy(&output.stderr);  // diagnostics
+let stdout = String::from_utf8_lossy(&output.stdout);  // render YAML only
+// For commands that mix stdout+stderr (e.g. husako test):
+let combined = output_combined(&output);
+```
 
 ### CLI flag notes
 
@@ -119,18 +124,54 @@ Only `husako render` writes to stdout.
 
 ### Code reuse via helpers
 
-```bash
-init_project()        # write husako.toml + copy tsconfig.json
-write_configmap()     # write a minimal ConfigMap entry.ts
-assert_contains()     # grep-based string assertion with pass/fail output
-assert_file()         # file existence assertion
-assert_no_dir()       # directory absence assertion
-assert_toml_field()   # check husako.toml has field=value on the same line
-assert_toml_key_absent()  # check dep name is not a top-level TOML key
-assert_dts_exports()  # check .d.ts file has expected export symbol
-assert_k8s_valid()    # kubeconform -strict validation (standard k8s only, no cluster needed)
-assert_valid_yaml()   # ruby Psych YAML validation (any YAML; Ruby built-in, works on macOS and ubuntu-latest)
+Shared helpers live in `crates/husako-cli/tests/e2e_common/mod.rs`.
+Each scenario file accesses them with `mod e2e_common; use e2e_common::*;`.
+
+```rust
+husako_at(dir)              // assert_cmd::Command for husako in dir
+e2e_fixtures_dir()          // absolute path to test/e2e/
+e2e_tmpdir()                // TempDir inside test/e2e/ (macOS-safe for Scenario G)
+init_project(dir, toml)     // write husako.toml + copy tsconfig.json
+write_configmap(path)       // write a minimal ConfigMap entry.ts
+output_combined(&output)    // combine stdout+stderr into one string
+assert_contains(desc, pat, content)     // substring assertion with #[track_caller]
+assert_not_contains(...)                // negative substring assertion
+assert_file(path)           // file existence assertion
+assert_no_dir(path)         // directory absence assertion
+assert_toml_field(dir, f, v, desc)      // husako.toml has field+value on same line
+assert_toml_key_absent(dir, key)        // dep name not a top-level TOML key
+assert_dts_exports(path, symbol)        // .d.ts file has expected export symbol
+assert_k8s_valid(yaml, desc)            // kubeconform -strict (skips if not installed)
+assert_valid_yaml(yaml, desc)           // serde_yaml_ng structural validation
+copy_dir_all(src, dst)      // recursive directory copy
 ```
+
+## TypeScript Test Files (`husako test`)
+
+Test files for husako TypeScript code use the naming convention `*.test.ts` or `*.spec.ts`.
+They import from the `"husako/test"` builtin module:
+
+```typescript
+import { test, describe, expect } from "husako/test";
+
+describe("suite name", () => {
+  test("case name", () => {
+    expect(value).toBe(expected);
+  });
+});
+```
+
+Discovery skips `.husako/`, `node_modules/`, and all hidden directories. Discovery is recursive.
+
+Available matchers: `toBe`, `toEqual`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeTruthy`,
+`toBeFalsy`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`,
+`toContain`, `toHaveProperty`, `toHaveLength`, `toMatch`, `toThrow`. All support `.not` negation.
+
+`husako generate --skip-k8s` must be run before `husako test` so `husako/test.d.ts` and
+`tsconfig.json` path mappings are written. For plugin tests, run `husako generate` first to
+install plugins.
+
+Exit code: 0 if all tests pass, 1 if any test fails or cannot compile/run.
 
 ## Unit Test Patterns
 
@@ -201,11 +242,9 @@ cargo test -p husako-helm
 # Specific test by name
 cargo test -p husako-core schema_source
 
-# E2E (network OK, requires kubectl + built binary)
-cargo build --release --bin husako
-bash scripts/e2e.sh
+# E2E local only (Scenario G — no network)
+cargo test -p husako --test e2e_g
 
-# E2E with debug binary (faster iteration)
-cargo build --bin husako
-HUSAKO_BIN=./target/debug/husako bash scripts/e2e.sh
+# E2E full (all scenarios A-G — requires network + kubeconform)
+cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
 ```
