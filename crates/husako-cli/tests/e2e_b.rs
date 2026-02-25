@@ -81,7 +81,12 @@ fn scenario_b_chart_sources() {
         .assert()
         .success();
 
-    assert_toml_field(dir.path(), "source", "registry", "redis-reg source=registry");
+    assert_toml_field(
+        dir.path(),
+        "source",
+        "registry",
+        "redis-reg source=registry",
+    );
     assert_toml_field(dir.path(), "repo", "charts.bitnami.com", "redis-reg repo");
     assert_toml_field(dir.path(), "chart", "redis", "redis-reg chart");
     assert_toml_field(dir.path(), "version", "20.0.1", "redis-reg version");
@@ -139,7 +144,10 @@ fn scenario_b_chart_sources() {
     husako_at(dir.path()).args(["gen"]).assert().success();
     assert_file(&dir.path().join(".husako/types/helm/prom-git.d.ts"));
     // "prom-git" → "PromGit"
-    assert_dts_exports(&dir.path().join(".husako/types/helm/prom-git.d.ts"), "PromGit");
+    assert_dts_exports(
+        &dir.path().join(".husako/types/helm/prom-git.d.ts"),
+        "PromGit",
+    );
 
     std::fs::write(
         dir.path().join("prom-git-values.ts"),

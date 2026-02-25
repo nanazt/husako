@@ -30,21 +30,25 @@ fn scenario_d_version_management() {
             .stdout,
     )
     .to_string();
-    assert_contains("render (1.30) → kind: ConfigMap", "kind: ConfigMap", &cm_before);
+    assert_contains(
+        "render (1.30) → kind: ConfigMap",
+        "kind: ConfigMap",
+        &cm_before,
+    );
     assert_k8s_valid(&cm_before, "ConfigMap (k8s 1.30)");
 
     // Record pre-update mtime
     let dts_path = dir.path().join(".husako/types/k8s/core/v1.d.ts");
-    let mtime_before = std::fs::metadata(&dts_path)
-        .unwrap()
-        .modified()
-        .unwrap();
+    let mtime_before = std::fs::metadata(&dts_path).unwrap().modified().unwrap();
 
     // Small sleep to ensure mtime difference is detectable
     std::thread::sleep(Duration::from_secs(1));
 
     // husako update may exit non-zero if no newer version found; that's fine
-    let _ = husako_at(dir.path()).args(["update", "k8s"]).output().unwrap();
+    let _ = husako_at(dir.path())
+        .args(["update", "k8s"])
+        .output()
+        .unwrap();
 
     // husako.toml version should have changed from "1.30"
     let toml_after = std::fs::read_to_string(dir.path().join("husako.toml")).unwrap();
@@ -54,10 +58,7 @@ fn scenario_d_version_management() {
     );
 
     // Type files regenerated (mtime >= before)
-    let mtime_after = std::fs::metadata(&dts_path)
-        .unwrap()
-        .modified()
-        .unwrap();
+    let mtime_after = std::fs::metadata(&dts_path).unwrap().modified().unwrap();
     assert!(
         mtime_after >= mtime_before,
         "types should have been regenerated after update (mtime unchanged)"
@@ -76,6 +77,10 @@ fn scenario_d_version_management() {
             .stdout,
     )
     .to_string();
-    assert_contains("render (after update) → kind: ConfigMap", "kind: ConfigMap", &cm_after);
+    assert_contains(
+        "render (after update) → kind: ConfigMap",
+        "kind: ConfigMap",
+        &cm_after,
+    );
     assert_k8s_valid(&cm_after, "ConfigMap (after update)");
 }

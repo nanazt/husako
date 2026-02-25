@@ -22,7 +22,10 @@ fn scenario_a_static_k8s_and_local_helm() {
         "LocalChart",
     );
     assert_file(&e2e_dir.join(".husako/types/k8s/apps/v1.d.ts"));
-    assert_dts_exports(&e2e_dir.join(".husako/types/k8s/apps/v1.d.ts"), "Deployment");
+    assert_dts_exports(
+        &e2e_dir.join(".husako/types/k8s/apps/v1.d.ts"),
+        "Deployment",
+    );
 
     // husako list shows both k8s and local-chart (output goes to stderr)
     let list_out = husako_at(&e2e_dir).args(["list"]).output().unwrap();
@@ -77,8 +80,16 @@ fn scenario_a_static_k8s_and_local_helm() {
             .stdout,
     )
     .to_string();
-    assert_contains("render helm → replicaCount: 2", "replicaCount: 2", &helm_yaml);
-    assert_contains("render helm → repository: nginx", "repository: nginx", &helm_yaml);
+    assert_contains(
+        "render helm → replicaCount: 2",
+        "replicaCount: 2",
+        &helm_yaml,
+    );
+    assert_contains(
+        "render helm → repository: nginx",
+        "repository: nginx",
+        &helm_yaml,
+    );
     assert_valid_yaml(&helm_yaml, "render helm-values");
 
     // render via helm alias

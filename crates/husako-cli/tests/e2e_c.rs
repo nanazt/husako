@@ -78,7 +78,12 @@ build([ex]);
         .success();
 
     assert_toml_field(dir.path(), "source", "git", "cert-manager source=git");
-    assert_toml_field(dir.path(), "repo", "cert-manager/cert-manager", "cert-manager repo");
+    assert_toml_field(
+        dir.path(),
+        "repo",
+        "cert-manager/cert-manager",
+        "cert-manager repo",
+    );
     assert_toml_field(dir.path(), "tag", "v1.16.3", "cert-manager tag");
 
     husako_at(dir.path()).args(["gen"]).assert().success();
@@ -115,7 +120,11 @@ build([cert]);
             .stdout,
     )
     .to_string();
-    assert_contains("render → kind: Certificate", "kind: Certificate", &cert_yaml);
+    assert_contains(
+        "render → kind: Certificate",
+        "kind: Certificate",
+        &cert_yaml,
+    );
     assert_contains("render → secretName: my-tls", "my-tls", &cert_yaml);
     assert_valid_yaml(&cert_yaml, "render certificate");
 

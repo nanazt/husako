@@ -43,7 +43,11 @@ describe("add", () => {
         output.status.code(),
         output_combined(&output)
     );
-    assert_contains("G1: output contains 'passed'", "passed", &output_combined(&output));
+    assert_contains(
+        "G1: output contains 'passed'",
+        "passed",
+        &output_combined(&output),
+    );
 }
 
 /// G2: A failing assertion → exit 1, output contains "failed".
@@ -75,7 +79,11 @@ test("will fail", () => { expect(1).toBe(999); });
         output.status.code(),
         output_combined(&output)
     );
-    assert_contains("G2: output contains 'failed'", "failed", &output_combined(&output));
+    assert_contains(
+        "G2: output contains 'failed'",
+        "failed",
+        &output_combined(&output),
+    );
 }
 
 /// G3: Auto-discovery — `husako test` with no args finds all `*.test.ts` recursively.
@@ -181,5 +189,9 @@ test("greet", () => { expect(greet("World")).toBe("Hello, World!"); });
         output.status.code(),
         output_combined(&output)
     );
-    assert_contains("G4: output contains 'passed'", "passed", &output_combined(&output));
+    assert_contains(
+        "G4: output contains 'passed'",
+        "passed",
+        &output_combined(&output),
+    );
 }

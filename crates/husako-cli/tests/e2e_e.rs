@@ -93,9 +93,12 @@ build([repo, release]);
         .args(["plugin", "list"])
         .output()
         .unwrap();
-    let plugin_list_after_out =
-        String::from_utf8_lossy(&plugin_list_after.stderr).to_string();
-    assert_not_contains("fluxcd not in plugin list", "fluxcd", &plugin_list_after_out);
+    let plugin_list_after_out = String::from_utf8_lossy(&plugin_list_after.stderr).to_string();
+    assert_not_contains(
+        "fluxcd not in plugin list",
+        "fluxcd",
+        &plugin_list_after_out,
+    );
 
     assert_no_dir(&dir.path().join(".husako/plugins/fluxcd"));
 
