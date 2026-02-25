@@ -10,6 +10,9 @@
       "husako/_base": [
         ".husako/types/husako/_base.d.ts"
       ],
+      "husako/test": [
+        ".husako/types/husako/test.d.ts"
+      ],
       "k8s/*": [
         ".husako/types/k8s/*"
       ]

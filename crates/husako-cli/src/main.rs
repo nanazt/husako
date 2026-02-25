@@ -309,7 +309,7 @@ async fn main() -> ExitCode {
                 verbose,
             };
 
-            match husako_core::render(&source, &filename, &options) {
+            match husako_core::render(&source, &filename, &options).await {
                 Ok(yaml) => {
                     print!("{yaml}");
                     ExitCode::SUCCESS
@@ -1154,7 +1154,7 @@ async fn main() -> ExitCode {
                 verbose: false,
             };
 
-            match husako_core::validate_file(&source, &filename, &options) {
+            match husako_core::validate_file(&source, &filename, &options).await {
                 Ok(result) => {
                     eprintln!("{} {} compiles successfully", style::check_mark(), file);
                     eprintln!(
@@ -1202,7 +1202,7 @@ async fn main() -> ExitCode {
                 allow_outside_root: false,
             };
 
-            let results = match husako_core::run_tests(&options) {
+            let results = match husako_core::run_tests(&options).await {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());

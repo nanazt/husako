@@ -17,6 +17,7 @@ fn bench_render(c: &mut Criterion) {
     let fixtures = bench_fixtures_dir();
     let types_dir = fixtures.join(".husako/types");
     let opts = make_opts(&fixtures);
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("render");
 
@@ -24,14 +25,14 @@ fn bench_render(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::from_parameter("builtin/small"),
         SMALL_TS,
-        |b, src| b.iter(|| render(src, "bench.ts", &opts).unwrap()),
+        |b, src| b.iter(|| rt.block_on(render(src, "bench.ts", &opts)).unwrap()),
     );
 
     // k8s variants require `husako gen` in fixtures directory.
     if types_dir.exists() {
         for (id, src) in [("k8s/small", K8S_SMALL_TS), ("k8s/medium", K8S_MEDIUM_TS)] {
             group.bench_with_input(BenchmarkId::from_parameter(id), src, |b, src| {
-                b.iter(|| render(src, "bench.ts", &opts).unwrap())
+                b.iter(|| rt.block_on(render(src, "bench.ts", &opts)).unwrap())
             });
         }
     } else {

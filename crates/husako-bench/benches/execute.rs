@@ -23,6 +23,7 @@ fn make_opts(
 fn bench_execute(c: &mut Criterion) {
     let fixtures = bench_fixtures_dir();
     let types_dir = fixtures.join(".husako/types");
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     // Pre-compile all TS → JS once, outside b.iter(), to isolate QuickJS execution cost.
     let small_js = compile(SMALL_TS, "bench.ts").expect("compile SMALL_TS");
@@ -36,7 +37,7 @@ fn bench_execute(c: &mut Criterion) {
     for (id, js) in [("builtin/small", &small_js), ("builtin/medium", &medium_js)] {
         let opts = make_opts(&fixtures, None);
         group.bench_with_input(BenchmarkId::from_parameter(id), js.as_str(), |b, js| {
-            b.iter(|| execute(js, &opts).unwrap())
+            b.iter(|| rt.block_on(execute(js, &opts)).unwrap())
         });
     }
 
@@ -45,7 +46,7 @@ fn bench_execute(c: &mut Criterion) {
         for (id, js) in [("k8s/small", &k8s_small_js), ("k8s/medium", &k8s_medium_js)] {
             let opts = make_opts(&fixtures, Some(types_dir.clone()));
             group.bench_with_input(BenchmarkId::from_parameter(id), js.as_str(), |b, js| {
-                b.iter(|| execute(js, &opts).unwrap())
+                b.iter(|| rt.block_on(execute(js, &opts)).unwrap())
             });
         }
     } else {

@@ -61,7 +61,7 @@ pub struct TestResult {
     pub cases: Vec<TestCaseResult>,
 }
 
-pub fn render(
+pub async fn render(
     source: &str,
     filename: &str,
     options: &RenderOptions,
@@ -112,7 +112,7 @@ pub fn render(
     }
 
     let execute_start = std::time::Instant::now();
-    let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
 
     if options.verbose {
         eprintln!("[execute] done ({}ms)", execute_start.elapsed().as_millis());
@@ -1593,7 +1593,7 @@ pub struct ValidateResult {
     pub validation_errors: Vec<String>,
 }
 
-pub fn validate_file(
+pub async fn validate_file(
     source: &str,
     filename: &str,
     options: &RenderOptions,
@@ -1622,7 +1622,7 @@ pub fn validate_file(
         plugin_modules,
     };
 
-    let value = husako_runtime_qjs::execute(&js, &exec_options)?;
+    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
 
     let resource_count = if let serde_json::Value::Array(arr) = &value {
         arr.len()
@@ -1793,7 +1793,7 @@ fn collect_test_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn run_test_file(
+async fn run_test_file(
     source: &str,
     filename: &str,
     options: &TestOptions,
@@ -1822,10 +1822,10 @@ fn run_test_file(
         plugin_modules,
     };
 
-    Ok(husako_runtime_qjs::execute_tests(&js, &exec_options)?)
+    Ok(husako_runtime_qjs::execute_tests(&js, &exec_options).await?)
 }
 
-pub fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> {
+pub async fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> {
     let files = if options.files.is_empty() {
         discover_test_files(&options.project_root)
     } else {
@@ -1843,7 +1843,7 @@ pub fn run_tests(options: &TestOptions) -> Result<Vec<TestResult>, HusakoError> 
         let cases = match std::fs::read_to_string(abs_path) {
             Ok(source) => {
                 let filename = abs_path.to_string_lossy();
-                match run_test_file(&source, &filename, options) {
+                match run_test_file(&source, &filename, options).await {
                     Ok(cases) => cases,
                     Err(e) => vec![TestCaseResult {
                         name: "<file error>".to_string(),
@@ -1895,29 +1895,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn end_to_end_render() {
+    #[tokio::test]
+    async fn end_to_end_render() {
         let ts = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
-        let yaml = render(ts, "test.ts", &test_options()).unwrap();
+        let yaml = render(ts, "test.ts", &test_options()).await.unwrap();
         assert!(yaml.contains("apiVersion: v1"));
         assert!(yaml.contains("kind: Namespace"));
         assert!(yaml.contains("name: test"));
     }
 
-    #[test]
-    fn compile_error_propagates() {
+    #[tokio::test]
+    async fn compile_error_propagates() {
         let ts = "const = ;";
-        let err = render(ts, "bad.ts", &test_options()).unwrap_err();
+        let err = render(ts, "bad.ts", &test_options()).await.unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
-    #[test]
-    fn missing_build_propagates() {
+    #[tokio::test]
+    async fn missing_build_propagates() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = render(ts, "test.ts", &test_options()).unwrap_err();
+        let err = render(ts, "test.ts", &test_options()).await.unwrap_err();
         assert!(matches!(
             err,
             HusakoError::Runtime(husako_runtime_qjs::RuntimeError::BuildNotCalled)
@@ -2734,30 +2734,32 @@ mod tests {
         assert!(!report.types_exist);
     }
 
-    #[test]
-    fn validate_valid_ts() {
+    #[tokio::test]
+    async fn validate_valid_ts() {
         let ts = r#"
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let options = test_options();
-        let result = validate_file(ts, "test.ts", &options).unwrap();
+        let result = validate_file(ts, "test.ts", &options).await.unwrap();
         assert_eq!(result.resource_count, 1);
         assert!(result.validation_errors.is_empty());
     }
 
-    #[test]
-    fn validate_compile_error() {
+    #[tokio::test]
+    async fn validate_compile_error() {
         let ts = "const = ;";
         let options = test_options();
-        let err = validate_file(ts, "bad.ts", &options).unwrap_err();
+        let err = validate_file(ts, "bad.ts", &options).await.unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
-    #[test]
-    fn validate_runtime_error() {
+    #[tokio::test]
+    async fn validate_runtime_error() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = validate_file(ts, "test.ts", &test_options()).unwrap_err();
+        let err = validate_file(ts, "test.ts", &test_options())
+            .await
+            .unwrap_err();
         assert!(matches!(err, HusakoError::Runtime(_)));
     }
 

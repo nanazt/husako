@@ -11,6 +11,7 @@ husako-core         = { path = "../husako-core" }
 husako-dts          = { path = "../husako-dts" }
 husako-yaml         = { path = "../husako-yaml" }
 serde_json = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
