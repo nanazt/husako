@@ -34,6 +34,8 @@ cargo test --workspace --all-features
 # Benchmarks
 cargo bench -p husako-bench -- --test   # quick: compile + single run, no stats
 cargo bench -p husako-bench             # full criterion run (HTML at target/criterion/)
+# Note: k8s/* bench variants are skipped unless types are pre-generated:
+# cd crates/husako-bench/fixtures && husako gen
 
 # Bench report — generate bench-summary.md + bench-report.md from criterion results
 # (requires a prior full bench run; output goes to target/criterion/ by default)
@@ -54,6 +56,12 @@ Before committing, always run in this order:
    # E2E full (all scenarios — requires network + kubeconform)
    cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
    ```
+5. For changes touching the core pipeline (`husako-compile-oxc`, `husako-runtime-qjs`, `husako-core`):
+   ```bash
+   # Quick bench sanity check — compiles and runs once, no statistical output
+   cargo bench -p husako-bench -- --test
+   ```
+   Run the full benchmark (`cargo bench -p husako-bench`) when you need to measure actual performance impact, and include the report in the PR description if there is a measurable regression or improvement.
 
 **Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification. Never run crate-scoped lint (`cargo clippy -p <crate>`) as a substitute for the full workspace command.
 
@@ -66,7 +74,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 1. **Compiler** (`husako-compile-oxc`): Strips TypeScript types with oxc, producing plain JavaScript
 2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`, `"helm/*"`, plugin modules), captures `husako.build()` output via Rust-side sink
 3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar, manages plugin lifecycle
-4. **Emitter** (`husako-yaml`): Converts validated `serde_json::Value` to YAML or JSON output
+4. **Emitter** (`husako-core::emit`): Converts validated `serde_json::Value` to YAML output (`emit_yaml`, re-exported as `husako_core::emit_yaml`)
 5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; kubeconfig credential resolution; GitHub release spec download
 6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs; JSON Schema → TypeScript for Helm charts
 7. **Helm** (`husako-helm`): Resolves Helm chart `values.schema.json` from file, registry, ArtifactHub, or git sources
@@ -86,6 +94,7 @@ crates/
 ├── husako-core/           # Pipeline orchestration + validation + schema source resolution + plugins
 │   └── src/
 │       ├── lib.rs              # generate(), render(), scaffold(), JSONC tsconfig handling
+│       ├── emit.rs             # JSON → YAML emitter (emit_yaml, re-exported at crate root)
 │       ├── plugin.rs           # Plugin install/remove/list, preset merging, tsconfig paths
 │       ├── quantity.rs         # Kubernetes quantity grammar validation
 │       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
@@ -117,8 +126,9 @@ crates/
 │       ├── json_schema.rs      # JSON Schema → .d.ts + .js for Helm chart values
 │       ├── schema.rs           # Schema classification and extraction
 │       └── schema_store.rs     # _schema.json generation for validation
-├── husako-yaml/           # JSON → YAML/JSON emitter
-│   └── src/lib.rs
+├── husako-bench/          # Criterion benchmarks (compile/execute/render/generate/emit) + report binary
+│   ├── benches/
+│   └── src/               # bench_fixtures_dir(), fixture constants, report binary
 └── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
     └── src/lib.rs
 ```
@@ -181,12 +191,15 @@ cargo test -p husako-core test_name
 - **Integration tests**: `assert_cmd` for exit code mapping, import resolution, strict JSON contract failures, quantity validation with JSON path
 - **Snapshot tests**: `insta` for YAML output comparison
 - **No external network**: Use a local mock server for OpenAPI tests
+- **Async tests**: Tests calling `render()`, `validate_file()`, `run_tests()`, or `execute()` must use `#[tokio::test]` and `async fn` — these are `async fn` backed by `spawn_blocking`.
 
 ## Gotchas
 
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
 - `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
+- **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
+- **QuickJS (`husako-runtime-qjs`) is not async-native**: `rquickjs::AsyncRuntime` + `parallel` feature panics in `event-listener` under tokio's multi-thread runtime; `PromiseFuture` is `!Send`. Use `tokio::task::spawn_blocking` to wrap synchronous QuickJS execution — this is the correct tokio pattern for CPU-bound single-threaded work.
 
 ## Writing Docs
 
@@ -218,7 +231,7 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags 
 
 ## CI/CD
 
-Workflows are authored in TypeScript using [gaji](https://github.com/dodok8/gaji) and compiled to YAML. Source files in `workflows/`, output in `.github/workflows/`.
+Workflows are authored in TypeScript using [gaji](https://github.com/dodok8/gaji) and compiled to YAML. Source files in `workflows/`, output in `.github/workflows/`. **Always edit the `.ts` source and run `gaji build` — never edit the YAML directly.** The YAML is regenerated from TypeScript; manual edits will be overwritten.
 
 ```bash
 gaji dev     # generate types
