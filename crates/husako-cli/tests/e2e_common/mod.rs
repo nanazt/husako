@@ -163,10 +163,14 @@ pub fn assert_toml_key_absent(dir: &Path, key: &str) {
 }
 
 /// Validate YAML is structurally valid using `serde_yaml_ng`.
+/// Supports multi-document YAML (separated by `---`).
 #[track_caller]
 pub fn assert_valid_yaml(yaml: &str, desc: &str) {
-    serde_yaml_ng::from_str::<serde_yaml_ng::Value>(yaml)
-        .unwrap_or_else(|e| panic!("{desc}: invalid YAML: {e}\n---\n{yaml}"));
+    // Split on document boundaries; husako render may emit multiple `---` docs.
+    for part in yaml.split("\n---").map(str::trim).filter(|s| !s.is_empty()) {
+        serde_yaml_ng::from_str::<serde_yaml_ng::Value>(part)
+            .unwrap_or_else(|e| panic!("{desc}: invalid YAML: {e}\n---\n{part}"));
+    }
 }
 
 /// Validate standard k8s YAML via `kubeconform -strict`.
