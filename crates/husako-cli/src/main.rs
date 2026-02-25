@@ -464,23 +464,6 @@ async fn main() -> ExitCode {
                 }
             };
 
-            if !cli.yes {
-                let targets = match (do_cache, do_types) {
-                    (true, true) => "cache and types",
-                    (true, false) => "cache",
-                    (false, true) => "types",
-                    _ => unreachable!(),
-                };
-                match interactive::confirm(&format!("Remove {targets}?")) {
-                    Ok(true) => {}
-                    Ok(false) => return ExitCode::SUCCESS,
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        return ExitCode::from(1);
-                    }
-                }
-            }
-
             let options = husako_core::CleanOptions {
                 project_root,
                 cache: do_cache,
