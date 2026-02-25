@@ -1,9 +1,12 @@
+pub mod emit;
 pub mod plugin;
 pub mod progress;
 pub mod quantity;
 pub mod schema_source;
 pub mod validate;
 pub mod version_check;
+
+pub use emit::emit_yaml;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -20,7 +23,7 @@ pub enum HusakoError {
     #[error(transparent)]
     Runtime(#[from] husako_runtime_qjs::RuntimeError),
     #[error(transparent)]
-    Emit(#[from] husako_yaml::EmitError),
+    Emit(#[from] emit::EmitError),
     #[error(transparent)]
     OpenApi(#[from] husako_openapi::OpenApiError),
     #[error(transparent)]
@@ -150,7 +153,7 @@ pub async fn render(
         );
     }
 
-    let yaml = husako_yaml::emit_yaml(&value)?;
+    let yaml = emit_yaml(&value)?;
 
     if options.verbose {
         let line_count = yaml.lines().count();

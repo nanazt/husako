@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use husako_yaml::emit_yaml;
+use husako_core::emit_yaml;
 use serde_json::{Value, json};
 
 fn make_deployment(n: u32) -> Value {

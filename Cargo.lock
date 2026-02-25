@@ -1055,7 +1055,6 @@ dependencies = [
  "husako-core",
  "husako-dts",
  "husako-runtime-qjs",
- "husako-yaml",
  "serde_json",
  "tokio",
 ]
@@ -1095,7 +1094,6 @@ dependencies = [
  "husako-openapi",
  "husako-runtime-qjs",
  "husako-sdk",
- "husako-yaml",
  "mockito",
  "regex-lite",
  "reqwest",
@@ -1167,15 +1165,6 @@ dependencies = [
 [[package]]
 name = "husako-sdk"
 version = "0.1.0"
-
-[[package]]
-name = "husako-yaml"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "serde_yaml_ng",
- "thiserror 2.0.18",
-]
 
 [[package]]
 name = "hyper"
