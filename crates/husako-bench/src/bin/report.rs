@@ -148,20 +148,97 @@ fn platform() -> String {
     format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
 }
 
+fn cpu_name() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo") {
+            if let Some(line) = content.lines().find(|l| l.starts_with("model name")) {
+                if let Some(name) = line.splitn(2, ':').nth(1) {
+                    return name.trim().to_owned();
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("sysctl")
+            .args(["-n", "machdep.cpu.brand_string"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            if !s.is_empty() {
+                return s;
+            }
+        }
+    }
+    std::env::consts::ARCH.to_owned()
+}
+
+fn cpu_cores() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(0)
+}
+
+fn total_memory_gib() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {
+            if let Some(line) = s.lines().find(|l| l.starts_with("MemTotal:")) {
+                if let Some(kb_str) = line.split_whitespace().nth(1) {
+                    if let Ok(kb) = kb_str.parse::<f64>() {
+                        return Some(format!("{:.0} GiB", kb / (1024.0 * 1024.0)));
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            if let Ok(bytes) = s.parse::<f64>() {
+                return Some(format!("{:.0} GiB", bytes / (1024.0 * 1024.0 * 1024.0)));
+            }
+        }
+    }
+    None
+}
+
+fn ci_runner() -> Option<String> {
+    if std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
+        Some("GitHub Actions".to_owned())
+    } else {
+        None
+    }
+}
+
 struct Meta {
     datetime: String,
     commit: String,
     version: String,
     platform: String,
+    cpu: String,
+    memory: Option<String>,
+    runner: Option<String>,
 }
 
 impl Meta {
     fn collect() -> Self {
+        let cores = cpu_cores();
+        let cpu = if cores > 0 {
+            format!("{} ({} cores)", cpu_name(), cores)
+        } else {
+            cpu_name()
+        };
         Meta {
             datetime: format_datetime(SystemTime::now()),
             commit: git_commit(),
             version: husako_version(),
             platform: platform(),
+            cpu,
+            memory: total_memory_gib(),
+            runner: ci_runner(),
         }
     }
 
@@ -170,6 +247,13 @@ impl Meta {
         out.push_str(&format!("> Commit: {}\n", self.commit));
         out.push_str(&format!("> Version: husako v{}\n", self.version));
         out.push_str(&format!("> Platform: {}\n", self.platform));
+        out.push_str(&format!("> CPU: {}\n", self.cpu));
+        if let Some(m) = &self.memory {
+            out.push_str(&format!("> Memory: {}\n", m));
+        }
+        if let Some(r) = &self.runner {
+            out.push_str(&format!("> Runner: {}\n", r));
+        }
     }
 }
 
@@ -293,8 +377,8 @@ fn generate_report(meta: &Meta, data: &BTreeMap<String, BTreeMap<String, PathBuf
 
 fn print_terminal(meta: &Meta, data: &BTreeMap<String, BTreeMap<String, PathBuf>>) {
     println!(
-        "husako v{}  {}  {}  {}",
-        meta.version, meta.commit, meta.platform, meta.datetime
+        "husako v{}  {}  {}  {}  {}",
+        meta.version, meta.commit, meta.platform, meta.cpu, meta.datetime
     );
     for (group, benches) in data {
         println!();
