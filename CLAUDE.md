@@ -151,6 +151,7 @@ Boundary rules:
 - **Functions/Methods**: `snake_case`
 - **Constants**: `UPPER_SNAKE_CASE`
 - **Tests**: Inline `#[cfg(test)]` blocks in each module
+- **Async**: Use async I/O (`tokio::fs`, `tokio::process`, etc.) wherever the calling context is already async. `tokio::fs` requires the `fs` feature — add it to the workspace tokio entry in `Cargo.toml` if not already present.
 
 ## Exit Codes (Stable)
 
@@ -265,6 +266,10 @@ Read `.claude/*.md` before making changes to related areas:
 
 When implementing non-trivial features, write a plan document first in `.claude/plans/`.
 
-Plans must include a documentation step when the feature changes user-visible behavior (new CLI flags, new config options, new source types, changed error messages, etc.). Add a task like "Update `.worktrees/docs-site/docs/`" to the plan before implementation begins.
+Every plan **must** include a section that explicitly identifies:
+1. **Tests to add or modify** — new tests for the feature, and existing tests that may need updating (e.g. assertions that reference changed output, struct fields, or error messages).
+2. **Docs to add or modify** — user-visible changes (new CLI flags, new config options, new source types, changed error messages, etc.) require an update to `.worktrees/docs-site/docs/`.
 
-For simple tasks that don't go through planning, ask the user whether documentation needs to be updated after the work is done.
+Do not treat these as optional — always verify both before finalising a plan.
+
+For simple tasks that don't go through planning, ask the user whether tests or documentation need to be updated after the work is done.
