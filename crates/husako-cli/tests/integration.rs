@@ -1757,6 +1757,113 @@ build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { n
         .stdout(predicates::str::contains("kind: Namespace"));
 }
 
+// --- render --output ---
+
+const SIMPLE_NAMESPACE_TS: &str = r#"
+import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "out" } }; } }]);
+"#;
+
+#[test]
+fn render_output_to_yaml_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("out.yaml");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicates::str::contains("Written to"));
+
+    let contents = std::fs::read_to_string(&out).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_to_dir_uses_stem() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out_dir = root.join("dist");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out_dir.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("");
+
+    let out_file = out_dir.join("entry.yaml");
+    let contents = std::fs::read_to_string(&out_file).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_alias_preserves_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        "[entries]\n\"apps/my-app\" = \"src/apps/my-app.ts\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src/apps")).unwrap();
+    std::fs::write(root.join("src/apps/my-app.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out_dir = root.join("dist");
+
+    husako_at(root)
+        .args([
+            "render",
+            "apps/my-app",
+            "--output",
+            out_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout("");
+
+    // alias "apps/my-app" → dist/apps/my-app.yaml
+    let out_file = out_dir.join("apps").join("my-app.yaml");
+    let contents = std::fs::read_to_string(&out_file).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_creates_nested_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("a").join("b").join("c").join("out.yaml");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(out.exists());
+}
+
+#[test]
+fn render_output_overwrites_existing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("out.yaml");
+    std::fs::write(&out, "old content").unwrap();
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let contents = std::fs::read_to_string(&out).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+    assert!(!contents.contains("old content"));
+}
+
 #[test]
 fn new_creates_husako_toml() {
     let dir = tempfile::tempdir().unwrap();

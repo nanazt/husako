@@ -36,6 +36,13 @@ enum Commands {
         /// Path to the TypeScript entry file, or an entry alias from husako.toml
         file: String,
 
+        /// Write output to a file or directory instead of stdout.
+        /// If path ends with .yaml/.yml, writes to that file directly.
+        /// Otherwise treated as a directory: writes <dir>/<name>.yaml
+        /// where <name> is the entry alias or the entry file's stem.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+
         /// Allow imports outside the project root
         #[arg(long)]
         allow_outside_root: bool,
@@ -250,6 +257,7 @@ async fn main() -> ExitCode {
     match cli.command {
         Commands::Render {
             file,
+            output,
             allow_outside_root,
             timeout_ms,
             max_heap_mb,
@@ -303,7 +311,34 @@ async fn main() -> ExitCode {
 
             match husako_core::render(&source, &filename, &options).await {
                 Ok(yaml) => {
-                    print!("{yaml}");
+                    if let Some(out_path) = output {
+                        let file_path = if out_path
+                            .extension()
+                            .is_some_and(|e| e == "yaml" || e == "yml")
+                        {
+                            out_path
+                        } else {
+                            let name = derive_out_name(&file, &options.project_root);
+                            out_path.join(format!("{name}.yaml"))
+                        };
+                        if let Some(parent) = file_path.parent()
+                            && let Err(e) = std::fs::create_dir_all(parent)
+                        {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(1);
+                        }
+                        if let Err(e) = std::fs::write(&file_path, &yaml) {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(1);
+                        }
+                        eprintln!(
+                            "{} Written to {}",
+                            style::check_mark(),
+                            style::bold(&file_path.display().to_string())
+                        );
+                    } else {
+                        print!("{yaml}");
+                    }
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1289,6 +1324,24 @@ fn resolve_entry(file_arg: &str, project_root: &std::path::Path) -> Result<PathB
         }
     }
     Err(msg)
+}
+
+/// Derive the output file name (no extension) for a render `--output` directory.
+///
+/// - If `file_arg` matches an entry alias in `husako.toml`, returns the alias string as-is
+///   (e.g. `"apps/my-app"` → `"apps/my-app"`, producing `dist/apps/my-app.yaml`).
+/// - Otherwise returns the file stem of `file_arg`
+///   (e.g. `"src/entry.ts"` → `"entry"`).
+fn derive_out_name(file_arg: &str, project_root: &std::path::Path) -> String {
+    if let Ok(Some(cfg)) = husako_config::load(project_root)
+        && cfg.entries.contains_key(file_arg)
+    {
+        return file_arg.to_string();
+    }
+    std::path::Path::new(file_arg)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_arg.to_string())
 }
 
 /// Interactively select a Kubernetes version.
