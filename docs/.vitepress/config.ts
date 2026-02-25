@@ -89,6 +89,7 @@ export default defineConfig({
         text: 'Advanced',
         items: [
           { text: 'Writing a Plugin', link: '/advanced/plugins' },
+          { text: 'Benchmarks',       link: '/advanced/benchmarks' },
         ],
       },
     ],
