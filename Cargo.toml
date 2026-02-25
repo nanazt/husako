@@ -50,6 +50,9 @@ reqwest = { version = "0.13", features = ["blocking", "json"] }
 flate2 = "1"
 tar = "0.4"
 
+# Benchmarks
+criterion = { version = "0.8", features = ["html_reports"] }
+
 # Dev
 assert_cmd = "2"
 insta = { version = "1", features = ["yaml"] }

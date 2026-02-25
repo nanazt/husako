@@ -30,6 +30,15 @@ cargo fmt --all           # apply
 
 # Tests
 cargo test --workspace --all-features
+
+# Benchmarks
+cargo bench -p husako-bench -- --test   # quick: compile + single run, no stats
+cargo bench -p husako-bench             # full criterion run (HTML at target/criterion/)
+
+# Bench report — generate bench-summary.md + bench-report.md from criterion results
+# (requires a prior full bench run; output goes to target/criterion/ by default)
+cargo run -p husako-bench --bin report
+cargo run -p husako-bench --bin report -- --output-dir ./reports
 ```
 
 Before committing, always run in this order:
@@ -46,7 +55,9 @@ Before committing, always run in this order:
    cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
    ```
 
-**Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification.
+**Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification. Never run crate-scoped lint (`cargo clippy -p <crate>`) as a substitute for the full workspace command.
+
+**Platform-specific code**: `#[cfg(target_os = "linux")]` blocks are not compiled on macOS and cannot be linted locally. Code using these must wait for CI (Linux) to confirm lint passes before merging.
 
 ## Architecture
 
@@ -235,6 +246,7 @@ Read `.claude/*.md` before making changes to related areas:
 - `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching, plugins)
 - `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 - `.claude/testing.md` — Testing standards: unit/integration/E2E patterns, assertion helpers, source kind coverage table, CLI flag notes for tests
+- `.claude/release-guide.md` — Release checklist including bench results and performance summary in release notes
 
 ## Plans
 
