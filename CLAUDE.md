@@ -244,6 +244,7 @@ Read `.claude/*.md` before making changes to related areas:
 - `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching, plugins)
 - `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 - `.claude/testing.md` — Testing standards: unit/integration/E2E patterns, assertion helpers, source kind coverage table, CLI flag notes for tests
+- `.claude/release-guide.md` — Release checklist including bench results and performance summary in release notes
 
 ## Plans
 

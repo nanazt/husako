@@ -4,7 +4,9 @@ const checkout = getAction("actions/checkout@v5");
 const rustToolchain = getAction("dtolnay/rust-toolchain@stable");
 const rustCache = getAction("Swatinem/rust-cache@v2");
 
-const bench = new Job("ubuntu-latest").steps((s) =>
+const bench = new Job("ubuntu-latest", {
+  permissions: { contents: "write" },
+}).steps((s) =>
   s
     .add(checkout({}))
     .add(rustToolchain({}))
@@ -33,12 +35,39 @@ const bench = new Job("ubuntu-latest").steps((s) =>
       name: "Upload criterion results",
       uses: "actions/upload-artifact@v4",
       with: { name: "criterion", path: "target/criterion" },
+    })
+    .add({
+      name: "Generate bench report",
+      run: "cargo run -p husako-bench --bin report -- --output-dir ./bench-results",
+    })
+    .add({
+      name: "Commit results to bench-results branch",
+      run: [
+        `git config user.name  "github-actions[bot]"`,
+        `git config user.email "github-actions[bot]@users.noreply.github.com"`,
+        `git fetch origin bench-results:bench-results 2>/dev/null || true`,
+        `# On first run, --orphan stages all workspace files; unstage them immediately.`,
+        `git checkout bench-results 2>/dev/null || { git checkout --orphan bench-results && git rm --cached -r . --quiet; }`,
+        `mkdir -p latest`,
+        `cp bench-results/bench-summary.md latest/`,
+        `cp bench-results/bench-report.md  latest/`,
+        `git add latest/`,
+        `if [[ "$GITHUB_REF" == refs/tags/v* ]]; then`,
+        `  version="$GITHUB_REF_NAME"`,
+        `  mkdir -p "releases/$version"`,
+        `  cp bench-results/bench-summary.md "releases/$version/"`,
+        `  cp bench-results/bench-report.md  "releases/$version/"`,
+        `  git add "releases/$version/"`,
+        `fi`,
+        `git commit -m "bench: $(date -u +%Y-%m-%dT%H:%M:%SZ) \${GITHUB_REF_NAME:-\${GITHUB_SHA::7}}"`,
+        `git push origin bench-results`,
+      ].join("\n"),
     }),
 );
 
 new Workflow({
   name: "Bench",
-  on: { push: { branches: ["master"] } },
+  on: { push: { branches: ["master"], tags: ["v*"] } },
 })
   .jobs((j) => j.add("bench", bench))
   .build("bench");
