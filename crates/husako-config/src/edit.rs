@@ -496,4 +496,27 @@ mod tests {
 
         assert!(!remove_plugin(&mut doc, "nonexistent"));
     }
+
+    #[test]
+    fn update_oci_chart_version() {
+        let (_tmp, path) = create_test_toml("");
+        let mut doc: DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+
+        add_chart(
+            &mut doc,
+            "postgresql",
+            &ChartSource::Oci {
+                reference: "oci://ghcr.io/org/postgresql".to_string(),
+                version: "1.2.3".to_string(),
+            },
+        );
+
+        let updated = super::update_chart_version(&mut doc, "postgresql", "2.0.0");
+        assert!(updated);
+
+        let output = doc.to_string();
+        assert!(output.contains("2.0.0"));
+        assert!(!output.contains("1.2.3"));
+        assert!(output.contains("ghcr.io/org/postgresql"));
+    }
 }
