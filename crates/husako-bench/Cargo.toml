@@ -1,0 +1,40 @@
+[package]
+name = "husako-bench"
+version = "0.1.0"
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+husako-compile-oxc = { path = "../husako-compile-oxc" }
+husako-runtime-qjs = { path = "../husako-runtime-qjs" }
+husako-core         = { path = "../husako-core" }
+husako-dts          = { path = "../husako-dts" }
+husako-yaml         = { path = "../husako-yaml" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bin]]
+name = "report"
+path = "src/bin/report.rs"
+
+[[bench]]
+name = "compile"
+harness = false
+
+[[bench]]
+name = "execute"
+harness = false
+
+[[bench]]
+name = "render"
+harness = false
+
+[[bench]]
+name = "generate"
+harness = false
+
+[[bench]]
+name = "emit"
+harness = false

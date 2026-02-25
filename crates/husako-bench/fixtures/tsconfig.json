@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "paths": {
+      "husako": [
+        ".husako/types/husako.d.ts"
+      ],
+      "husako/_base": [
+        ".husako/types/husako/_base.d.ts"
+      ],
+      "husako/test": [
+        ".husako/types/husako/test.d.ts"
+      ],
+      "k8s/*": [
+        ".husako/types/k8s/*"
+      ]
+    },
+    "strict": true
+  }
+}

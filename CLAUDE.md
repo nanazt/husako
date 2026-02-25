@@ -30,6 +30,15 @@ cargo fmt --all           # apply
 
 # Tests
 cargo test --workspace --all-features
+
+# Benchmarks
+cargo bench -p husako-bench -- --test   # quick: compile + single run, no stats
+cargo bench -p husako-bench             # full criterion run (HTML at target/criterion/)
+
+# Bench report — generate bench-summary.md + bench-report.md from criterion results
+# (requires a prior full bench run; output goes to target/criterion/ by default)
+cargo run -p husako-bench --bin report
+cargo run -p husako-bench --bin report -- --output-dir ./reports
 ```
 
 Before committing, always run in this order:
