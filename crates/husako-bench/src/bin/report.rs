@@ -151,12 +151,11 @@ fn platform() -> String {
 fn cpu_name() -> String {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo") {
-            if let Some(line) = content.lines().find(|l| l.starts_with("model name")) {
-                if let Some(name) = line.splitn(2, ':').nth(1) {
-                    return name.trim().to_owned();
-                }
-            }
+        if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo")
+            && let Some(line) = content.lines().find(|l| l.starts_with("model name"))
+            && let Some(name) = line.splitn(2, ':').nth(1)
+        {
+            return name.trim().to_owned();
         }
     }
     #[cfg(target_os = "macos")]
@@ -183,14 +182,12 @@ fn cpu_cores() -> usize {
 fn total_memory_gib() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {
-            if let Some(line) = s.lines().find(|l| l.starts_with("MemTotal:")) {
-                if let Some(kb_str) = line.split_whitespace().nth(1) {
-                    if let Ok(kb) = kb_str.parse::<f64>() {
-                        return Some(format!("{:.0} GiB", kb / (1024.0 * 1024.0)));
-                    }
-                }
-            }
+        if let Ok(s) = std::fs::read_to_string("/proc/meminfo")
+            && let Some(line) = s.lines().find(|l| l.starts_with("MemTotal:"))
+            && let Some(kb_str) = line.split_whitespace().nth(1)
+            && let Ok(kb) = kb_str.parse::<f64>()
+        {
+            return Some(format!("{:.0} GiB", kb / (1024.0 * 1024.0)));
         }
     }
     #[cfg(target_os = "macos")]
