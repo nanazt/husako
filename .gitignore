@@ -102,3 +102,6 @@ $RECYCLE.BIN/
 generated/
 .gaji-cache.json
 gaji.config.local.ts
+
+# E2E temp directories
+test/e2e/tmp.*/

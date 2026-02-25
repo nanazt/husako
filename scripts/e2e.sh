@@ -705,7 +705,7 @@ TS
 scenario_g() {
   echo
   echo "── G: husako test ──"
-  local tmpdir; tmpdir=$(mktemp -d)
+  local tmpdir; tmpdir=$(mktemp -d "$PROJECT_ROOT/test/e2e/tmp.XXXXXX")
   (
     trap 'rm -rf "$tmpdir"' EXIT
     cd "$tmpdir"
@@ -764,7 +764,8 @@ TS
 import { test, expect } from "husako/test";
 test("in subdir", () => { expect(true).toBeTruthy(); });
 TS
-    local disc_out; disc_out=$("$HUSAKO" test 2>&1)
+    local disc_out
+    disc_out=$("$HUSAKO" test 2>&1) || true
     assert_contains "G3: found calc.test.ts" "calc.test.ts" "$disc_out"
     assert_contains "G3: found fail.test.ts" "fail.test.ts" "$disc_out"
     assert_contains "G3: found extra.test.ts" "extra.test.ts" "$disc_out"
@@ -795,6 +796,18 @@ TS
     assert_contains "G4: output contains 'passed'" "passed" "$plugin_out"
   )
 }
+
+# ── build release binary if needed ────────────────────────────────────────
+
+if [ -z "${HUSAKO_BIN:-}" ]; then
+  echo "Building release binary..."
+  if cargo build --release --bin husako --manifest-path "$PROJECT_ROOT/Cargo.toml"; then
+    pass "cargo build --release"
+  else
+    fail "cargo build --release"
+    exit 1
+  fi
+fi
 
 # ── run all scenarios ──────────────────────────────────────────────────────
 
