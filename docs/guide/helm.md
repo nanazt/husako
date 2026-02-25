@@ -25,14 +25,23 @@ You then import typed value builders from `"helm/<chart-name>"`.
 
 ## Adding a chart dependency
 
-**Interactive:**
+Pass the chart URL or ArtifactHub identifier to `husako add`:
 
 ```
-husako add --chart
+# ArtifactHub (org/chart)
+husako add bitnami/postgresql
+
+# Helm registry — chart name required as second argument or --name
+husako add https://kubernetes.github.io/ingress-nginx ingress-nginx
+
+# OCI registry
+husako add oci://ghcr.io/bitnami/postgresql
+
+# Git repo containing a chart
+husako add https://github.com/example/charts --path charts/my-chart
 ```
 
-This prompts for the chart source type, searches ArtifactHub if selected, and helps you pick
-the name and version.
+husako detects the source type from the URL, resolves the latest version, and writes the entry to `husako.toml`. Use `--version` to pin to a specific release or partial prefix (`--version 16` matches the latest `16.x.x`).
 
 **Manual (`husako.toml`):**
 
@@ -164,20 +173,16 @@ Useful for charts in the same repository.
 
 ---
 
-## ArtifactHub search
+## ArtifactHub
 
-When using `husako add --chart` interactively, selecting ArtifactHub opens an inline search.
+Pass an `org/chart` identifier directly — husako queries ArtifactHub for the latest version and writes the entry:
 
-Type to filter charts, use arrow keys to select, and press Enter to confirm. husako then
-fetches available versions and shows a selection list.
+```
+husako add bitnami/postgresql
+husako add cert-manager/cert-manager --version v1.16
+```
 
-The interactive flow:
-
-1. Choose source type (ArtifactHub is the first/default option)
-2. Search for the chart by name
-3. Select from results
-4. Choose a version (latest tagged first)
-5. husako writes the entry to `husako.toml`
+The `org/chart` format must use only lowercase letters, digits, hyphens, underscores, and dots, with exactly one `/`.
 
 ---
 

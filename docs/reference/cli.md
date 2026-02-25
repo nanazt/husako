@@ -105,21 +105,37 @@ Prints resource dependencies, chart dependencies, and plugins with their source 
 
 ## husako add
 
-Add a new dependency interactively or with flags.
+Add a resource or chart dependency to `husako.toml`.
 
 ```
-husako add [options]
+husako add [url] [options]
 ```
+
+The dep name, source type, resource/chart kind, and version are all detected automatically from the URL. Use `--name` to override the derived name, or when it cannot be derived (registry URLs).
+
+| URL / flag | Detected source | Dep name |
+|-----------|----------------|----------|
+| `org/chart` | ArtifactHub | `chart` (after `/`) |
+| `oci://…` | OCI registry | last path component |
+| `https://github.com/…` | Git (resource or chart) | repo name |
+| `https://charts.example.com` | Helm registry | required via `--name` |
+| `./path` or `/abs/path` | Local file or dir | file stem or dir name |
+| `--release [name]` | Kubernetes release | `k8s` or given name |
+| `--cluster [name]` | Live cluster | `cluster` or given name |
 
 | Flag | Description |
 |------|-------------|
-| `--resource` | Add a resource (k8s schema) dependency |
-| `--chart` | Add a chart (Helm values) dependency |
-| `-y, --yes` | Skip confirmation prompts |
+| `--name <name>` | Override the derived dependency name |
+| `--version <ver>` | Pin to a version or partial prefix (`16`, `16.4`, `v1.16`) |
+| `--tag <tag>` | Pin a git source to a specific tag |
+| `--branch <branch>` | Pin a git source to a branch instead of the latest tag |
+| `--path <subdir>` | Subdirectory within a git repo |
+| `--release [name]` | Add a Kubernetes release schema source |
+| `--cluster [name]` | Add a live-cluster schema source (prompts for confirmation) |
 
-When run without flags, prompts for dependency type, source type, and details.
+For registry URLs, the chart name must be given as a second positional argument or via `--name`.
 
-For charts, searches ArtifactHub interactively.
+After adding, run `husako generate` to fetch types.
 
 ---
 
