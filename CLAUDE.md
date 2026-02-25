@@ -55,7 +55,9 @@ Before committing, always run in this order:
    cargo test -p husako --test e2e_a --test e2e_b --test e2e_c --test e2e_d --test e2e_e --test e2e_f --test e2e_g -- --include-ignored
    ```
 
-**Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification.
+**Verification rule**: Whenever claiming that implementation is complete or tests pass, always run both lint (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) and tests (`cargo test`) and confirm both are clean. Do not skip lint during verification. Never run crate-scoped lint (`cargo clippy -p <crate>`) as a substitute for the full workspace command.
+
+**Platform-specific code**: `#[cfg(target_os = "linux")]` blocks are not compiled on macOS and cannot be linted locally. Code using these must wait for CI (Linux) to confirm lint passes before merging.
 
 ## Architecture
 
