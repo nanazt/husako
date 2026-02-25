@@ -95,33 +95,17 @@ Columns in `list` and `outdated` output use consistent minimum widths for legibi
 
 ## Custom Widgets
 
-Three custom widgets built on `console::Term` with raw key input. All write to stderr.
-
-### text_input (`text_input.rs`)
-
-Single-field text input with dim placeholder.
-
-```
-Name: postgresql      ← dim placeholder (empty input)
-Name: my-chart        ← user typing, placeholder gone
-  name is invalid     ← red validation error (optional)
-
-After:
-✔ Name: my-chart
-```
-
-- Character keys append, Backspace deletes, Enter confirms, Escape cancels
-- Empty input + Enter returns the default value
-- Validation callback; errors shown in red below the prompt
+One custom widget built on `console::Term` with raw key input. Writes to stderr.
 
 ### search_select (`search_select.rs`)
 
-Scrollable list with infinite scroll, used for ArtifactHub package search.
+Scrollable list with infinite scroll, used for Kubernetes version selection in `husako new` / `husako init`.
 
 ```
-? Select a chart:
-  > metallb           ← cyan+bold
-    metallb-system
+? Kubernetes version:
+  > 1.35 (latest)     ← cyan+bold
+    1.34
+    1.33
     ↓ more below      ← dim, or "loading…" during fetch
 ```
 
@@ -132,31 +116,9 @@ Scrollable list with infinite scroll, used for ArtifactHub package search.
 - Max 10 items visible at once
 - Enter confirms (`✔ prompt value`), Escape cancels
 
-### name_version_select (`name_version_select.rs`)
-
-Combined Name input + Version infinite-scroll select. Both controls are active simultaneously in one event loop.
-
-```
-Name: cert-manager  (Enter to confirm)   ← dim placeholder + inline hint
-Version:
-  > 1.16.3 (latest)                      ← cyan+bold, first item tagged
-    1.16.2
-    1.16.1
-    ↓ more below
-```
-
-- Character keys / Backspace edit the Name field
-- Arrow Up/Down move the Version cursor
-- Enter confirms both Name and selected Version at once
-- Escape cancels
-- Inline hint `(Enter to confirm)` on same line as Name placeholder (no separate hint line)
-- Version list fetched in pages of 10 (`VERSION_PAGE_SIZE`), max 8 visible
-- First version tagged with `(latest)` suffix; stripped before returning
-- Falls back to manual `dialoguer::Input` if no versions are found
-
 ### Echo Suppression
 
-All three widgets use `with_echo_suppressed()` during blocking network calls:
+The widget uses `with_echo_suppressed()` during blocking network calls:
 
 1. Enter crossterm raw mode to prevent arrow key escape sequences from echoing
 2. Execute the blocking fetch

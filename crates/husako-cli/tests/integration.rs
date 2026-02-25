@@ -2297,3 +2297,40 @@ build([repo]);
         .stdout(predicates::str::contains("name: my-repo"))
         .stdout(predicates::str::contains("tag: v1.0.0"));
 }
+
+// --- husako add error cases ---
+
+#[test]
+fn add_no_args_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root).args(["add"]).assert().failure().code(2);
+}
+
+#[test]
+fn add_registry_missing_name_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[charts]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "https://charts.jetstack.io"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn add_unrecognized_url_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "foo_unknown_bar"])
+        .assert()
+        .failure()
+        .code(2);
+}

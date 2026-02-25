@@ -3,6 +3,18 @@ use crate::HusakoError;
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const ARTIFACTHUB_BASE: &str = "https://artifacthub.io";
 
+/// Return true if `version` matches a partial semver prefix.
+///
+/// Leading `v` is optional on both sides. Examples:
+/// - `"16"` matches `"16.4.0"` and `"16.0.0"` but not `"17.0.0"`
+/// - `"16.4"` matches `"16.4.0"` and `"16.4.1"` but not `"16.5.0"`
+/// - `"16.4.0"` matches only `"16.4.0"` (exact)
+pub fn version_matches_prefix(version: &str, prefix: &str) -> bool {
+    let v = version.strip_prefix('v').unwrap_or(version);
+    let p = prefix.strip_prefix('v').unwrap_or(prefix);
+    v == p || v.starts_with(&format!("{p}."))
+}
+
 // TODO: use urlencoding instead
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
@@ -258,7 +270,14 @@ async fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoEr
 }
 
 /// Discover the latest version from a Helm chart registry's index.yaml.
-pub async fn discover_latest_registry(repo: &str, chart: &str) -> Result<String, HusakoError> {
+///
+/// When `prefix` is `Some("16")`, returns the latest version whose numeric part starts with
+/// `"16."` (e.g. `"16.4.0"`). Leading `v` is optional. When `None`, returns the overall latest.
+pub async fn discover_latest_registry(
+    repo: &str,
+    chart: &str,
+    prefix: Option<&str>,
+) -> Result<String, HusakoError> {
     let url = format!("{}/index.yaml", repo.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .user_agent("husako")
@@ -287,31 +306,50 @@ pub async fn discover_latest_registry(repo: &str, chart: &str) -> Result<String,
             HusakoError::GenerateIo(format!("chart '{chart}' not found in registry index"))
         })?;
 
-    let mut best: Option<semver::Version> = None;
+    let mut best: Option<(semver::Version, String)> = None;
 
     for entry in entries {
         let Some(version_str) = entry.get("version").and_then(|v| v.as_str()) else {
             continue;
         };
-        if let Ok(v) = semver::Version::parse(version_str)
-            && v.pre.is_empty()
-            && best.as_ref().is_none_or(|b| v > *b)
+        if let Some(pfx) = prefix
+            && !version_matches_prefix(version_str, pfx)
         {
-            best = Some(v);
+            continue;
+        }
+        if let Ok(v) = semver::Version::parse(version_str.strip_prefix('v').unwrap_or(version_str))
+            && v.pre.is_empty()
+            && best.as_ref().is_none_or(|(b, _)| v > *b)
+        {
+            best = Some((v, version_str.to_string()));
         }
     }
 
-    best.map(|v| v.to_string())
-        .ok_or_else(|| HusakoError::GenerateIo(format!("no versions found for chart '{chart}'")))
+    best.map(|(_, s)| s).ok_or_else(|| {
+        if let Some(pfx) = prefix {
+            HusakoError::GenerateIo(format!(
+                "no versions matching '{pfx}' found for chart '{chart}'"
+            ))
+        } else {
+            HusakoError::GenerateIo(format!("no versions found for chart '{chart}'"))
+        }
+    })
 }
 
 /// Discover the latest version from ArtifactHub API.
-pub async fn discover_latest_artifacthub(package: &str) -> Result<String, HusakoError> {
-    discover_latest_artifacthub_from(package, ARTIFACTHUB_BASE).await
+///
+/// When `prefix` is `Some("16")`, returns the latest version matching the prefix.
+/// When `None`, returns the overall latest (from the `version` field directly).
+pub async fn discover_latest_artifacthub(
+    package: &str,
+    prefix: Option<&str>,
+) -> Result<String, HusakoError> {
+    discover_latest_artifacthub_from(package, prefix, ARTIFACTHUB_BASE).await
 }
 
 async fn discover_latest_artifacthub_from(
     package: &str,
+    prefix: Option<&str>,
     base_url: &str,
 ) -> Result<String, HusakoError> {
     let url = format!(
@@ -334,14 +372,25 @@ async fn discover_latest_artifacthub_from(
         .await
         .map_err(|e| HusakoError::GenerateIo(format!("parse ArtifactHub response: {e}")))?;
 
-    data["version"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            HusakoError::GenerateIo(format!(
-                "no version field in ArtifactHub response for '{package}'"
-            ))
-        })
+    if let Some(pfx) = prefix {
+        // Filter available_versions by prefix, return highest matching
+        let all_versions = parse_artifacthub_versions(&data, usize::MAX, 0);
+        all_versions
+            .into_iter()
+            .find(|v| version_matches_prefix(v, pfx))
+            .ok_or_else(|| {
+                HusakoError::GenerateIo(format!("no versions matching '{pfx}' for '{package}'"))
+            })
+    } else {
+        data["version"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                HusakoError::GenerateIo(format!(
+                    "no version field in ArtifactHub response for '{package}'"
+                ))
+            })
+    }
 }
 
 /// Discover available versions for a package from ArtifactHub API.
@@ -414,10 +463,15 @@ fn parse_artifacthub_versions(
 
 /// Discover the latest tag from a git repository using `git ls-remote --tags`.
 ///
-/// Intentionally sync: called only from dialoguer's sync interactive UI layer
-/// which already runs inside `tokio::task::block_in_place`. Converting to async
-/// here would require plumbing the Handle through the sync closure boundary.
-pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError> {
+/// When `prefix` is `Some("v1")`, returns the latest tag whose version matches the prefix.
+/// When `None`, returns the overall latest stable tag.
+///
+/// Intentionally sync: called from async contexts without needing block_in_place,
+/// and also from the update/outdated logic.
+pub fn discover_latest_git_tag(
+    repo: &str,
+    prefix: Option<&str>,
+) -> Result<Option<String>, HusakoError> {
     let output = std::process::Command::new("git")
         .args(["ls-remote", "--tags", "--sort=-v:refname", repo])
         .output()
@@ -442,6 +496,12 @@ pub fn discover_latest_git_tag(repo: &str) -> Result<Option<String>, HusakoError
             .strip_prefix("refs/tags/")
             .unwrap_or(refname)
             .trim_end_matches("^{}");
+
+        if let Some(pfx) = prefix
+            && !version_matches_prefix(tag, pfx)
+        {
+            continue;
+        }
 
         let stripped = tag.strip_prefix('v').unwrap_or(tag);
         if let Ok(v) = semver::Version::parse(stripped)
@@ -738,6 +798,34 @@ vwx234\trefs/tags/v1.7.0^{}\n";
     }
 
     #[test]
+    fn version_matches_prefix_major() {
+        assert!(version_matches_prefix("16.4.0", "16"));
+        assert!(version_matches_prefix("16.0.0", "16"));
+        assert!(!version_matches_prefix("17.0.0", "16"));
+        assert!(!version_matches_prefix("6.0.0", "16"));
+    }
+
+    #[test]
+    fn version_matches_prefix_minor() {
+        assert!(version_matches_prefix("16.4.0", "16.4"));
+        assert!(version_matches_prefix("16.4.1", "16.4"));
+        assert!(!version_matches_prefix("16.5.0", "16.4"));
+    }
+
+    #[test]
+    fn version_matches_prefix_full() {
+        assert!(version_matches_prefix("16.4.0", "16.4.0"));
+        assert!(!version_matches_prefix("16.4.1", "16.4.0"));
+    }
+
+    #[test]
+    fn version_matches_prefix_v_optional() {
+        assert!(version_matches_prefix("v16.4.0", "16"));
+        assert!(version_matches_prefix("16.4.0", "v16"));
+        assert!(version_matches_prefix("v16.4.0", "v16.4"));
+    }
+
+    #[test]
     fn versions_match_exact() {
         assert!(versions_match("1.35", "1.35"));
         assert!(versions_match("v1.17.2", "v1.17.2"));
@@ -897,7 +985,7 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .create_async()
             .await;
 
-        let version = discover_latest_artifacthub_from("bitnami/postgresql", &server.url())
+        let version = discover_latest_artifacthub_from("bitnami/postgresql", None, &server.url())
             .await
             .unwrap();
         assert_eq!(version, "16.4.0");
@@ -915,7 +1003,7 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .create_async()
             .await;
 
-        let err = discover_latest_artifacthub_from("bitnami/postgresql", &server.url())
+        let err = discover_latest_artifacthub_from("bitnami/postgresql", None, &server.url())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no version field"));
@@ -996,7 +1084,7 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .create_async()
             .await;
 
-        let version = discover_latest_registry(&server.url(), "my-chart")
+        let version = discover_latest_registry(&server.url(), "my-chart", None)
             .await
             .unwrap();
         assert_eq!(version, "2.0.0");
@@ -1013,7 +1101,7 @@ vwx234\trefs/tags/v1.7.0^{}\n";
             .create_async()
             .await;
 
-        let err = discover_latest_registry(&server.url(), "my-chart")
+        let err = discover_latest_registry(&server.url(), "my-chart", None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no versions found"));

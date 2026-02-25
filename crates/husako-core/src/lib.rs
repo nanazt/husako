@@ -948,7 +948,7 @@ pub async fn check_outdated(
             }
             husako_config::SchemaSource::Git { tag, repo, .. } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_git_tag(repo) {
+                match version_check::discover_latest_git_tag(repo, None) {
                     Ok(Some(latest)) => {
                         let up_to_date = tag == &latest;
                         task.finish_ok(&format!("{name}: {tag} → {latest}"));
@@ -998,7 +998,7 @@ pub async fn check_outdated(
                 version,
             } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_registry(repo, chart).await {
+                match version_check::discover_latest_registry(repo, chart, None).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1026,7 +1026,7 @@ pub async fn check_outdated(
             }
             husako_config::ChartSource::ArtifactHub { package, version } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_artifacthub(package).await {
+                match version_check::discover_latest_artifacthub(package, None).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1054,7 +1054,7 @@ pub async fn check_outdated(
             }
             husako_config::ChartSource::Git { tag, repo, .. } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_git_tag(repo) {
+                match version_check::discover_latest_git_tag(repo, None) {
                     Ok(Some(latest)) => {
                         let up_to_date = tag == &latest;
                         task.finish_ok(&format!("{name}: {tag} → {latest}"));

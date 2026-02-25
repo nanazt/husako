@@ -1,10 +1,9 @@
 mod interactive;
-mod name_version_select;
 mod progress;
 mod search_select;
 mod style;
-mod text_input;
 mod theme;
+mod url_detect;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -116,48 +115,41 @@ enum Commands {
 
     /// Add a resource or chart dependency
     Add {
-        /// Dependency name
+        /// URL, ArtifactHub package (e.g. bitnami/postgresql), or local path
+        #[arg(value_name = "URL")]
+        url: Option<String>,
+
+        /// Chart name (for registry URLs: second positional or --name)
+        #[arg(value_name = "CHART")]
+        extra: Option<String>,
+
+        /// Override the derived dependency name
+        #[arg(long)]
         name: Option<String>,
 
-        /// Add as a resource dependency
-        #[arg(long, group = "kind")]
-        resource: bool,
-
-        /// Add as a chart dependency
-        #[arg(long, group = "kind")]
-        chart: bool,
-
-        /// Source type (release, cluster, git, file, registry, artifacthub, oci)
+        /// Add a Kubernetes release resource (e.g. --release 1.35)
         #[arg(long)]
-        source: Option<String>,
+        release: Option<String>,
 
-        /// Version
+        /// Add a cluster resource; optionally specify a named cluster
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        cluster: Option<String>,
+
+        /// Pin version or partial semver prefix (16, 16.4, 16.4.0); v prefix optional
         #[arg(long)]
         version: Option<String>,
 
-        /// Repository URL
-        #[arg(long)]
-        repo: Option<String>,
-
-        /// Git tag
+        /// Pin to a specific git tag
         #[arg(long)]
         tag: Option<String>,
 
-        /// File or directory path
+        /// Pin to a git branch (clones HEAD; overrides tag/release default)
+        #[arg(long)]
+        branch: Option<String>,
+
+        /// Override git sub-path
         #[arg(long)]
         path: Option<String>,
-
-        /// Chart name in the repository
-        #[arg(long)]
-        chart_name: Option<String>,
-
-        /// ArtifactHub package name (e.g. bitnami/postgresql)
-        #[arg(long)]
-        package: Option<String>,
-
-        /// OCI reference (e.g. oci://ghcr.io/org/chart-name)
-        #[arg(long)]
-        reference: Option<String>,
     },
 
     /// Remove a resource or chart dependency
@@ -557,87 +549,60 @@ async fn main() -> ExitCode {
 
         // --- M17 ---
         Commands::Add {
+            url,
+            extra,
             name,
-            resource: _,
-            chart,
-            source,
+            release,
+            cluster,
             version,
-            repo,
             tag,
+            branch,
             path,
-            chart_name,
-            package,
-            reference,
         } => {
             let project_root = cwd();
 
-            let target = if let Some(src) = source {
-                // Non-interactive mode
-                if chart {
-                    // For charts, derive name from chart_name, package, or reference if not provided
-                    let dep_name = name
-                        .or_else(|| chart_name.clone())
-                        .or_else(|| {
-                            package
-                                .as_deref()
-                                .and_then(|p| p.rsplit('/').next())
-                                .map(String::from)
-                        })
-                        .or_else(|| {
-                            reference.as_deref().map(|r| {
-                                let without_scheme = r.strip_prefix("oci://").unwrap_or(r);
-                                let last =
-                                    without_scheme.rsplit('/').next().unwrap_or(without_scheme);
-                                last.split(':').next().unwrap_or(last).to_string()
-                            })
-                        });
-                    let Some(dep_name) = dep_name else {
-                        eprintln!(
-                            "{} name is required (provide as positional arg, or use --chart-name / --package / --reference)",
-                            style::error_prefix()
-                        );
-                        return ExitCode::from(2);
+            match resolve_add_target(
+                url, extra, name, release, cluster, version, tag, branch, path, cli.yes,
+            )
+            .await
+            {
+                Ok(None) => ExitCode::SUCCESS, // user cancelled cluster confirmation
+                Ok(Some(result)) => {
+                    let target = match &result {
+                        AddResult::Resource { name, source } => husako_core::AddTarget::Resource {
+                            name: name.clone(),
+                            source: source.clone(),
+                        },
+                        AddResult::Chart { name, source } => husako_core::AddTarget::Chart {
+                            name: name.clone(),
+                            source: source.clone(),
+                        },
                     };
-                    build_chart_target(
-                        dep_name, src, version, repo, tag, path, chart_name, package, reference,
-                    )
-                } else {
-                    let Some(dep_name) = name else {
-                        eprintln!(
-                            "{} name is required for resource dependencies",
-                            style::error_prefix()
-                        );
-                        return ExitCode::from(2);
-                    };
-                    build_resource_target(dep_name, src, version, repo, tag, path)
-                }
-            } else {
-                // Interactive mode
-                interactive::prompt_add()
-            };
 
-            match target {
-                Ok(target) => match husako_core::add_dependency(&project_root, &target) {
-                    Ok(()) => {
-                        let (dep_name, section) = match &target {
-                            husako_core::AddTarget::Resource { name, .. } => (name, "resources"),
-                            husako_core::AddTarget::Chart { name, .. } => (name, "charts"),
-                        };
-                        eprintln!(
-                            "{} Added {} to [{section}]",
-                            style::check_mark(),
-                            style::dep_name(dep_name)
-                        );
-                        ExitCode::SUCCESS
+                    match husako_core::add_dependency(&project_root, &target) {
+                        Ok(()) => {
+                            let (dep_name, section) = match &result {
+                                AddResult::Resource { name, .. } => (name.as_str(), "resources"),
+                                AddResult::Chart { name, .. } => (name.as_str(), "charts"),
+                            };
+                            eprintln!(
+                                "{} Added {} to [{}]\n  {}",
+                                style::check_mark(),
+                                style::dep_name(dep_name),
+                                section,
+                                style::dim(&format_source_detail(&result))
+                            );
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("{} {e}", style::error_prefix());
+                            ExitCode::from(exit_code(&e))
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        ExitCode::from(exit_code(&e))
-                    }
-                },
+                }
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
-                    ExitCode::from(1)
+                    ExitCode::from(2)
                 }
             }
         }
@@ -1354,87 +1319,368 @@ fn select_k8s_version() -> Result<String, Option<String>> {
     }
 }
 
-fn build_resource_target(
-    name: String,
-    source: String,
-    version: Option<String>,
-    repo: Option<String>,
-    tag: Option<String>,
-    path: Option<String>,
-) -> Result<husako_core::AddTarget, String> {
-    let schema_source = match source.as_str() {
-        "release" => {
-            let version = version.ok_or("--version is required for release source")?;
-            husako_config::SchemaSource::Release { version }
-        }
-        "cluster" => husako_config::SchemaSource::Cluster { cluster: None },
-        "git" => {
-            let repo = repo.ok_or("--repo is required for git source")?;
-            let tag = tag.ok_or("--tag is required for git source")?;
-            let path = path.ok_or("--path is required for git source")?;
-            husako_config::SchemaSource::Git { repo, tag, path }
-        }
-        "file" => {
-            let path = path.ok_or("--path is required for file source")?;
-            husako_config::SchemaSource::File { path }
-        }
-        other => return Err(format!("unknown resource source type: {other}")),
-    };
-    Ok(husako_core::AddTarget::Resource {
-        name,
-        source: schema_source,
-    })
+// --- husako add (URL auto-detect, no interactive) ---
+
+enum AddResult {
+    Resource {
+        name: String,
+        source: husako_config::SchemaSource,
+    },
+    Chart {
+        name: String,
+        source: husako_config::ChartSource,
+    },
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_chart_target(
-    name: String,
-    source: String,
+async fn resolve_add_target(
+    url: Option<String>,
+    extra: Option<String>,
+    name: Option<String>,
+    release: Option<String>,
+    cluster: Option<String>,
     version: Option<String>,
-    repo: Option<String>,
     tag: Option<String>,
-    path: Option<String>,
-    chart_name: Option<String>,
-    package: Option<String>,
-    reference: Option<String>,
-) -> Result<husako_core::AddTarget, String> {
-    let chart_source = match source.as_str() {
-        "registry" => {
-            let repo = repo.ok_or("--repo is required for registry source")?;
-            let chart = chart_name.ok_or("--chart-name is required for registry source")?;
-            let version = version.ok_or("--version is required for registry source")?;
-            husako_config::ChartSource::Registry {
-                repo,
-                chart,
-                version,
+    branch: Option<String>,
+    path_override: Option<String>,
+    yes: bool,
+) -> Result<Option<AddResult>, String> {
+    use husako_config::{ChartSource, SchemaSource};
+    use url_detect::{SourceKind, UrlDetected, detect_url};
+
+    // 1. Kubernetes release resource
+    if let Some(ver) = release {
+        let dep_name = name.unwrap_or_else(|| "kubernetes".to_string());
+        return Ok(Some(AddResult::Resource {
+            name: dep_name,
+            source: SchemaSource::Release { version: ver },
+        }));
+    }
+
+    // 2. Cluster resource
+    if let Some(cluster_val) = cluster {
+        if !yes {
+            eprintln!(
+                "{} Adding a cluster resource will fetch ALL CRDs from the cluster, which may be a large set.",
+                style::warning_prefix()
+            );
+            match interactive::confirm("Continue?") {
+                Ok(true) => {}
+                Ok(false) => return Ok(None),
+                Err(e) => return Err(e),
             }
         }
-        "artifacthub" => {
-            let package = package.ok_or("--package is required for artifacthub source")?;
-            let version = version.ok_or("--version is required for artifacthub source")?;
-            husako_config::ChartSource::ArtifactHub { package, version }
+        // cluster_val == "" → --cluster without value → use "cluster" as name
+        let cluster_name = if cluster_val.is_empty() {
+            None
+        } else {
+            Some(cluster_val)
+        };
+        let dep_name =
+            name.unwrap_or_else(|| cluster_name.as_deref().unwrap_or("cluster").to_string());
+        return Ok(Some(AddResult::Resource {
+            name: dep_name,
+            source: SchemaSource::Cluster {
+                cluster: cluster_name,
+            },
+        }));
+    }
+
+    // 3. URL-based detection
+    if let Some(input) = url {
+        let prefix = version.as_deref();
+
+        match detect_url(&input) {
+            Some(UrlDetected::ArtifactHub { package }) => {
+                let dep_name = name.unwrap_or_else(|| after_slash(&package));
+                let ver = husako_core::version_check::discover_latest_artifacthub(&package, prefix)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(AddResult::Chart {
+                    name: dep_name,
+                    source: ChartSource::ArtifactHub {
+                        package,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::Oci { reference }) => {
+                let dep_name = name.unwrap_or_else(|| last_path_component(&reference));
+                let ver = if let Some(v) = version {
+                    v
+                } else {
+                    husako_core::version_check::discover_latest_oci(&reference)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| {
+                            format!(
+                                "could not detect latest version for '{reference}'; use --version"
+                            )
+                        })?
+                };
+                Ok(Some(AddResult::Chart {
+                    name: dep_name,
+                    source: ChartSource::Oci {
+                        reference,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::Git {
+                repo,
+                sub_path,
+                branch: url_branch,
+            }) => {
+                let effective_branch = branch.or(url_branch);
+                let dep_name = name.unwrap_or_else(|| repo_name(&repo));
+                let tempdir = tempfile::tempdir().map_err(|e| e.to_string())?;
+
+                if let Some(br) = effective_branch {
+                    git_clone_sparse(&repo, &br, tempdir.path()).await?;
+                    let look_in = path_override
+                        .as_deref()
+                        .or(sub_path.as_deref())
+                        .unwrap_or(".");
+                    let kind = url_detect::detect_git_kind(tempdir.path(), look_in)?;
+                    let path = path_override
+                        .or(sub_path)
+                        .unwrap_or_else(|| ".".to_string());
+                    match kind {
+                        SourceKind::Resource => Ok(Some(AddResult::Resource {
+                            name: dep_name,
+                            source: SchemaSource::Git {
+                                repo,
+                                tag: br,
+                                path,
+                            },
+                        })),
+                        SourceKind::Chart => Ok(Some(AddResult::Chart {
+                            name: dep_name,
+                            source: ChartSource::Git {
+                                repo,
+                                tag: br,
+                                path,
+                            },
+                        })),
+                    }
+                } else {
+                    let resolved_tag = if let Some(t) = tag {
+                        t
+                    } else {
+                        husako_core::version_check::discover_latest_git_tag(&repo, prefix)
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| {
+                                format!("no release tags found in '{repo}'; use --tag or --branch")
+                            })?
+                    };
+                    git_clone_sparse(&repo, &resolved_tag, tempdir.path()).await?;
+                    let look_in = path_override
+                        .as_deref()
+                        .or(sub_path.as_deref())
+                        .unwrap_or(".");
+                    let kind = url_detect::detect_git_kind(tempdir.path(), look_in)?;
+                    let path = path_override
+                        .or(sub_path)
+                        .unwrap_or_else(|| ".".to_string());
+                    match kind {
+                        SourceKind::Resource => Ok(Some(AddResult::Resource {
+                            name: dep_name,
+                            source: SchemaSource::Git {
+                                repo,
+                                tag: resolved_tag,
+                                path,
+                            },
+                        })),
+                        SourceKind::Chart => Ok(Some(AddResult::Chart {
+                            name: dep_name,
+                            source: ChartSource::Git {
+                                repo,
+                                tag: resolved_tag,
+                                path,
+                            },
+                        })),
+                    }
+                }
+            }
+
+            Some(UrlDetected::HelmRegistry { repo }) => {
+                // chart name: --name takes priority over second positional
+                let chart_name = name.or(extra).ok_or_else(|| {
+                    "--name <chart> or second argument required for registry URL\nexamples:\n  husako add https://charts.example.com cert-manager\n  husako add https://charts.example.com --name cert-manager"
+                        .to_string()
+                })?;
+                let ver = husako_core::version_check::discover_latest_registry(
+                    &repo,
+                    &chart_name,
+                    prefix,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(Some(AddResult::Chart {
+                    name: chart_name.clone(),
+                    source: ChartSource::Registry {
+                        repo,
+                        chart: chart_name,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::LocalPath { path }) => {
+                let kind = url_detect::detect_local_kind(&path)?;
+                let dep_name = name.unwrap_or_else(|| file_stem(&path));
+                match kind {
+                    SourceKind::Resource => Ok(Some(AddResult::Resource {
+                        name: dep_name,
+                        source: SchemaSource::File { path },
+                    })),
+                    SourceKind::Chart => Ok(Some(AddResult::Chart {
+                        name: dep_name,
+                        source: ChartSource::File { path },
+                    })),
+                }
+            }
+
+            None => Err(format!(
+                "'{input}' is not a recognized URL or package\nexamples:\n  husako add bitnami/postgresql\n  husako add https://github.com/cert-manager/cert-manager\n  husako add --release 1.35"
+            )),
         }
-        "git" => {
-            let repo = repo.ok_or("--repo is required for git source")?;
-            let tag = tag.ok_or("--tag is required for git source")?;
-            let path = path.ok_or("--path is required for git source")?;
-            husako_config::ChartSource::Git { repo, tag, path }
+    } else {
+        Err(
+            "url required, or use --release <version> / --cluster [name]\nsee: husako add --help"
+                .to_string(),
+        )
+    }
+}
+
+/// Shallow-clone a git repo at a specific tag or branch (depth 1).
+async fn git_clone_sparse(repo: &str, tag: &str, dir: &std::path::Path) -> Result<(), String> {
+    let output = tokio::process::Command::new("git")
+        .args(["clone", "--depth", "1", "--branch", tag, repo])
+        .arg(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("git clone: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git clone failed for '{repo}' @ '{tag}': {stderr}"));
+    }
+    Ok(())
+}
+
+fn format_source_detail(result: &AddResult) -> String {
+    use husako_config::{ChartSource, SchemaSource};
+    match result {
+        AddResult::Resource {
+            source: SchemaSource::Release { version },
+            ..
+        } => {
+            format!("release  {version}")
         }
-        "file" => {
-            let path = path.ok_or("--path is required for file source")?;
-            husako_config::ChartSource::File { path }
+        AddResult::Resource {
+            source: SchemaSource::Cluster { cluster },
+            ..
+        } => {
+            format!("cluster  {}", cluster.as_deref().unwrap_or("default"))
         }
-        "oci" => {
-            let reference = reference.ok_or("--reference is required for oci source")?;
-            let version = version.ok_or("--version is required for oci source")?;
-            husako_config::ChartSource::Oci { reference, version }
+        AddResult::Resource {
+            source: SchemaSource::Git { repo, tag, .. },
+            ..
+        } => {
+            format!("git  {repo} @ {tag}")
         }
-        other => return Err(format!("unknown chart source type: {other}")),
-    };
-    Ok(husako_core::AddTarget::Chart {
-        name,
-        source: chart_source,
-    })
+        AddResult::Resource {
+            source: SchemaSource::File { path },
+            ..
+        } => {
+            format!("file  {path}")
+        }
+        AddResult::Chart {
+            source: ChartSource::ArtifactHub { package, version },
+            ..
+        } => {
+            format!("artifacthub  {package} @ {version}")
+        }
+        AddResult::Chart {
+            source:
+                ChartSource::Registry {
+                    repo,
+                    chart,
+                    version,
+                },
+            ..
+        } => {
+            format!("registry  {chart} @ {version}  ({repo})")
+        }
+        AddResult::Chart {
+            source: ChartSource::Oci { reference, version },
+            ..
+        } => {
+            format!("oci  {reference} @ {version}")
+        }
+        AddResult::Chart {
+            source: ChartSource::Git { repo, tag, .. },
+            ..
+        } => {
+            format!("git  {repo} @ {tag}")
+        }
+        AddResult::Chart {
+            source: ChartSource::File { path },
+            ..
+        } => {
+            format!("file  {path}")
+        }
+    }
+}
+
+// --- String helpers ---
+
+fn after_slash(s: &str) -> String {
+    s.rsplit('/').next().unwrap_or(s).to_string()
+}
+
+fn last_path_component(s: &str) -> String {
+    let without_query = s.split('?').next().unwrap_or(s);
+    let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+    without_fragment
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(without_fragment)
+        .split(':')
+        .next()
+        .unwrap_or(without_fragment)
+        .to_string()
+}
+
+fn repo_name(url: &str) -> String {
+    // Last path segment of scheme://host/org/repo
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+fn file_stem(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path)
+            .to_string()
+    } else {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(path)
+            .to_string()
+    }
 }
 
 fn format_size(bytes: u64) -> String {
