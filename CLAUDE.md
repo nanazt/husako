@@ -37,7 +37,7 @@ Before committing, always run in this order:
 1. `cargo fmt --all` — fix formatting
 2. `cargo clippy --workspace --all-targets --all-features -- -D warnings` — fix all warnings
 3. `cargo test --workspace --all-features` — confirm tests pass
-4. For changes touching `husako-helm`, `husako-core`, `husako-dts`, `husako-runtime-qjs`, or `husako-cli`:
+4. For changes touching `husako-helm`, `husako-core`, `husako-dts`, `husako-runtime-qjs`, `husako-sdk`, or `husako-cli`:
    ```bash
    # E2E local (Scenario G — no network required)
    cargo test -p husako --test e2e_g

@@ -136,6 +136,24 @@ test("in subdir", () => { expect(true).toBeTruthy(); });
     assert_contains("G3: found extra.test.ts", "extra.test.ts", &combined);
 }
 
+/// G5: SDK unit tests — verifies all builtin modules (husako, husako/_base, husako/test)
+/// against the TypeScript test files in crates/husako-sdk/tests/.
+/// No network, no tempdir, no husako gen — builtin modules need no generated types.
+#[test]
+fn g5_sdk_unit_tests() {
+    let sdk_test_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/husako-sdk/tests")
+        .canonicalize()
+        .expect("crates/husako-sdk/tests/ must exist");
+    let output = husako_at(&sdk_test_dir).args(["test"]).output().unwrap();
+    let combined = output_combined(&output);
+    assert!(
+        output.status.success(),
+        "G5: SDK unit tests failed:\n{combined}"
+    );
+    assert_contains("G5: all passed", "passed", &combined);
+}
+
 /// G4: Plugin module can be imported from a test file.
 #[test]
 fn g4_plugin_testing() {
