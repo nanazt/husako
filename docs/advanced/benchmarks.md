@@ -99,6 +99,32 @@ cargo run -p husako-bench --bin report -- --output-dir ./reports
 
 ## CI Integration
 
-Benchmarks run automatically on every push to `master` (see `.github/workflows/bench.yml`). Criterion results are uploaded as a GitHub Actions artifact named `criterion`. Download them from the Actions run to inspect HTML reports.
+Benchmarks run automatically on every push to `master` and on every `v*` release tag
+(see `.github/workflows/bench.yml`). Each run:
+
+1. Runs the full Criterion suite and uploads results as a GitHub Actions artifact named `criterion`
+2. Runs the `report` binary and commits the markdown to the `bench-results` branch
+
+**`bench-results` branch layout:**
+
+- `latest/` — overwritten on every run (master push or tag)
+- `releases/<version>/` — created once per release tag, permanent
+
+To inspect results without cloning:
+
+```bash
+git fetch origin bench-results
+git show origin/bench-results:latest/bench-summary.md
+# or for a specific release:
+git show origin/bench-results:releases/v0.3.0/bench-summary.md
+```
+
+> **Note on CI bench numbers**: GitHub Actions runners are shared VMs. Results will vary
+> ±10–15% run-to-run due to CPU scheduling and noisy neighbors. CI bench results are
+> useful for catching large regressions (>20%) and tracking order-of-magnitude
+> performance per release — not for precise micro-benchmark comparison. The `CPU` and
+> `Runner` fields in the report header record what hardware was used; this helps explain
+> shifts when GitHub updates their runner infrastructure. For precise numbers, run
+> benchmarks locally on a dedicated machine.
 
 PRs do not run full benchmarks. Use `cargo bench -p husako-bench -- --test` locally to verify your changes compile and execute without errors.
