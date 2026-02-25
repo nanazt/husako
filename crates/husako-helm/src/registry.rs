@@ -15,7 +15,7 @@ use crate::HelmError;
 /// 6. Download `.tgz` archive
 /// 7. Extract `values.schema.json` from archive
 /// 8. Cache and return
-pub fn resolve(
+pub async fn resolve(
     name: &str,
     repo: &str,
     chart: &str,
@@ -24,7 +24,7 @@ pub fn resolve(
 ) -> Result<serde_json::Value, HelmError> {
     // Delegate OCI registries to the dedicated OCI resolver
     if repo.starts_with("oci://") {
-        return crate::oci::resolve(name, repo, chart, version, cache_dir);
+        return crate::oci::resolve(name, repo, chart, version, cache_dir).await;
     }
 
     // Check cache
@@ -42,19 +42,21 @@ pub fn resolve(
         });
     }
 
+    let client = reqwest::Client::new();
+
     // Fetch index.yaml
     let index_url = format!("{}/index.yaml", repo.trim_end_matches('/'));
-    let index_yaml = fetch_url(name, &index_url)?;
+    let index_yaml = fetch_url(&client, name, &index_url).await?;
     let archive_url = find_chart_archive_url(name, chart, version, &index_yaml)?;
 
     // Some Helm registry index.yaml files list OCI URLs as archive URLs
     // (e.g. Bitnami moved their HTTP registry to OCI). Delegate to oci::resolve.
     if archive_url.starts_with("oci://") {
-        return crate::oci::resolve(name, &archive_url, chart, version, cache_dir);
+        return crate::oci::resolve(name, &archive_url, chart, version, cache_dir).await;
     }
 
     // Download and extract
-    let archive_bytes = fetch_url_bytes(name, &archive_url)?;
+    let archive_bytes = fetch_url_bytes(&client, name, &archive_url).await?;
     let schema = extract_values_schema(name, chart, &archive_bytes)?;
 
     // Cache
@@ -70,8 +72,11 @@ pub fn resolve(
 }
 
 /// Fetch a URL as text.
-fn fetch_url(name: &str, url: &str) -> Result<String, HelmError> {
-    let resp = reqwest::blocking::get(url)
+async fn fetch_url(client: &reqwest::Client, name: &str, url: &str) -> Result<String, HelmError> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': fetch {url}: {e}")))?;
 
     if !resp.status().is_success() {
@@ -82,12 +87,20 @@ fn fetch_url(name: &str, url: &str) -> Result<String, HelmError> {
     }
 
     resp.text()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': read response from {url}: {e}")))
 }
 
 /// Fetch a URL as bytes.
-fn fetch_url_bytes(name: &str, url: &str) -> Result<Vec<u8>, HelmError> {
-    let resp = reqwest::blocking::get(url)
+async fn fetch_url_bytes(
+    client: &reqwest::Client,
+    name: &str,
+    url: &str,
+) -> Result<Vec<u8>, HelmError> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': fetch {url}: {e}")))?;
 
     if !resp.status().is_success() {
@@ -98,6 +111,7 @@ fn fetch_url_bytes(name: &str, url: &str) -> Result<Vec<u8>, HelmError> {
     }
 
     resp.bytes()
+        .await
         .map(|b| b.to_vec())
         .map_err(|e| HelmError::Io(format!("chart '{name}': read bytes from {url}: {e}")))
 }
@@ -217,8 +231,8 @@ mod tests {
 
     /// OCI URLs are delegated to oci::resolve. Pre-populate the OCI cache so
     /// no network call is made — this proves the delegation path is exercised.
-    #[test]
-    fn oci_registry_delegates_via_cache() {
+    #[tokio::test]
+    async fn oci_registry_delegates_via_cache() {
         let oci_url = "oci://registry.example.com/charts";
         let tmp = tempfile::tempdir().unwrap();
 
@@ -231,7 +245,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path()).unwrap();
+        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
     }
@@ -332,8 +348,8 @@ entries:
 
     /// Cache hit: pre-populate cache, then call resolve() with an invalid repo URL.
     /// No HTTP request should be made.
-    #[test]
-    fn cache_hit_skips_http() {
+    #[tokio::test]
+    async fn cache_hit_skips_http() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = "http://127.0.0.1:1"; // port 1 — connection refused if actually called
         let chart = "my-chart";
@@ -348,15 +364,17 @@ entries:
         )
         .unwrap();
 
-        let result = resolve("test", repo, chart, version, tmp.path()).unwrap();
+        let result = resolve("test", repo, chart, version, tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["cached"].is_object());
     }
 
     /// Full HTTP flow: mockito serves index.yaml and the .tgz archive.
-    #[test]
-    fn resolve_fetches_index_and_archive() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn resolve_fetches_index_and_archive() {
+        let mut server = mockito::Server::new_async().await;
         let host_url = server.url();
 
         let chart = "my-chart";
@@ -370,7 +388,8 @@ entries:
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
         let tgz = build_tgz(
             chart,
@@ -380,19 +399,22 @@ entries:
             .mock("GET", archive_path)
             .with_status(200)
             .with_body(tgz)
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
-        let result = resolve("test", &host_url, chart, version, tmp.path()).unwrap();
+        let result = resolve("test", &host_url, chart, version, tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
     }
 
     /// When index.yaml lists an `oci://` archive URL, resolve() delegates to oci::resolve.
     /// Pre-populate the OCI cache so no real OCI network call is made.
-    #[test]
-    fn resolve_oci_archive_url_in_index_delegates_to_oci() {
-        let mut server = mockito::Server::new();
+    #[tokio::test]
+    async fn resolve_oci_archive_url_in_index_delegates_to_oci() {
+        let mut server = mockito::Server::new_async().await;
         let host_url = server.url();
 
         let chart = "my-chart";
@@ -406,7 +428,8 @@ entries:
             .mock("GET", "/index.yaml")
             .with_status(200)
             .with_body(index)
-            .create();
+            .create_async()
+            .await;
 
         // Seed the OCI cache so oci::resolve returns immediately
         let tmp = tempfile::tempdir().unwrap();
@@ -419,19 +442,27 @@ entries:
         )
         .unwrap();
 
-        let result = resolve("test", &host_url, chart, version, tmp.path()).unwrap();
+        let result = resolve("test", &host_url, chart, version, tmp.path())
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["ociField"].is_object());
     }
 
     /// HTTP 404 on index.yaml → error message includes the status code.
-    #[test]
-    fn resolve_index_http_error_returns_err() {
-        let mut server = mockito::Server::new();
-        let _m = server.mock("GET", "/index.yaml").with_status(404).create();
+    #[tokio::test]
+    async fn resolve_index_http_error_returns_err() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("GET", "/index.yaml")
+            .with_status(404)
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
-        let err = resolve("test", &server.url(), "my-chart", "1.0.0", tmp.path()).unwrap_err();
+        let err = resolve("test", &server.url(), "my-chart", "1.0.0", tmp.path())
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("404"));
     }
 }

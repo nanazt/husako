@@ -1,4 +1,4 @@
-use reqwest::blocking::Client;
+use reqwest::Client;
 
 use crate::{DiscoveryIndex, OpenApiError};
 
@@ -16,7 +16,7 @@ pub fn extract_hash(server_relative_url: &str) -> Option<String> {
     None
 }
 
-pub fn fetch_discovery(
+pub async fn fetch_discovery(
     client: &Client,
     base_url: &str,
     bearer_token: Option<&str>,
@@ -28,6 +28,7 @@ pub fn fetch_discovery(
     }
     let resp = req
         .send()
+        .await
         .map_err(|e| OpenApiError::Http(format!("GET {url}: {e}")))?;
     if !resp.status().is_success() {
         return Err(OpenApiError::Http(format!(
@@ -36,10 +37,11 @@ pub fn fetch_discovery(
         )));
     }
     resp.json::<DiscoveryIndex>()
+        .await
         .map_err(|e| OpenApiError::Parse(format!("parse discovery from {url}: {e}")))
 }
 
-pub fn fetch_spec(
+pub async fn fetch_spec(
     client: &Client,
     base_url: &str,
     server_relative_url: &str,
@@ -52,6 +54,7 @@ pub fn fetch_spec(
     }
     let resp = req
         .send()
+        .await
         .map_err(|e| OpenApiError::Http(format!("GET {url}: {e}")))?;
     if !resp.status().is_success() {
         return Err(OpenApiError::Http(format!(
@@ -60,6 +63,7 @@ pub fn fetch_spec(
         )));
     }
     resp.json::<serde_json::Value>()
+        .await
         .map_err(|e| OpenApiError::Parse(format!("parse spec from {url}: {e}")))
 }
 

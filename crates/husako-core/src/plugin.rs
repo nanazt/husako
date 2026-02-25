@@ -20,7 +20,7 @@ pub struct InstalledPlugin {
 /// For `source = "path"`, copies the directory contents.
 ///
 /// Returns a list of installed plugins with their parsed manifests.
-pub fn install_plugins(
+pub async fn install_plugins(
     config: &HusakoConfig,
     project_root: &Path,
     progress: &dyn ProgressReporter,
@@ -37,7 +37,7 @@ pub fn install_plugins(
         let plugin_dir = plugins_dir.join(name);
         let task = progress.start_task(&format!("Installing plugin {name}..."));
 
-        match install_plugin(name, source, project_root, &plugin_dir) {
+        match install_plugin(name, source, project_root, &plugin_dir).await {
             Ok(()) => match husako_config::load_plugin_manifest(&plugin_dir) {
                 Ok(manifest) => {
                     task.finish_ok(&format!("{name}: installed (v{})", manifest.plugin.version));
@@ -62,7 +62,7 @@ pub fn install_plugins(
     Ok(installed)
 }
 
-fn install_plugin(
+async fn install_plugin(
     name: &str,
     source: &PluginSource,
     project_root: &Path,
@@ -76,7 +76,9 @@ fn install_plugin(
     }
 
     match source {
-        PluginSource::Git { url, path } => install_git(name, url, path.as_deref(), target_dir),
+        PluginSource::Git { url, path } => {
+            install_git(name, url, path.as_deref(), target_dir).await
+        }
         PluginSource::Path { path } => {
             let source_dir = project_root.join(path);
             install_path(name, &source_dir, target_dir)
@@ -84,25 +86,25 @@ fn install_plugin(
     }
 }
 
-fn install_git(
+async fn install_git(
     name: &str,
     url: &str,
     subdir: Option<&str>,
     target_dir: &Path,
 ) -> Result<(), HusakoError> {
     match subdir {
-        None => install_git_full(name, url, target_dir),
-        Some(sub) => install_git_subdir(name, url, sub, target_dir),
+        None => install_git_full(name, url, target_dir).await,
+        Some(sub) => install_git_subdir(name, url, sub, target_dir).await,
     }
 }
 
 /// Shallow-clone the full repository into `target_dir`.
-fn install_git_full(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoError> {
+async fn install_git_full(name: &str, url: &str, target_dir: &Path) -> Result<(), HusakoError> {
     std::fs::create_dir_all(target_dir).map_err(|e| {
         HusakoError::GenerateIo(format!("create dir {}: {e}", target_dir.display()))
     })?;
 
-    let output = std::process::Command::new("git")
+    let output = tokio::process::Command::new("git")
         .args([
             "clone",
             "--depth",
@@ -112,6 +114,7 @@ fn install_git_full(name: &str, url: &str, target_dir: &Path) -> Result<(), Husa
             &target_dir.to_string_lossy(),
         ])
         .output()
+        .await
         .map_err(|e| HusakoError::GenerateIo(format!("plugin '{name}': git clone failed: {e}")))?;
 
     if !output.status.success() {
@@ -133,7 +136,7 @@ fn install_git_full(name: &str, url: &str, target_dir: &Path) -> Result<(), Husa
 
 /// Use sparse-checkout to fetch only `subdir` from the repository,
 /// then copy its contents into `target_dir`.
-fn install_git_subdir(
+async fn install_git_subdir(
     name: &str,
     url: &str,
     subdir: &str,
@@ -166,27 +169,59 @@ fn install_git_subdir(
         HusakoError::GenerateIo(msg)
     };
 
-    // git init
-    let run = |args: &[&str]| -> Result<(), HusakoError> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .output()
-            .map_err(|e| cleanup(format!("plugin '{name}': git {} failed: {e}", args[0])))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(cleanup(format!(
-                "plugin '{name}': git {} failed: {stderr}",
-                args[0]
-            )));
-        }
-        Ok(())
-    };
+    let tmp = tmp_dir.to_string_lossy().into_owned();
 
-    let tmp = tmp_dir.to_string_lossy();
-    run(&["init", &tmp])?;
-    run(&["-C", &tmp, "remote", "add", "origin", url])?;
-    run(&["-C", &tmp, "sparse-checkout", "set", subdir])?;
-    run(&["-C", &tmp, "pull", "--depth", "1", "origin", "HEAD"])?;
+    // git init
+    let output = tokio::process::Command::new("git")
+        .args(["init", &tmp])
+        .output()
+        .await
+        .map_err(|e| cleanup(format!("plugin '{name}': git init failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(cleanup(format!(
+            "plugin '{name}': git init failed: {stderr}"
+        )));
+    }
+
+    // git remote add origin <url>
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &tmp, "remote", "add", "origin", url])
+        .output()
+        .await
+        .map_err(|e| cleanup(format!("plugin '{name}': git remote add failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(cleanup(format!(
+            "plugin '{name}': git remote add failed: {stderr}"
+        )));
+    }
+
+    // git sparse-checkout set <subdir>
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &tmp, "sparse-checkout", "set", subdir])
+        .output()
+        .await
+        .map_err(|e| cleanup(format!("plugin '{name}': git sparse-checkout failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(cleanup(format!(
+            "plugin '{name}': git sparse-checkout failed: {stderr}"
+        )));
+    }
+
+    // git pull --depth 1 origin HEAD
+    let output = tokio::process::Command::new("git")
+        .args(["-C", &tmp, "pull", "--depth", "1", "origin", "HEAD"])
+        .output()
+        .await
+        .map_err(|e| cleanup(format!("plugin '{name}': git pull failed: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(cleanup(format!(
+            "plugin '{name}': git pull failed: {stderr}"
+        )));
+    }
 
     // Copy the subdirectory contents into target_dir
     let subdir_path = tmp_dir.join(subdir);
@@ -361,7 +396,10 @@ version = "0.1.0"
         };
 
         let progress = crate::progress::SilentProgress;
-        let installed = install_plugins(&config, project_root, &progress).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let installed = rt
+            .block_on(install_plugins(&config, project_root, &progress))
+            .unwrap();
 
         assert_eq!(installed.len(), 1);
         assert_eq!(installed[0].name, "test");
@@ -389,7 +427,10 @@ version = "0.1.0"
         };
 
         let progress = crate::progress::SilentProgress;
-        let err = install_plugins(&config, project_root, &progress).unwrap_err();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(install_plugins(&config, project_root, &progress))
+            .unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
 
@@ -427,7 +468,10 @@ version = "0.1.0"
         };
 
         let progress = crate::progress::SilentProgress;
-        let installed = install_plugins(&config, project_root, &progress).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let installed = rt
+            .block_on(install_plugins(&config, project_root, &progress))
+            .unwrap();
 
         assert_eq!(installed[0].manifest.plugin.version, "0.2.0");
     }
@@ -587,7 +631,10 @@ version = "0.1.0"
         let tmp = tempfile::tempdir().unwrap();
         let config = HusakoConfig::default();
         let progress = crate::progress::SilentProgress;
-        let installed = install_plugins(&config, tmp.path(), &progress).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let installed = rt
+            .block_on(install_plugins(&config, tmp.path(), &progress))
+            .unwrap();
         assert!(installed.is_empty());
     }
 }

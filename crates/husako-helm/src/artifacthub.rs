@@ -12,16 +12,16 @@ const ARTIFACTHUB_BASE: &str = "https://artifacthub.io/api/v1/packages/helm";
 /// 3. Use `values_schema` if present — cache and return
 /// 4. Otherwise attempt a registry fallback using `repository.url`
 ///    (delegates to `registry::resolve`, which handles both HTTP and OCI)
-pub fn resolve(
+pub async fn resolve(
     name: &str,
     package: &str,
     version: &str,
     cache_dir: &Path,
 ) -> Result<serde_json::Value, HelmError> {
-    resolve_from(name, package, version, cache_dir, ARTIFACTHUB_BASE)
+    resolve_from(name, package, version, cache_dir, ARTIFACTHUB_BASE).await
 }
 
-fn resolve_from(
+async fn resolve_from(
     name: &str,
     package: &str,
     version: &str,
@@ -45,7 +45,11 @@ fn resolve_from(
 
     // Fetch from ArtifactHub API
     let url = format!("{base_url}/{package}/{version}");
-    let resp = reqwest::blocking::get(&url)
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': fetch {url}: {e}")))?;
 
     if !resp.status().is_success() {
@@ -57,6 +61,7 @@ fn resolve_from(
 
     let body: serde_json::Value = resp
         .json()
+        .await
         .map_err(|e| HelmError::Io(format!("chart '{name}': parse response from {url}: {e}")))?;
 
     // Phase 1: use values_schema if the chart author published it
@@ -87,14 +92,14 @@ fn resolve_from(
     let chart_name = package.rsplit('/').next().unwrap_or(package);
 
     if !repo_url.is_empty() {
-        return crate::registry::resolve(name, repo_url, chart_name, version, cache_dir).map_err(
-            |e| {
+        return crate::registry::resolve(name, repo_url, chart_name, version, cache_dir)
+            .await
+            .map_err(|e| {
                 HelmError::NotFound(format!(
                     "chart '{name}': no values_schema on ArtifactHub; \
                      registry fallback ({repo_url}) also failed: {e}"
                 ))
-            },
-        );
+            });
     }
 
     Err(HelmError::NotFound(format!(
@@ -107,8 +112,8 @@ fn resolve_from(
 mod tests {
     use super::*;
 
-    #[test]
-    fn cache_hit_returns_cached_schema() {
+    #[tokio::test]
+    async fn cache_hit_returns_cached_schema() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
         let cache_key = crate::cache_hash("my-org/my-chart");
@@ -120,13 +125,15 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", "my-org/my-chart", "1.0.0", cache_dir).unwrap();
+        let result = resolve("test", "my-org/my-chart", "1.0.0", cache_dir)
+            .await
+            .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
     }
 
-    #[test]
-    fn cache_invalid_json_returns_error() {
+    #[tokio::test]
+    async fn cache_invalid_json_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
         let cache_key = crate::cache_hash("my-org/my-chart");
@@ -134,23 +141,26 @@ mod tests {
         std::fs::create_dir_all(&cache_sub).unwrap();
         std::fs::write(cache_sub.join("1.0.0.json"), "not json").unwrap();
 
-        let err = resolve("test", "my-org/my-chart", "1.0.0", cache_dir).unwrap_err();
+        let err = resolve("test", "my-org/my-chart", "1.0.0", cache_dir)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("parse cached schema"));
     }
 
     /// When `values_schema` is present in the API response, it is used directly.
-    #[test]
-    fn values_schema_present_returned_directly() {
+    #[tokio::test]
+    async fn values_schema_present_returned_directly() {
         let schema_json = r#"{"type":"object","properties":{"replicas":{"type":"integer"}}}"#;
         let api_body = serde_json::json!({ "values_schema": schema_json });
 
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let _m = server
             .mock("GET", "/my-org/my-chart/1.0.0")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(api_body.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let result = resolve_from(
@@ -160,6 +170,7 @@ mod tests {
             tmp.path(),
             &server.url(),
         )
+        .await
         .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());
@@ -167,17 +178,18 @@ mod tests {
 
     /// When `values_schema` is absent and `repository.url` is empty, resolve
     /// returns an error guiding the user to `source = "file"`.
-    #[test]
-    fn no_values_schema_no_repo_url_returns_clear_error() {
+    #[tokio::test]
+    async fn no_values_schema_no_repo_url_returns_clear_error() {
         let api_body = serde_json::json!({ "name": "some-chart" });
 
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let _m = server
             .mock("GET", "/my-org/some-chart/1.0.0")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(api_body.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
         let err = resolve_from(
@@ -187,6 +199,7 @@ mod tests {
             tmp.path(),
             &server.url(),
         )
+        .await
         .unwrap_err();
 
         let msg = err.to_string();
@@ -196,21 +209,22 @@ mod tests {
     /// When `values_schema` is absent and `repository.url` is an OCI URL,
     /// resolve now delegates to oci::resolve via registry::resolve.
     /// The OCI cache pre-populated here proves the delegation path is exercised.
-    #[test]
-    fn no_values_schema_oci_repo_delegates_to_oci_resolver() {
+    #[tokio::test]
+    async fn no_values_schema_oci_repo_delegates_to_oci_resolver() {
         let oci_url = "oci://registry-1.docker.io/bitnamicharts/postgresql";
         let api_body = serde_json::json!({
             "name": "postgresql",
             "repository": { "url": oci_url }
         });
 
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let _m = server
             .mock("GET", "/bitnami/postgresql/16.4.0")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(api_body.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
 
@@ -231,6 +245,7 @@ mod tests {
             tmp.path(),
             &server.url(),
         )
+        .await
         .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicaCount"].is_object());
@@ -239,21 +254,22 @@ mod tests {
     /// When `values_schema` is absent and `repository.url` is an HTTP registry,
     /// resolve delegates to registry::resolve. Registry cache pre-populated here
     /// proves the delegation path is exercised.
-    #[test]
-    fn no_values_schema_http_repo_delegates_to_registry() {
+    #[tokio::test]
+    async fn no_values_schema_http_repo_delegates_to_registry() {
         let registry_url = "https://charts.example.com";
         let api_body = serde_json::json!({
             "name": "my-chart",
             "repository": { "url": registry_url }
         });
 
-        let mut server = mockito::Server::new();
+        let mut server = mockito::Server::new_async().await;
         let _m = server
             .mock("GET", "/my-org/my-chart/1.0.0")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(api_body.to_string())
-            .create();
+            .create_async()
+            .await;
 
         let tmp = tempfile::tempdir().unwrap();
 
@@ -274,6 +290,7 @@ mod tests {
             tmp.path(),
             &server.url(),
         )
+        .await
         .unwrap();
         assert_eq!(result["type"], "object");
         assert!(result["properties"]["replicas"].is_object());

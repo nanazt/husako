@@ -9,7 +9,7 @@ use crate::OpenApiError;
 ///
 /// `version` can be `"1.35"` (mapped to `v1.35.0`) or a full semver like `"1.35.1"`.
 /// Results are cached under `cache_dir/release/{tag}/`.
-pub fn fetch_release_specs(
+pub async fn fetch_release_specs(
     version: &str,
     cache_dir: &Path,
 ) -> Result<HashMap<String, Value>, OpenApiError> {
@@ -32,6 +32,7 @@ pub fn fetch_release_specs(
         .header("User-Agent", "husako")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
+        .await
         .map_err(|e| release_err(format!("GitHub API request failed: {e}")))?;
 
     if !resp.status().is_success() {
@@ -43,6 +44,7 @@ pub fn fetch_release_specs(
 
     let entries: Vec<GithubContent> = resp
         .json()
+        .await
         .map_err(|e| release_err(format!("parse GitHub response: {e}")))?;
 
     // Filter for OpenAPI spec files
@@ -73,6 +75,7 @@ pub fn fetch_release_specs(
             .get(download_url)
             .header("User-Agent", "husako")
             .send()
+            .await
             .map_err(|e| release_err(format!("download {}: {e}", entry.name)))?;
 
         if !spec_resp.status().is_success() {
@@ -85,6 +88,7 @@ pub fn fetch_release_specs(
 
         let spec: Value = spec_resp
             .json()
+            .await
             .map_err(|e| release_err(format!("parse {}: {e}", entry.name)))?;
 
         let discovery_key = filename_to_discovery_key(&entry.name);
@@ -178,8 +182,8 @@ fn load_cached_specs(tag_cache: &Path) -> Result<HashMap<String, Value>, OpenApi
     Ok(specs)
 }
 
-fn build_http_client() -> Result<reqwest::blocking::Client, OpenApiError> {
-    reqwest::blocking::Client::builder()
+fn build_http_client() -> Result<reqwest::Client, OpenApiError> {
+    reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| release_err(format!("build HTTP client: {e}")))
@@ -262,8 +266,8 @@ mod tests {
         assert_eq!(result["apis/apps/v1"]["openapi"], "3.0.0");
     }
 
-    #[test]
-    fn cache_hit_skips_network() {
+    #[tokio::test]
+    async fn cache_hit_skips_network() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();
 
@@ -285,7 +289,7 @@ mod tests {
         .unwrap();
 
         // This should hit cache and NOT make any network requests
-        let result = fetch_release_specs("1.35", cache_dir).unwrap();
+        let result = fetch_release_specs("1.35", cache_dir).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result["api/v1"]["info"]["title"], "cached");
     }
