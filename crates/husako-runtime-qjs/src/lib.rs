@@ -434,6 +434,49 @@ mod tests {
         assert!(err.to_string().contains("function"));
     }
 
+    #[test]
+    fn strict_json_bigint() {
+        let js = r#"
+            import { build } from "husako";
+            build({ _render() { return { n: BigInt(1) }; } });
+        "#;
+        let err = execute(js, &test_options()).unwrap_err();
+        assert!(matches!(err, RuntimeError::StrictJson { .. }));
+        assert!(err.to_string().contains("bigint"));
+    }
+
+    #[test]
+    fn strict_json_date_object() {
+        // In QuickJS, Date is Type::Object with no enumerable own properties.
+        // convert_value iterates its (empty) own props and returns `{}`.
+        // This is the correct behavior — Date is not explicitly rejected by
+        // rquickjs::Type, but toISOString() produces a string which is valid JSON.
+        let js = r#"
+            import { build } from "husako";
+            const d = new Date(0);
+            build({ _render() { return { ts: d.toISOString() }; } });
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert!(result[0]["ts"].is_string());
+        assert_eq!(result[0]["ts"], "1970-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn strict_json_map_and_set() {
+        // Map and Set are Type::Object in QuickJS. Their internal data is not exposed
+        // as enumerable own properties, so convert_value returns `{}` for each.
+        // Accessing .size (a number) is valid JSON and works correctly.
+        let js = r#"
+            import { build } from "husako";
+            const m = new Map([["k", "v"]]);
+            const s = new Set([1, 2, 3]);
+            build({ _render() { return { mapSize: m.size, setSize: s.size }; } });
+        "#;
+        let result = execute(js, &test_options()).unwrap();
+        assert_eq!(result[0]["mapSize"], 1);
+        assert_eq!(result[0]["setSize"], 3);
+    }
+
     // --- Milestone 3: SDK builder tests (using generated k8s modules) ---
 
     /// Create a temp dir with generated k8s module files and return (dir, options).

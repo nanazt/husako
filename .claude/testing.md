@@ -176,10 +176,48 @@ Exit code: 0 if all tests pass, 1 if any test fails or cannot compile/run.
 ## Unit Test Patterns
 
 ### Helm resolver tests
+
+| Source | File | Strategy |
+|--------|------|----------|
+| `registry` | `registry.rs` | mockito for index.yaml + .tgz; tempdir cache pre-populate for cache-hit + OCI-delegation paths |
+| `artifacthub` | `artifacthub.rs` | mockito via `resolve_from(url)` pattern; tempdir cache for cache-hit |
+| `oci` | `oci.rs` | mockito for v2 ping / manifests / blobs; tempdir cache for cache-hit |
+| `git` | `git.rs` | E2E only (requires `git clone`) |
+| `file` | `file.rs` | tempdir only; no HTTP |
+
+Key patterns:
 - Use `mockito::Server` for HTTP mock server
-- Pre-populate cache directory to test delegation paths without real network
+- Pre-populate cache directory (`{tmpdir}/helm/{source}/{hash}/{version}.json`) to test
+  delegation paths without real network
+- For OCI delegation inside registry tests: pre-populate `helm/oci/{cache_hash(oci_url)}/{version}.json`
 - Test: cache hit → returns cached; cache miss + valid network → caches; network error → error
-- Test each source kind's happy path and common error cases
+
+### version_check.rs tests — `_from()` pattern
+
+Functions that hard-code base URLs are split into a public wrapper and a private `_from(base_url)`
+variant for testability. The public function passes the production constant; tests pass the
+mockito server URL.
+
+```
+const GITHUB_API_BASE: &str = "https://api.github.com";
+const ARTIFACTHUB_BASE: &str = "https://artifacthub.io";
+
+pub fn discover_latest_release() -> Result<…> {
+    discover_latest_release_from(GITHUB_API_BASE)
+}
+fn discover_latest_release_from(base_url: &str) -> Result<…> { … }
+```
+
+Functions covered by this pattern:
+- `search_artifacthub` / `search_artifacthub_from`
+- `discover_recent_releases` / `discover_recent_releases_from`
+- `discover_latest_release` / `discover_latest_release_from`
+- `discover_latest_artifacthub` / `discover_latest_artifacthub_from`
+- `discover_artifacthub_versions` / `discover_artifacthub_versions_from`
+
+Functions already URL-parametric (no refactoring needed):
+- `discover_registry_versions(repo, chart, …)` — pass mockito URL as `repo`
+- `discover_latest_registry(repo, chart)` — same
 
 ### OpenAPI / DTS tests
 - Use fixture JSON from `tests/fixtures/` (checked-in real k8s spec excerpts)

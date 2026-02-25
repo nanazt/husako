@@ -926,6 +926,7 @@ dependencies = [
  "husako-runtime-qjs",
  "husako-sdk",
  "husako-yaml",
+ "mockito",
  "regex-lite",
  "reqwest",
  "semver",
