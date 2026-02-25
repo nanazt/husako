@@ -562,7 +562,17 @@ async fn main() -> ExitCode {
             let project_root = cwd();
 
             match resolve_add_target(
-                url, extra, name, release, cluster, version, tag, branch, path, cli.yes,
+                url,
+                extra,
+                name,
+                release,
+                cluster,
+                version,
+                tag,
+                branch,
+                path,
+                cli.yes,
+                &project_root,
             )
             .await
             {
@@ -1344,6 +1354,7 @@ async fn resolve_add_target(
     branch: Option<String>,
     path_override: Option<String>,
     yes: bool,
+    project_root: &std::path::Path,
 ) -> Result<Option<AddResult>, String> {
     use husako_config::{ChartSource, SchemaSource};
     use url_detect::{SourceKind, UrlDetected, detect_url};
@@ -1359,6 +1370,55 @@ async fn resolve_add_target(
 
     // 2. Cluster resource
     if let Some(cluster_val) = cluster {
+        let display_name = if cluster_val.is_empty() {
+            "default"
+        } else {
+            &cluster_val
+        };
+
+        // Try husako.toml first, then kubeconfig as fallback
+        let server_url = husako_config::load(project_root)
+            .ok()
+            .flatten()
+            .and_then(|cfg| {
+                if cluster_val.is_empty() {
+                    cfg.cluster.map(|c| c.server)
+                } else {
+                    cfg.clusters.get(&cluster_val).map(|c| c.server.clone())
+                }
+            });
+        let server_url = server_url.or_else(|| {
+            let ctx = if cluster_val.is_empty() {
+                None
+            } else {
+                Some(cluster_val.as_str())
+            };
+            husako_openapi::kubeconfig::server_for_context(ctx)
+        });
+
+        // Fail early if the cluster is not configured anywhere
+        let server_url = match server_url {
+            Some(url) => url,
+            None => {
+                let msg = if cluster_val.is_empty() {
+                    "cluster is not configured — add [cluster] to husako.toml or set a current-context in kubeconfig".to_string()
+                } else {
+                    format!(
+                        "cluster {:?} is not configured — add [clusters.{}] to husako.toml or ensure context {:?} exists in kubeconfig",
+                        cluster_val, cluster_val, cluster_val
+                    )
+                };
+                return Err(msg);
+            }
+        };
+
+        // Always show cluster identity (visible even with --yes, useful for audit)
+        eprintln!(
+            "  Cluster: {}  {}",
+            style::dep_name(display_name),
+            style::dim(&server_url),
+        );
+
         if !yes {
             eprintln!(
                 "{} Adding a cluster resource will fetch ALL CRDs from the cluster, which may be a large set.",
@@ -1370,6 +1430,7 @@ async fn resolve_add_target(
                 Err(e) => return Err(e),
             }
         }
+
         // cluster_val == "" → --cluster without value → use "cluster" as name
         let cluster_name = if cluster_val.is_empty() {
             None

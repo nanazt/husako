@@ -2334,3 +2334,60 @@ fn add_unrecognized_url_errors() {
         .failure()
         .code(2);
 }
+
+// --- husako add --cluster ---
+
+#[test]
+fn add_cluster_shows_server_url_from_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[cluster]\nserver = \"https://localhost:6443\"\n[resources]\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Cluster:"))
+        .stderr(predicates::str::contains("default"))
+        .stderr(predicates::str::contains("https://localhost:6443"));
+}
+
+#[test]
+fn add_cluster_named_shows_server_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[clusters.dev]\nserver = \"https://dev:6443\"\n[resources]\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "dev", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Cluster:"))
+        .stderr(predicates::str::contains("dev"))
+        .stderr(predicates::str::contains("https://dev:6443"));
+}
+
+#[test]
+fn add_cluster_not_configured_fails() {
+    // No [cluster] in husako.toml; HOME overridden so ~/.kube/ is empty,
+    // preventing a real local kubeconfig from unexpectedly providing a server URL.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster"])
+        .env("HOME", dir.path())
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("not configured"));
+}
