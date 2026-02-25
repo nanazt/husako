@@ -88,10 +88,6 @@ husako clean [options]
 | `--cache` | Remove only `.husako/cache/` |
 | `--types` | Remove only `.husako/types/` and `.husako/plugins/` |
 
-Prompts for confirmation by default.
-
-Use `-y` / `--yes` to skip.
-
 ---
 
 ## husako list / husako ls
