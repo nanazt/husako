@@ -200,8 +200,8 @@ enum Commands {
     /// Check project health and diagnose issues
     Debug,
 
-    /// Validate TypeScript without rendering output
-    Validate {
+    /// Check TypeScript without rendering output
+    Check {
         /// TypeScript entry file or alias
         file: String,
     },
@@ -1165,7 +1165,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Validate { file } => {
+        Commands::Check { file } => {
             let project_root = cwd();
 
             let resolved = match resolve_entry(&file, &project_root) {

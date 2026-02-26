@@ -42,7 +42,7 @@ build([ex]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "example.ts"])
+        .args(["check", "example.ts"])
         .assert()
         .success();
     let ex_yaml = String::from_utf8_lossy(
@@ -109,7 +109,7 @@ build([cert]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "certificate.ts"])
+        .args(["check", "certificate.ts"])
         .assert()
         .success();
     let cert_yaml = String::from_utf8_lossy(
@@ -149,7 +149,7 @@ build([cert]);
     );
 
     husako_at(dir.path())
-        .args(["validate", "example.ts"])
+        .args(["check", "example.ts"])
         .assert()
         .success();
     let ex_after = String::from_utf8_lossy(

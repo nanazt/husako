@@ -101,7 +101,7 @@ All source kinds are exercised end-to-end:
 
 ### Stderr vs stdout
 
-husako diagnostic output (list, info, debug, validate, outdated, plugin list) goes to stderr.
+husako diagnostic output (list, info, debug, check, outdated, plugin list) goes to stderr.
 Only `husako render` writes to stdout.
 
 In Rust tests, capture both and check appropriately:

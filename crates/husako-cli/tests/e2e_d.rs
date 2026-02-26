@@ -19,7 +19,7 @@ fn scenario_d_version_management() {
     // k8s 1.30 types present
     assert_file(&dir.path().join(".husako/types/k8s/core/v1.d.ts"));
     husako_at(dir.path())
-        .args(["validate", "configmap.ts"])
+        .args(["check", "configmap.ts"])
         .assert()
         .success();
     let cm_before = String::from_utf8_lossy(
@@ -66,7 +66,7 @@ fn scenario_d_version_management() {
 
     // validate + render still work after update
     husako_at(dir.path())
-        .args(["validate", "configmap.ts"])
+        .args(["check", "configmap.ts"])
         .assert()
         .success();
     let cm_after = String::from_utf8_lossy(

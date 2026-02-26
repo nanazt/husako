@@ -53,7 +53,7 @@ fn scenario_f_oci_chart_source() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "pg-oci-values.ts"])
+        .args(["check", "pg-oci-values.ts"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(

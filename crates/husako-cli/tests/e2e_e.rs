@@ -66,7 +66,7 @@ build([repo, release]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "helmrelease.ts"])
+        .args(["check", "helmrelease.ts"])
         .assert()
         .success();
     let hr_yaml = String::from_utf8_lossy(
@@ -118,7 +118,7 @@ build([repo, release]);
 
     write_configmap(&dir.path().join("configmap.ts"));
     husako_at(dir.path())
-        .args(["validate", "configmap.ts"])
+        .args(["check", "configmap.ts"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(

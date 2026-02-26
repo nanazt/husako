@@ -49,7 +49,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "pg-values.ts"])
+        .args(["check", "pg-values.ts"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(
@@ -105,7 +105,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "redis-reg-values.ts"])
+        .args(["check", "redis-reg-values.ts"])
         .assert()
         .success();
     let redis_yaml = String::from_utf8_lossy(
@@ -155,7 +155,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "prom-git-values.ts"])
+        .args(["check", "prom-git-values.ts"])
         .assert()
         .success();
     let prom_yaml = String::from_utf8_lossy(
@@ -188,7 +188,7 @@ fn scenario_b_chart_sources() {
 
     // k8s types still work after chart removal
     husako_at(dir.path())
-        .args(["validate", "configmap.ts"])
+        .args(["check", "configmap.ts"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(

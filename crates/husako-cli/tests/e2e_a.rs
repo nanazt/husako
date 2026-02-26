@@ -35,7 +35,7 @@ fn scenario_a_static_k8s_and_local_helm() {
 
     // validate entry.ts (k8s Deployment via file path)
     husako_at(&e2e_dir)
-        .args(["validate", "entry.ts"])
+        .args(["check", "entry.ts"])
         .assert()
         .success();
 
@@ -53,7 +53,7 @@ fn scenario_a_static_k8s_and_local_helm() {
 
     // validate + render via entry alias 'deploy'
     husako_at(&e2e_dir)
-        .args(["validate", "deploy"])
+        .args(["check", "deploy"])
         .assert()
         .success();
     let alias_yaml = String::from_utf8_lossy(
@@ -69,7 +69,7 @@ fn scenario_a_static_k8s_and_local_helm() {
 
     // validate + render helm-values.ts (local Helm chart)
     husako_at(&e2e_dir)
-        .args(["validate", "helm-values.ts"])
+        .args(["check", "helm-values.ts"])
         .assert()
         .success();
     let helm_yaml = String::from_utf8_lossy(
