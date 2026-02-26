@@ -55,12 +55,6 @@ Connect to a running cluster:
 husako gen --api-server https://localhost:6443
 ```
 
-Use the short alias:
-
-```
-husako gen --api-server https://localhost:6443
-```
-
 Or use a locally downloaded spec directory:
 
 ```
@@ -76,6 +70,10 @@ husako gen --skip-k8s
 This writes a `.husako/` directory with `.d.ts` type definitions and a `tsconfig.json`.
 
 Your editor reads these automatically for autocomplete and type checking.
+
+::: tip
+You rarely need to run `husako gen` manually. `husako add` and `husako remove` regenerate types automatically after changing your config. `husako render` regenerates types automatically if `.husako/types/` is missing.
+:::
 
 ::: tip
 `.husako/` is auto-managed by husako and should never be committed to version control. It is added to `.gitignore` by `husako new`.
