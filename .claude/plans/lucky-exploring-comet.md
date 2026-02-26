@@ -1,48 +1,133 @@
-# Plan: Remove Step Counter from Progress Output
+# Plan: husako version subcommand with build info
 
 ## Context
 
-The CLI shows `[N/M]` step counters in spinner messages (e.g. `[1/4] Compiling…`, `[2/4] Executing…`). The user finds this noisy and wants it removed.
+`husako --version` (clap built-in)은 "0.1.0"만 출력하고 git hash/date 정보가 없다.
+`husako version` subcommand를 추가해 버전 + commit hash (dirty 포함) + build date를 출력한다.
+`--version` / `-V` 플래그는 제거한다.
 
-## Changes
+출력 형식:
+```
+husako 0.1.0 (abc1234-dirty 2026-02-27)
+```
 
-### 1. `crates/husako-cli/src/progress.rs` — main change
+## Files to Modify
 
-- Remove `counter: Arc<AtomicUsize>` and `total: Arc<AtomicUsize>` fields from `IndicatifReporter`.
-- Remove the `set_total` override from `impl ProgressReporter for IndicatifReporter` — the trait's default no-op is sufficient.
-- In `start_task`, remove the `count`/`total` fetch and the `prefix` format block entirely.
-- Remove the `prefix: String` field from `IndicatifTaskHandle` and its doc comment.
-- In `set_message`, `set_progress`, `finish_ok`, `finish_err` — remove `self.prefix` interpolation.
-- The `IndicatifReporter::new()` constructor simplifies to `Self {}` (or removes the field inits).
+- `crates/husako-cli/build.rs` — new file: git hash + build date 삽입
+- `crates/husako-cli/src/main.rs` — `version` attr 제거, `Version` variant + handler 추가
 
-### 2. `crates/husako-core/src/progress.rs` — doc comment update
+## Implementation
 
-Line 7-8 says: *"Set the total number of steps so the reporter can show `[N/M]` counters."*
-Update to remove the `[N/M]` mention since the CLI no longer renders it. The method itself stays (it's a no-op default; callers can still call it harmlessly).
+### 1. `crates/husako-cli/build.rs` (new)
 
-### 3. `set_total()` call sites — leave as-is
+```rust
+fn main() {
+    // git log -1 --format="%h %cd" --date=short → e.g. "abc1234 2026-02-27"
+    let (hash, date) = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%h %cd", "--date=short"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| {
+            let s = s.trim().to_string();
+            let mut p = s.splitn(2, ' ');
+            let h = p.next().unwrap_or("unknown").to_string();
+            let d = p.next().unwrap_or("unknown").to_string();
+            (h, d)
+        })
+        .unwrap_or_else(|| ("unknown".to_string(), "unknown".to_string()));
 
-`lib.rs` calls `progress.set_total(4)` and `schema_source.rs` calls `progress.set_total(n)`.
-These now hit the default no-op and are harmless. Leaving them avoids scope creep.
+    // dirty check: git status --porcelain
+    let dirty = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .map(|o| !o.stdout.trim_ascii().is_empty())
+        .unwrap_or(false);
 
-## Tests — no changes needed
+    let hash = if dirty { format!("{hash}-dirty") } else { hash };
 
-Confirmed by search:
-- No test asserts on `[1/1]`, `[2/4]` or any `[N/M]` pattern in output.
-- `verbose_produces_stderr_output` (integration.rs:1122) checks for `[compile]`, `[execute]`, `[validate]`, `[emit]` — those come from `eprintln!()` verbose lines in `lib.rs`, **not** from the spinner prefix. They are unaffected.
-- `husako-cli/src/progress.rs` inline tests only test `build_suffix()` — no prefix involved.
-- `husako-core/src/progress.rs` tests only cover `SilentProgress` — unaffected.
+    println!("cargo:rustc-env=HUSAKO_GIT_HASH={hash}");
+    println!("cargo:rustc-env=HUSAKO_BUILD_DATE={date}");
+}
+```
 
-## Docs — no user-facing doc changes
+`rerun-if-changed` 없음 → 매 빌드마다 실행 (git 명령 2개, 무시할 수준).
 
-No user-facing documentation mentions the `[N/M]` format. The only update is the internal doc comment on the `set_total` trait method (covered above).
+### 2. `crates/husako-cli/src/main.rs`
+
+**Remove** `version` from `#[command(...)]`:
+```rust
+// Before
+#[command(name = "husako", version)]
+
+// After
+#[command(name = "husako")]
+```
+
+**Add** `Version` variant to `Commands` enum (맨 마지막):
+```rust
+/// Print version, commit hash, and build date.
+Version,
+```
+
+**Add** handler in `match cli.command`:
+```rust
+Commands::Version => {
+    eprintln!(
+        "husako {} ({} {})",
+        env!("CARGO_PKG_VERSION"),
+        env!("HUSAKO_GIT_HASH"),
+        env!("HUSAKO_BUILD_DATE"),
+    );
+    ExitCode::SUCCESS
+}
+```
+
+## Tests
+
+`crates/husako-cli/tests/integration.rs`에 추가:
+
+```rust
+#[test]
+fn version_subcommand() {
+    husako_cmd()
+        .arg("version")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("husako "));
+}
+```
+
+`--version` 플래그 관련 기존 테스트는 없으므로 제거할 것 없음.
+
+## Docs
+
+`.worktrees/docs-site/docs/reference/cli.md` 맨 아래 `## Global flags` 섹션 위에 추가:
+
+```markdown
+## husako version
+
+Print the version, commit hash, and build date.
+
+```
+husako version
+```
+
+Output example:
+
+```
+husako 0.1.0 (abc1234-dirty 2026-02-27)
+```
+
+The commit hash has a `-dirty` suffix if the working tree had uncommitted changes at build time.
+```
 
 ## Verification
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-```
+cargo build -p husako
+./target/debug/husako version
+# → husako 0.1.0 (abc1234-dirty 2026-02-27)  (or similar)
 
-Then smoke-check that spinners no longer show `[1/4]` etc. by running a render manually.
+cargo test -p husako --test integration version_subcommand
+```

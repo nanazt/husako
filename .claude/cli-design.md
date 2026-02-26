@@ -192,16 +192,15 @@ append a blank line and a summary:
 ### Silent Success
 
 Commands that only check without mutating state emit **no output on success** — exit 0
-is the signal:
+is the signal.
 
-```
-$ husako check entry.ts   ← no output on success
-$ echo $?
-0
-```
-
-- Check/validate commands: silent on success, `error_prefix()` + non-zero on failure
 - Mutating commands (add, remove, gen): always emit a `check_mark()` success line
+- Pure query commands (`list`, `info`, `outdated`): output the requested data, no extra success line
+- On failure: `error_prefix()` + non-zero exit code
+
+Exception: `husako check` emits structured `check_mark()` lines for each pipeline stage
+(compile → build call → schema validation), and optionally a type-check result when
+`--type-check` is passed. This gives CI-friendly per-stage feedback even on success.
 
 ### Success With Detail
 
