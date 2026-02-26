@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use husako_core::progress::{ProgressReporter, TaskHandle};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -9,48 +6,27 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::style;
 
 /// Progress reporter that uses `indicatif` spinners.
-pub struct IndicatifReporter {
-    counter: Arc<AtomicUsize>,
-    total: Arc<AtomicUsize>,
-}
+pub struct IndicatifReporter;
 
 impl IndicatifReporter {
     pub fn new() -> Self {
-        Self {
-            counter: Arc::new(AtomicUsize::new(0)),
-            total: Arc::new(AtomicUsize::new(0)),
-        }
+        Self
     }
 }
 
 impl ProgressReporter for IndicatifReporter {
-    fn set_total(&self, total: usize) {
-        self.total.store(total, Ordering::Relaxed);
-        self.counter.store(0, Ordering::Relaxed);
-    }
-
     fn start_task(&self, message: &str) -> Box<dyn TaskHandle> {
-        let count = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let total = self.total.load(Ordering::Relaxed);
-
-        let prefix = if total > 0 {
-            format!("[{count}/{total}] ")
-        } else {
-            String::new()
-        };
-
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::with_template("{spinner:.cyan} {msg}")
                 .unwrap()
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
         );
-        pb.set_message(format!("{prefix}{message}"));
+        pb.set_message(message.to_string());
         pb.enable_steady_tick(std::time::Duration::from_millis(80));
 
         Box::new(IndicatifTaskHandle {
             pb: Arc::new(pb),
-            prefix,
             base_message: message.to_string(),
         })
     }
@@ -58,15 +34,13 @@ impl ProgressReporter for IndicatifReporter {
 
 struct IndicatifTaskHandle {
     pb: Arc<ProgressBar>,
-    /// `[N/M] ` prefix, or empty string when no counter is set.
-    prefix: String,
     /// Original message passed to `start_task`, without any progress suffix.
     base_message: String,
 }
 
 impl TaskHandle for IndicatifTaskHandle {
     fn set_message(&self, message: &str) {
-        self.pb.set_message(format!("{}{message}", self.prefix));
+        self.pb.set_message(message.to_string());
     }
 
     fn set_progress(&self, bytes: u64, total_bytes: Option<u64>, pct: Option<u8>) {
@@ -95,11 +69,10 @@ impl TaskHandle for IndicatifTaskHandle {
         };
 
         if suffix.is_empty() {
-            self.pb
-                .set_message(format!("{}{}", self.prefix, self.base_message));
+            self.pb.set_message(self.base_message.clone());
         } else {
             self.pb
-                .set_message(format!("{}{} {suffix}", self.prefix, self.base_message));
+                .set_message(format!("{} {suffix}", self.base_message));
         }
     }
 
@@ -107,14 +80,14 @@ impl TaskHandle for IndicatifTaskHandle {
         self.pb
             .set_style(ProgressStyle::with_template("{msg}").unwrap());
         self.pb
-            .finish_with_message(format!("{} {}{message}", style::check_mark(), self.prefix));
+            .finish_with_message(format!("{} {message}", style::check_mark()));
     }
 
     fn finish_err(&self, message: &str) {
         self.pb
             .set_style(ProgressStyle::with_template("{msg}").unwrap());
         self.pb
-            .finish_with_message(format!("{} {}{message}", style::cross_mark(), self.prefix));
+            .finish_with_message(format!("{} {message}", style::cross_mark()));
     }
 }
 

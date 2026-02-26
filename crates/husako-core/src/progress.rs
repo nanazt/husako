@@ -4,7 +4,7 @@
 /// Tests use `SilentProgress` (no-op).
 pub trait ProgressReporter: Send + Sync {
     fn start_task(&self, message: &str) -> Box<dyn TaskHandle>;
-    /// Set the total number of steps so the reporter can show `[N/M]` counters.
+    /// Hint at the total number of steps for the current operation.
     /// Must be called before the first `start_task` call. Default: no-op.
     fn set_total(&self, _total: usize) {}
 }
