@@ -203,6 +203,8 @@ cargo test -p husako-core test_name
 - `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
 - **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
 - **QuickJS (`husako-runtime-qjs`) is not async-native**: `rquickjs::AsyncRuntime` + `parallel` feature panics in `event-listener` under tokio's multi-thread runtime; `PromiseFuture` is `!Send`. Use `tokio::task::spawn_blocking` to wrap synchronous QuickJS execution — this is the correct tokio pattern for CPU-bound single-threaded work.
+- **CLI output to stderr**: All user-facing CLI output (`husako list`, `husako info`, `husako debug`, `husako outdated`, etc.) uses `eprintln!()` → stderr. Only YAML data output from `husako render` goes to stdout. Integration tests must use `.stderr()` assertions, not `.stdout()`.
+- **Integration test cache helpers** in `crates/husako-cli/tests/integration.rs`: `write_release_cache(root, version)` seeds `.husako/cache/release/` for cache-hit generation without network; `write_artifacthub_chart_cache(root, package, version)` seeds the Helm ArtifactHub cache; `chart_djb2(s)` computes the cache key matching `husako_helm::cache_hash()`.
 
 ## Writing Docs
 

@@ -23,9 +23,10 @@ const nginx = Deployment()
       .name("nginx")
       .image("nginx:1.25")
       .resources(
-        requests(cpu("250m").memory("128Mi"))
-          .limits(cpu("500m").memory("256Mi"))
-      )
+        requests(cpu("250m").memory("128Mi")).limits(
+          cpu("500m").memory("256Mi"),
+        ),
+      ),
   ]);
 
 build([nginx]);
@@ -44,19 +45,19 @@ build([nginx]);
 
 Three layers of builders exist. Each has different responsibilities.
 
-### _ResourceBuilder
+### \_ResourceBuilder
 
 Top-level Kubernetes resources with `apiVersion` and `kind` (schemas that carry `x-kubernetes-group-version-kind`).
 
-| Method | Behavior |
-|--------|----------|
-| `metadata(fragment)` | Sets metadata. Accepts MetadataFragment or plain object. |
-| `spec(value)` | Sets full spec object. Clears `_specParts`. |
-| `_setSpec(key, value)` | Sets one spec property. Clears `_spec`. |
-| `_setDeep(path, value)` | Sets nested spec path via deep merge. Clears `_spec`. |
-| `set(key, value)` | Sets arbitrary top-level field outside spec. |
-| `resources(...fragments)` | Sets container resource requirements from fragments. |
-| `_render()` | Serializes to plain Kubernetes object. |
+| Method                    | Behavior                                                 |
+| ------------------------- | -------------------------------------------------------- |
+| `metadata(fragment)`      | Sets metadata. Accepts MetadataFragment or plain object. |
+| `spec(value)`             | Sets full spec object. Clears `_specParts`.              |
+| `_setSpec(key, value)`    | Sets one spec property. Clears `_spec`.                  |
+| `_setDeep(path, value)`   | Sets nested spec path via deep merge. Clears `_spec`.    |
+| `set(key, value)`         | Sets arbitrary top-level field outside spec.             |
+| `resources(...fragments)` | Sets container resource requirements from fragments.     |
+| `_render()`               | Serializes to plain Kubernetes object.                   |
 
 Generated per-spec-property methods (e.g., `.replicas()`, `.selector()`, `.template()`) call `_setSpec()` internally.
 
@@ -64,14 +65,14 @@ Deep-path shortcuts (e.g., `.containers()`, `.initContainers()`) call `_setDeep(
 
 **Examples:** `Deployment`, `Service`, `Namespace`, `StatefulSet`, `DaemonSet`, `ConfigMap`
 
-### _SchemaBuilder
+### \_SchemaBuilder
 
 Intermediate types that have complex nested properties but no GVK. Generated for schemas with at least one `Ref` or `Array(Ref)` property.
 
-| Method | Behavior |
-|--------|----------|
-| `_set(key, value)` | Sets one property. Returns new instance. |
-| `_toJSON()` | Resolves all nested fragments and returns plain object. |
+| Method             | Behavior                                                |
+| ------------------ | ------------------------------------------------------- |
+| `_set(key, value)` | Sets one property. Returns new instance.                |
+| `_toJSON()`        | Resolves all nested fragments and returns plain object. |
 
 Generated per-property methods (e.g., `.name()`, `.image()`, `.ports()`) call `_set()` internally.
 
@@ -81,22 +82,22 @@ Generated per-property methods (e.g., `.name()`, `.image()`, `.ports()`) call `_
 
 Hand-crafted builders in the `"husako"` module for common cross-cutting concerns.
 
-| Fragment | Factory | Chainable methods |
-|----------|---------|-------------------|
-| MetadataFragment | `metadata()` | `.name(v)`, `.namespace(v)`, `.label(k, v)`, `.annotation(k, v)` |
-| ResourceListFragment | `cpu(v)`, `memory(v)` | `.cpu(v)`, `.memory(v)` |
-| ResourceRequirementsFragment | `requests(rl)`, `limits(rl)` | `.requests(rl)`, `.limits(rl)` |
+| Fragment                     | Factory                      | Chainable methods                                                |
+| ---------------------------- | ---------------------------- | ---------------------------------------------------------------- |
+| MetadataFragment             | `metadata()`                 | `.name(v)`, `.namespace(v)`, `.label(k, v)`, `.annotation(k, v)` |
+| ResourceListFragment         | `cpu(v)`, `memory(v)`        | `.cpu(v)`, `.memory(v)`                                          |
+| ResourceRequirementsFragment | `requests(rl)`, `limits(rl)` | `.requests(rl)`, `.limits(rl)`                                   |
 
 ---
 
 ## 3. Import Rules
 
-| Source | Exports |
-|--------|---------|
+| Source                  | Exports                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `k8s/<group>/<version>` | Resource builder factories (`Deployment`, `StatefulSet`) + schema builder factories (`Container`, `PodSpec`) |
-| `k8s/_common` | Common type builder factories (`LabelSelector`, `ObjectMeta`) for `io.k8s.apimachinery.*` schemas |
-| `"husako"` | `metadata`, `cpu`, `memory`, `requests`, `limits`, `merge`, `build` |
-| `"husako"` (aliases) | `name`, `label`, `namespace`, `annotation` — shorthand for `metadata().name()` etc. |
+| `k8s/_common`           | Common type builder factories (`LabelSelector`, `ObjectMeta`) for `io.k8s.apimachinery.*` schemas            |
+| `"husako"`              | `metadata`, `cpu`, `memory`, `requests`, `limits`, `merge`, `build`                                          |
+| `"husako"` (aliases)    | `name`, `label`, `namespace`, `annotation` — shorthand for `metadata().name()` etc.                          |
 
 ---
 
@@ -106,8 +107,8 @@ Every chainable method returns a **new** builder instance. The original is never
 
 ```typescript
 const base = Deployment().metadata(metadata().name("base")).replicas(1);
-const prod = base.replicas(3);   // base is unchanged, still replicas=1
-const dev  = base.replicas(1);   // independent from prod
+const prod = base.replicas(3); // base is unchanged, still replicas=1
+const dev = base.replicas(1); // independent from prod
 ```
 
 **Implementation:** each method calls `_copy()` which shallow-clones all instance fields into a new object of the same class.
@@ -118,11 +119,11 @@ const dev  = base.replicas(1);   // independent from prod
 
 `_render()` builds the `spec` field using three mutually exclusive sources, checked in order:
 
-| Priority | Source | Set by | Behavior |
-|----------|--------|--------|----------|
-| 1 | `_spec` | `.spec(obj)` | Full replacement. Ignores `_specParts`. |
-| 2 | `_specParts` | `_setSpec()`, `_setDeep()` | Accumulated per-property. Merged with `_resources` if present. |
-| 3 | `_resources` | `.resources()` | Creates `template.spec.containers[0].resources` structure. |
+| Priority | Source       | Set by                     | Behavior                                                       |
+| -------- | ------------ | -------------------------- | -------------------------------------------------------------- |
+| 1        | `_spec`      | `.spec(obj)`               | Full replacement. Ignores `_specParts`.                        |
+| 2        | `_specParts` | `_setSpec()`, `_setDeep()` | Accumulated per-property. Merged with `_resources` if present. |
+| 3        | `_resources` | `.resources()`             | Creates `template.spec.containers[0].resources` structure.     |
 
 **Mutual exclusion:**
 
@@ -136,17 +137,17 @@ const dev  = base.replicas(1);   // independent from prod
 
 `merge(items)` merges an array of same-typed fragments.
 
-| Fragment type | Scalar fields | Map fields |
-|--------------|---------------|------------|
-| MetadataFragment | `_name`, `_namespace`: last non-null wins | `_labels`, `_annotations`: deep-merge by key (later overrides) |
-| ResourceListFragment | `_cpu`, `_memory`: last non-null wins | — |
-| Other types | Returns last item in array | — |
+| Fragment type        | Scalar fields                             | Map fields                                                     |
+| -------------------- | ----------------------------------------- | -------------------------------------------------------------- |
+| MetadataFragment     | `_name`, `_namespace`: last non-null wins | `_labels`, `_annotations`: deep-merge by key (later overrides) |
+| ResourceListFragment | `_cpu`, `_memory`: last non-null wins     | —                                                              |
+| Other types          | Returns last item in array                | —                                                              |
 
 Arrays are **replaced**, not concatenated.
 
 ```typescript
 const base = metadata().name("svc").label("app", "web");
-const env  = metadata().label("env", "prod");
+const env = metadata().label("env", "prod");
 merge([base, env]);
 // → { name: "svc", labels: { app: "web", env: "prod" } }
 ```
@@ -159,18 +160,18 @@ Applied by `cpu()` and `memory()` factory functions.
 
 ### cpu(v)
 
-| Input | Output | Example |
-|-------|--------|---------|
-| `string` | pass-through | `"500m"` → `"500m"` |
-| `integer` | `String(v)` | `1` → `"1"` |
-| `float` | `round(v * 1000) + "m"` | `0.5` → `"500m"` |
+| Input     | Output                  | Example             |
+| --------- | ----------------------- | ------------------- |
+| `string`  | pass-through            | `"500m"` → `"500m"` |
+| `integer` | `String(v)`             | `1` → `"1"`         |
+| `float`   | `round(v * 1000) + "m"` | `0.5` → `"500m"`    |
 
 ### memory(v)
 
-| Input | Output | Example |
-|-------|--------|---------|
+| Input    | Output       | Example               |
+| -------- | ------------ | --------------------- |
 | `string` | pass-through | `"512Mi"` → `"512Mi"` |
-| `number` | `v + "Gi"` | `2` → `"2Gi"` |
+| `number` | `v + "Gi"`   | `2` → `"2Gi"`         |
 
 ---
 
@@ -178,22 +179,24 @@ Applied by `cpu()` and `memory()` factory functions.
 
 The emitter decides which OpenAPI schemas get builder classes.
 
-### Resource builders (_ResourceBuilder subclass)
+### Resource builders (\_ResourceBuilder subclass)
 
 **Condition:** schema has `x-kubernetes-group-version-kind` extension.
 
 Generated output:
+
 - Internal class extending `_ResourceBuilder` with `constructor(apiVersion, kind)`
 - Per-spec-property methods from the spec schema (calls `_setSpec`)
 - PascalCase factory function (only export)
 
 **Skip list for spec property methods:** `status`, `apiVersion`, `kind`, `metadata`
 
-### Schema builders (_SchemaBuilder subclass)
+### Schema builders (\_SchemaBuilder subclass)
 
 **Condition:** schema has NO GVK AND has at least one property with `Ref` or `Array(Ref)` type.
 
 Generated output:
+
 - Internal class extending `_SchemaBuilder`
 - Per-property chainable methods (calls `_set`)
 - PascalCase factory function (only export)
@@ -203,6 +206,7 @@ Generated output:
 **Condition:** resource spec has a `template` property referencing `PodTemplateSpec`.
 
 Generated methods:
+
 - `.containers(v)` → `_setDeep("template.spec.containers", v)`
 - `.initContainers(v)` → `_setDeep("template.spec.initContainers", v)`
 
@@ -212,11 +216,11 @@ Generated methods:
 
 PascalCase, matching the type name:
 
-| Type | Factory |
-|------|---------|
-| `Deployment` | `Deployment()` |
-| `Container` | `Container()` |
-| `LabelSelector` | `LabelSelector()` |
+| Type              | Factory             |
+| ----------------- | ------------------- |
+| `Deployment`      | `Deployment()`      |
+| `Container`       | `Container()`       |
+| `LabelSelector`   | `LabelSelector()`   |
 | `PodTemplateSpec` | `PodTemplateSpec()` |
 
 ### Generated code structure
@@ -234,10 +238,16 @@ In `.js`, the class is internal (prefixed with `_`) and only the factory is expo
 
 ```javascript
 class _Deployment extends _ResourceBuilder {
-  constructor() { super("apps/v1", "Deployment"); }
-  replicas(v) { return this._setSpec("replicas", v); }
+  constructor() {
+    super("apps/v1", "Deployment");
+  }
+  replicas(v) {
+    return this._setSpec("replicas", v);
+  }
 }
-export function Deployment() { return new _Deployment(); }
+export function Deployment() {
+  return new _Deployment();
+}
 ```
 
 ---
@@ -247,6 +257,7 @@ export function Deployment() { return new _Deployment(); }
 `_resolveFragments(obj)` recursively unwraps all nested builders before serialization.
 
 **Algorithm:**
+
 1. `null` / `undefined` / primitive → pass-through
 2. Array → map each element through `_resolveFragments`
 3. Object with `_toJSON()` → call it, then resolve the result recursively
@@ -263,6 +274,7 @@ build(input: { _render(): any } | { _render(): any }[]): void
 ```
 
 **Rules:**
+
 - Must be called **exactly once** per entrypoint. Zero calls → exit 7. Multiple calls → exit 7.
 - Normalizes single object to `[object]`.
 - For each item: calls `_render()`. Items without `_render()` throw `TypeError`.
@@ -283,9 +295,7 @@ import { metadata, build } from "husako";
 
 const webPod = PodTemplateSpec()
   .metadata(metadata().label("tier", "web"))
-  .containers([
-    Container().name("web").image("nginx:1.25")
-  ]);
+  .containers([Container().name("web").image("nginx:1.25")]);
 
 const prod = Deployment()
   .metadata(metadata().name("web-prod"))

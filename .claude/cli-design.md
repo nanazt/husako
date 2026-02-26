@@ -280,17 +280,40 @@ Next steps:
 
 ### Progress Spinners
 
-Long-running operations (gen, update) use an `indicatif` spinner:
+Every long-running step (gen, render, update, plugin add, …) gets **one line per step**.
+Each line starts as a spinner and is replaced in-place by a `✔` or `✘` on completion.
+**No** `set_message` calls to change the task description mid-flight — only `set_progress`
+to append a byte/percentage suffix.
 
 ```
-⠹ Fetching kubernetes release schema...    ← spinner + plain message (while running)
-✔ Generated k8s types for v1.35.0          ← check_mark when done OK
-✘ Failed to fetch schema: ...              ← cross_mark when done with error
+⠹ [1/3] Resolving cert-manager... (52% · 5.0 MB / 9.5 MB)   ← spinner + progress
+✔ [1/3] cert-manager: 4 group-versions                        ← replaced on finish_ok
+✔ [2/3] kustomize: 2 group-versions
+⠋ [3/3] ingress-nginx: 2 group-versions
+```
+
+Network progress suffix format:
+- HTTP with total:   `(52% · 5.0 MB / 9.5 MB)`
+- HTTP no total:     `(5.0 MB Received)`
+- Git (% from object count + bytes): `(45% · 53.3 MB Received)`
+- Percentage only:   `(30%)`
+- Separator:         `·` (U+00B7)
+
+`[N/M]` counter prefix is shown when `set_total(N)` is called before `start_task`.
+The counter resets each time `set_total` is called (one counter per phase).
+
+Render pipeline (4 steps):
+```
+⠹ [1/4] Compiling entry.ts...
+✔ [1/4] Compiled entry.ts
+✔ [2/4] Executed
+✔ [3/4] Validated
+✔ [4/4] Emitted 3 document(s)
 ```
 
 - Active: cyan spinner (via `ProgressStyle`) + plain message
-- `finish_ok(msg)` → `check_mark()` + message (spinner replaced)
-- `finish_err(msg)` → `cross_mark()` + message (spinner replaced)
+- `finish_ok(msg)` → `check_mark()` + `[N/M]` prefix + message (spinner replaced)
+- `finish_err(msg)` → `cross_mark()` + `[N/M]` prefix + message (spinner replaced)
 
 ### Test Output
 

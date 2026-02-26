@@ -1059,6 +1059,7 @@ dependencies = [
  "husako-runtime-qjs",
  "indicatif",
  "insta",
+ "mockito",
  "predicates",
  "serde_json",
  "serde_yaml_ng",

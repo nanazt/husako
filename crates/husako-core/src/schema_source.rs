@@ -7,6 +7,8 @@ use serde_json::Value;
 use crate::HusakoError;
 use crate::progress::ProgressReporter;
 
+type ProgressCb = dyn Fn(u64, Option<u64>, Option<u8>) + Sync;
+
 /// Resolve all schema sources from a `husako.toml` config.
 ///
 /// Returns a merged `HashMap<String, Value>` where keys are discovery paths
@@ -20,14 +22,22 @@ pub async fn resolve_all(
 ) -> Result<HashMap<String, Value>, HusakoError> {
     let mut merged = HashMap::new();
 
+    progress.set_total(config.resources.len());
+
     for (name, source) in &config.resources {
-        let task = progress.start_task(&format!("Resolving {name}..."));
+        let task = std::sync::Arc::new(progress.start_task(&format!("Resolving {name}...")));
         let specs = match source {
             SchemaSource::File { path } => resolve_file(path, project_root)?,
             SchemaSource::Cluster { cluster } => {
                 resolve_cluster(config, cluster.as_deref(), cache_dir).await?
             }
-            SchemaSource::Release { version } => resolve_release(version, cache_dir).await?,
+            SchemaSource::Release { version } => {
+                let task_cb = std::sync::Arc::clone(&task);
+                let on_progress_cb = move |bytes: u64, total: Option<u64>, pct: Option<u8>| {
+                    task_cb.set_progress(bytes, total, pct);
+                };
+                resolve_release(version, cache_dir, Some(&on_progress_cb)).await?
+            }
             SchemaSource::Git { repo, tag, path } => {
                 resolve_git(repo, tag, path, cache_dir).await?
             }
@@ -225,8 +235,10 @@ async fn resolve_cluster(
 async fn resolve_release(
     version: &str,
     cache_dir: &Path,
+    on_progress: Option<&ProgressCb>,
 ) -> Result<HashMap<String, Value>, HusakoError> {
-    let specs = husako_openapi::release::fetch_release_specs(version, cache_dir).await?;
+    let specs =
+        husako_openapi::release::fetch_release_specs(version, cache_dir, on_progress).await?;
     Ok(specs)
 }
 

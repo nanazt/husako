@@ -69,9 +69,19 @@ pub async fn render(
     source: &str,
     filename: &str,
     options: &RenderOptions,
+    progress: &dyn ProgressReporter,
 ) -> Result<String, HusakoError> {
-    let js = husako_compile_oxc::compile(source, filename)?;
+    progress.set_total(4);
 
+    // Phase 1: Compile
+    let compile_task = progress.start_task(&format!("Compiling {}...", filename));
+    let js = match husako_compile_oxc::compile(source, filename) {
+        Ok(js) => js,
+        Err(e) => {
+            compile_task.finish_err(&format!("Compile failed: {e}"));
+            return Err(HusakoError::Compile(e));
+        }
+    };
     if options.verbose {
         eprintln!(
             "[compile] {} ({} bytes → {} bytes JS)",
@@ -80,6 +90,7 @@ pub async fn render(
             js.len()
         );
     }
+    compile_task.finish_ok(&format!("Compiled {filename}"));
 
     let entry_path = std::path::Path::new(filename)
         .canonicalize()
@@ -103,6 +114,8 @@ pub async fn render(
         plugin_modules,
     };
 
+    // Phase 2: Execute
+    let execute_task = progress.start_task("Executing...");
     if options.verbose {
         eprintln!(
             "[execute] QuickJS: timeout={}ms, heap={}MB",
@@ -114,29 +127,35 @@ pub async fn render(
                 .map_or("none".to_string(), |mb| mb.to_string()),
         );
     }
-
     let execute_start = std::time::Instant::now();
-    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
-
+    let value = match husako_runtime_qjs::execute(&js, &exec_options).await {
+        Ok(v) => v,
+        Err(e) => {
+            execute_task.finish_err(&format!("Execute failed: {e}"));
+            return Err(HusakoError::Runtime(e));
+        }
+    };
     if options.verbose {
         eprintln!("[execute] done ({}ms)", execute_start.elapsed().as_millis());
     }
+    execute_task.finish_ok("Executed");
 
-    let validate_mode = if options.schema_store.is_some() {
-        "schema-based"
-    } else {
-        "fallback"
-    };
     let doc_count = if let serde_json::Value::Array(arr) = &value {
         arr.len()
     } else {
         1
     };
 
+    // Phase 3: Validate
+    let validate_task = progress.start_task("Validating...");
+    let validate_mode = if options.schema_store.is_some() {
+        "schema-based"
+    } else {
+        "fallback"
+    };
     if options.verbose {
         eprintln!("[validate] {} documents, {}", doc_count, validate_mode);
     }
-
     let validate_start = std::time::Instant::now();
     if let Err(errors) = validate::validate(&value, options.schema_store.as_ref()) {
         let msg = errors
@@ -144,22 +163,31 @@ pub async fn render(
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        validate_task.finish_err("Validation failed");
         return Err(HusakoError::Validation(msg));
     }
-
     if options.verbose {
         eprintln!(
             "[validate] done ({}ms), 0 errors",
             validate_start.elapsed().as_millis()
         );
     }
+    validate_task.finish_ok("Validated");
 
-    let yaml = emit_yaml(&value)?;
-
+    // Phase 4: Emit
+    let emit_task = progress.start_task("Emitting...");
+    let yaml = match emit_yaml(&value) {
+        Ok(y) => y,
+        Err(e) => {
+            emit_task.finish_err(&format!("Emit failed: {e}"));
+            return Err(HusakoError::Emit(e));
+        }
+    };
     if options.verbose {
         let line_count = yaml.lines().count();
         eprintln!("[emit] {} documents ({} lines YAML)", doc_count, line_count);
     }
+    emit_task.finish_ok(&format!("Emitted {} document(s)", doc_count));
 
     Ok(yaml)
 }
@@ -187,8 +215,9 @@ pub struct GenerateOptions {
 pub async fn generate(
     options: &GenerateOptions,
     progress: &dyn ProgressReporter,
-) -> Result<(), HusakoError> {
+) -> Result<bool, HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
+    let mut any_work_done = false;
 
     // Load existing lock (None if --no-incremental or file absent / unreadable)
     let old_lock: Option<husako_config::HusakoLock> = if options.no_incremental {
@@ -239,6 +268,7 @@ pub async fn generate(
                 // If manifest load fails, fall through to reinstall
             }
 
+            any_work_done = true;
             let task = progress.start_task(&format!("Installing plugin {name}..."));
             match plugin::install_plugin(name, source, &options.project_root, &plugin_dir).await {
                 Ok(()) => match husako_config::load_plugin_manifest(&plugin_dir) {
@@ -328,6 +358,7 @@ pub async fn generate(
         } else {
             let specs = if let Some(openapi_opts) = &options.openapi {
                 // Legacy CLI mode
+                any_work_done = true;
                 let task = progress.start_task("Fetching OpenAPI specs...");
                 let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
                     source: match &openapi_opts.source {
@@ -362,6 +393,8 @@ pub async fn generate(
             };
 
             if let Some(specs) = specs {
+                any_work_done = true;
+                progress.set_total(1);
                 let task = progress.start_task("Generating types...");
                 let gen_options = husako_dts::GenerateOptions { specs };
                 let result = husako_dts::generate(&gen_options)?;
@@ -408,21 +441,38 @@ pub async fn generate(
         }
 
         if !charts_to_generate.is_empty() {
-            let chart_schemas =
-                husako_helm::resolve_all(&charts_to_generate, &options.project_root, &cache_dir)
-                    .await?;
-
-            for (chart_name, schema) in &chart_schemas {
-                let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
-                let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
+            any_work_done = true;
+            // Resolve and generate each chart sequentially to support per-chart progress.
+            progress.set_total(charts_to_generate.len());
+            let mut chart_schemas = std::collections::HashMap::new();
+            for (chart_name, source) in &charts_to_generate {
+                let task = std::sync::Arc::new(
+                    progress.start_task(&format!("Resolving {chart_name} chart schema...")),
+                );
+                let task_cb = std::sync::Arc::clone(&task);
+                let on_progress_cb = move |bytes: u64, total: Option<u64>, pct: Option<u8>| {
+                    task_cb.set_progress(bytes, total, pct);
+                };
+                let schema = husako_helm::resolve(
+                    chart_name,
+                    source,
+                    &options.project_root,
+                    &cache_dir,
+                    Some(&on_progress_cb),
+                )
+                .await
+                .map_err(|e| {
+                    task.finish_err(&format!("{chart_name}: {e}"));
+                    HusakoError::Chart(e)
+                })?;
+                let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, &schema)?;
                 write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
                 write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
                 task.finish_ok(&format!("{chart_name}: chart types generated"));
 
-                if let Some(source) = charts_to_generate.get(chart_name) {
-                    let entry = lock_check::build_chart_entry(source, &options.project_root);
-                    new_lock.charts.insert(chart_name.clone(), entry);
-                }
+                let entry = lock_check::build_chart_entry(source, &options.project_root);
+                new_lock.charts.insert(chart_name.clone(), entry);
+                chart_schemas.insert(chart_name.clone(), schema);
             }
             // Drop the large schema map off the async executor.
             drop_in_background(chart_schemas);
@@ -438,7 +488,7 @@ pub async fn generate(
         eprintln!("warning: failed to write husako.lock: {e}");
     }
 
-    Ok(())
+    Ok(any_work_done)
 }
 
 /// Drop a large value on a blocking thread to avoid holding the async executor.
@@ -995,7 +1045,24 @@ pub enum AddTarget {
     },
 }
 
-pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<(), HusakoError> {
+pub enum AddOutcome {
+    Added,
+    AlreadyExists,
+}
+
+pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<AddOutcome, HusakoError> {
+    // If the name is already configured (any source/version), it's a no-op.
+    // Users should run `husako update` to change versions.
+    if let Ok(Some(config)) = husako_config::load(project_root) {
+        let already_configured = match target {
+            AddTarget::Resource { name, .. } => config.resources.contains_key(name.as_str()),
+            AddTarget::Chart { name, .. } => config.charts.contains_key(name.as_str()),
+        };
+        if already_configured {
+            return Ok(AddOutcome::AlreadyExists);
+        }
+    }
+
     let (mut doc, path) = husako_config::edit::load_document(project_root)?;
 
     match target {
@@ -1008,7 +1075,7 @@ pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<(), Hus
     }
 
     husako_config::edit::save_document(&doc, &path)?;
-    Ok(())
+    Ok(AddOutcome::Added)
 }
 
 #[derive(Debug)]
@@ -1384,7 +1451,6 @@ pub async fn update_dependencies(
 
     // Auto-regenerate types if we updated anything
     if !options.dry_run && !result.updated.is_empty() {
-        let task = progress.start_task("Regenerating types...");
         let config = husako_config::load(&options.project_root)?;
         let gen_options = GenerateOptions {
             project_root: options.project_root.clone(),
@@ -1394,9 +1460,10 @@ pub async fn update_dependencies(
             husako_version: options.husako_version.clone(),
             no_incremental: false,
         };
-        match generate(&gen_options, progress).await {
-            Ok(()) => task.finish_ok("Types regenerated"),
-            Err(e) => task.finish_err(&format!("Type generation failed: {e}")),
+        // generate() manages its own spinners; running an outer task concurrently
+        // would cause multiple standalone ProgressBars to corrupt each other's output.
+        if let Err(e) = generate(&gen_options, progress).await {
+            eprintln!("warning: type regeneration failed: {e}");
         }
     }
 
@@ -2057,7 +2124,9 @@ mod tests {
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
-        let yaml = render(ts, "test.ts", &test_options()).await.unwrap();
+        let yaml = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap();
         assert!(yaml.contains("apiVersion: v1"));
         assert!(yaml.contains("kind: Namespace"));
         assert!(yaml.contains("name: test"));
@@ -2066,14 +2135,18 @@ mod tests {
     #[tokio::test]
     async fn compile_error_propagates() {
         let ts = "const = ;";
-        let err = render(ts, "bad.ts", &test_options()).await.unwrap_err();
+        let err = render(ts, "bad.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
     #[tokio::test]
     async fn missing_build_propagates() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = render(ts, "test.ts", &test_options()).await.unwrap_err();
+        let err = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             HusakoError::Runtime(husako_runtime_qjs::RuntimeError::BuildNotCalled)
@@ -2790,6 +2863,76 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
         assert!(content.contains("ingress-nginx"));
         assert!(content.contains("4.12.0"));
+    }
+
+    #[test]
+    fn add_resource_duplicate_returns_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Resource {
+            name: "kubernetes".to_string(),
+            source: husako_config::SchemaSource::Release {
+                version: "1.35".to_string(),
+            },
+        };
+        let first = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(first, AddOutcome::Added));
+
+        let second = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(second, AddOutcome::AlreadyExists));
+
+        // File is unchanged — no duplicate entry written.
+        let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert_eq!(content.matches("kubernetes").count(), 1);
+    }
+
+    #[test]
+    fn add_chart_duplicate_returns_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.12.0".to_string(),
+            },
+        };
+        let first = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(first, AddOutcome::Added));
+
+        let second = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(second, AddOutcome::AlreadyExists));
+    }
+
+    #[test]
+    fn add_chart_duplicate_different_version_still_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let v1 = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.12.0".to_string(),
+            },
+        };
+        add_dependency(tmp.path(), &v1).unwrap();
+
+        // Different version, same name → still AlreadyExists (use `husako update` instead)
+        let v2 = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.13.0".to_string(),
+            },
+        };
+        let outcome = add_dependency(tmp.path(), &v2).unwrap();
+        assert!(matches!(outcome, AddOutcome::AlreadyExists));
     }
 
     #[test]

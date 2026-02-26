@@ -3,6 +3,14 @@ use crate::HusakoError;
 const GITHUB_API_BASE: &str = "https://api.github.com";
 const ARTIFACTHUB_BASE: &str = "https://artifacthub.io";
 
+fn github_api_base() -> String {
+    std::env::var("HUSAKO_GITHUB_API_URL").unwrap_or_else(|_| GITHUB_API_BASE.to_string())
+}
+
+fn artifacthub_base() -> String {
+    std::env::var("HUSAKO_ARTIFACTHUB_URL").unwrap_or_else(|_| ARTIFACTHUB_BASE.to_string())
+}
+
 /// Return true if `version` matches a partial semver prefix.
 ///
 /// Leading `v` is optional on both sides. Examples:
@@ -58,7 +66,7 @@ pub async fn search_artifacthub(
     query: &str,
     offset: usize,
 ) -> Result<ArtifactHubSearchResult, HusakoError> {
-    search_artifacthub_from(query, offset, ARTIFACTHUB_BASE).await
+    search_artifacthub_from(query, offset, &artifacthub_base()).await
 }
 
 async fn search_artifacthub_from(
@@ -109,7 +117,7 @@ pub async fn discover_recent_releases(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
-    discover_recent_releases_from(limit, offset, GITHUB_API_BASE).await
+    discover_recent_releases_from(limit, offset, &github_api_base()).await
 }
 
 async fn discover_recent_releases_from(
@@ -223,7 +231,7 @@ pub async fn discover_registry_versions(
 
 /// Discover the latest stable Kubernetes release version from GitHub API.
 pub async fn discover_latest_release() -> Result<String, HusakoError> {
-    discover_latest_release_from(GITHUB_API_BASE).await
+    discover_latest_release_from(&github_api_base()).await
 }
 
 async fn discover_latest_release_from(base_url: &str) -> Result<String, HusakoError> {
@@ -344,7 +352,7 @@ pub async fn discover_latest_artifacthub(
     package: &str,
     prefix: Option<&str>,
 ) -> Result<String, HusakoError> {
-    discover_latest_artifacthub_from(package, prefix, ARTIFACTHUB_BASE).await
+    discover_latest_artifacthub_from(package, prefix, &artifacthub_base()).await
 }
 
 async fn discover_latest_artifacthub_from(
@@ -400,7 +408,7 @@ pub async fn discover_artifacthub_versions(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<String>, HusakoError> {
-    discover_artifacthub_versions_from(package, limit, offset, ARTIFACTHUB_BASE).await
+    discover_artifacthub_versions_from(package, limit, offset, &artifacthub_base()).await
 }
 
 async fn discover_artifacthub_versions_from(

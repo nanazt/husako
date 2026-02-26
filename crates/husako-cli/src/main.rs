@@ -322,7 +322,8 @@ async fn main() -> ExitCode {
                 verbose,
             };
 
-            match husako_core::render(&source, &filename, &options).await {
+            let render_progress = IndicatifReporter::new();
+            match husako_core::render(&source, &filename, &options, &render_progress).await {
                 Ok(yaml) => {
                     if let Some(out_path) = output {
                         let file_path = if out_path
@@ -406,7 +407,11 @@ async fn main() -> ExitCode {
             };
 
             match husako_core::generate(&options, &progress).await {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => {
+                    println!("{} Already up to date.", style::check_mark());
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
@@ -672,7 +677,7 @@ async fn main() -> ExitCode {
                     };
 
                     match husako_core::add_dependency(&project_root, &target) {
-                        Ok(()) => {
+                        Ok(husako_core::AddOutcome::Added) => {
                             let (dep_name, section) = match &result {
                                 AddResult::Resource { name, .. } => (name.as_str(), "resources"),
                                 AddResult::Chart { name, .. } => (name.as_str(), "charts"),
@@ -691,6 +696,19 @@ async fn main() -> ExitCode {
                                     style::warning_prefix()
                                 );
                             }
+                            ExitCode::SUCCESS
+                        }
+                        Ok(husako_core::AddOutcome::AlreadyExists) => {
+                            let (dep_name, section) = match &result {
+                                AddResult::Resource { name, .. } => (name.as_str(), "resources"),
+                                AddResult::Chart { name, .. } => (name.as_str(), "charts"),
+                            };
+                            eprintln!(
+                                "{} {} is already in [{}]",
+                                style::check_mark(),
+                                style::dep_name(dep_name),
+                                section,
+                            );
                             ExitCode::SUCCESS
                         }
                         Err(e) => {
@@ -1422,7 +1440,7 @@ async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), HusakoE
         husako_version: env!("CARGO_PKG_VERSION").to_string(),
         no_incremental: false,
     };
-    husako_core::generate(&options, &progress).await
+    husako_core::generate(&options, &progress).await.map(|_| ())
 }
 
 // --- husako add (URL auto-detect, no interactive) ---

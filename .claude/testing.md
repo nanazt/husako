@@ -233,6 +233,67 @@ Functions already URL-parametric (no refactoring needed):
 - Capture stdout/stderr and check for key strings
 - Do NOT make real network calls — mock everything at unit/integration level
 
+### CLI integration tests — mocking network calls in subprocess
+
+The `husako` binary runs as a subprocess in integration tests (assert_cmd). Mockito runs in the
+test process, so URL injection via `_from()` is not directly usable. Instead:
+
+**Strategy A — env var injection** (for HTTP calls to GitHub API / ArtifactHub):
+
+Two env vars override the hardcoded base URLs inside the binary:
+
+| Env var | Overrides | Used by |
+|---|---|---|
+| `HUSAKO_GITHUB_API_URL` | `https://api.github.com` | version_check + release spec listing |
+| `HUSAKO_ARTIFACTHUB_URL` | `https://artifacthub.io` | version_check + helm/artifacthub |
+
+Pattern (tests must be `#[tokio::test]` + `async fn` to use mockito async API):
+
+```rust
+#[tokio::test]
+async fn example() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    husako_at(root)
+        .args(["outdated"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success();
+}
+```
+
+**Strategy B — cache pre-seeding** (for `husako gen` with release source):
+
+Pre-populate `.husako/cache/release/v{tag}/` before running the binary.
+`fetch_release_specs()` returns the cached specs without any HTTP call.
+
+Use `write_release_cache(root, version)` in `integration.rs` to seed a minimal valid OpenAPI
+spec. Use `write_artifacthub_chart_cache(root, package, version)` for Helm chart schemas.
+`chart_djb2(s)` computes the cache key identical to `husako_helm::cache_hash()`.
+
+**When to use which:**
+- `husako outdated` / `husako update` → env var (always makes live API calls)
+- `husako gen --[resources]` → cache pre-seeding (cache hit skips network)
+- `husako add <chart>` → env var (version discovery during add) + cache pre-seeding (auto-regen)
+- `husako add --release` → cache pre-seeding only (version provided directly, no discovery call)
+
+**URL patterns for GitHub API mocks:**
+- Tags listing: `GET /repos/kubernetes/kubernetes/tags?per_page=100`
+- Release spec listing: `GET /repos/kubernetes/kubernetes/contents/api/openapi-spec/v3?ref={tag}`
+
+**URL patterns for ArtifactHub mocks:**
+- Latest version: `GET /api/v1/packages/helm/{package}` (e.g. `/api/v1/packages/helm/metallb/metallb`)
+- Search: `GET /api/v1/packages/search?ts_query_web=...`
+
+Note: `HUSAKO_ARTIFACTHUB_URL` is the host only (e.g. `http://localhost:1234`).
+`husako-helm/artifacthub.rs` appends `/api/v1/packages/helm/` automatically.
+
 ## Running Tests
 
 ```bash
