@@ -60,7 +60,7 @@ The file argument is resolved as: direct path → entry alias from `husako.toml`
 | `--allow-outside-root` | Allow imports outside the project root |
 | `--timeout-ms <ms>` | Execution timeout in milliseconds |
 | `--max-heap-mb <mb>` | Maximum heap memory in megabytes |
-| `--verbose` | Print diagnostic traces to stderr |
+| `-v, --verbose` | Print diagnostic traces to stderr |
 
 ---
 
@@ -127,8 +127,8 @@ The dep name, source type, resource/chart kind, and version are all detected aut
 
 | Flag | Description |
 |------|-------------|
-| `--name <name>` | Override the derived dependency name |
-| `--version <ver>` | Pin to a version or partial prefix (`16`, `16.4`, `v1.16`) |
+| `-n, --name <name>` | Override the derived dependency name |
+| `-v, --version <ver>` | Pin to a version or partial prefix (`16`, `16.4`, `v1.16`) |
 | `--tag <tag>` | Pin a git source to a specific tag |
 | `--branch <branch>` | Pin a git source to a branch instead of the latest tag |
 | `--path <subdir>` | Subdirectory within a git repo |
