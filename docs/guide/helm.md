@@ -6,8 +6,8 @@ This gives you autocomplete and type checking when composing Helm chart values i
 
 ::: info Putting values to use
 husako gens the `Values` builder, but you need a resource builder that accepts a `values`
-field to actually deploy the chart. The [Flux CD plugin's `HelmRelease`](./plugins/flux) is
-currently the primary consumer. See the [Flux CD guide](./plugins/flux) for a complete
+field to actually deploy the chart. The [Flux CD plugin's `HelmRelease`](./plugins/fluxcd) is
+currently the primary consumer. See the [Flux CD guide](./plugins/fluxcd) for a complete
 end-to-end example combining `helm/*` imports with `HelmRelease`.
 :::
 
