@@ -55,7 +55,7 @@ enum Commands {
         max_heap_mb: Option<usize>,
 
         /// Print diagnostic traces to stderr
-        #[arg(long)]
+        #[arg(short, long)]
         verbose: bool,
     },
 
@@ -93,7 +93,7 @@ enum Commands {
     /// Initialize husako in the current directory
     Init {
         /// Template to use (simple, project, multi-env)
-        #[arg(long, default_value = "simple")]
+        #[arg(short, long, default_value = "simple")]
         template: TemplateName,
     },
 
@@ -135,7 +135,7 @@ enum Commands {
         extra: Option<String>,
 
         /// Override the derived dependency name
-        #[arg(long)]
+        #[arg(short, long)]
         name: Option<String>,
 
         /// Add a Kubernetes release resource (e.g. --release 1.35)
@@ -147,7 +147,7 @@ enum Commands {
         cluster: Option<String>,
 
         /// Pin version or partial semver prefix (16, 16.4, 16.4.0); v prefix optional
-        #[arg(long)]
+        #[arg(short, long)]
         version: Option<String>,
 
         /// Pin to a specific git tag
