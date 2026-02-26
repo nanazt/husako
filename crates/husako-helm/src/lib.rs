@@ -19,6 +19,9 @@ pub enum HelmError {
     NotFound(String),
 }
 
+/// Callback type for download progress reporting: `(bytes_received, total_bytes, pct_override)`.
+pub(crate) type ProgressCb = dyn Fn(u64, Option<u64>, Option<u8>) + Sync;
+
 /// Simple hash for cache directory naming (djb2).
 pub(crate) fn cache_hash(s: &str) -> String {
     let mut hash: u64 = 5381;
@@ -34,6 +37,7 @@ pub async fn resolve(
     source: &ChartSource,
     project_root: &Path,
     cache_dir: &Path,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<serde_json::Value, HelmError> {
     match source {
         ChartSource::File { path } => file::resolve(name, path, project_root),
@@ -41,16 +45,16 @@ pub async fn resolve(
             repo,
             chart,
             version,
-        } => registry::resolve(name, repo, chart, version, cache_dir).await,
+        } => registry::resolve(name, repo, chart, version, cache_dir, on_progress).await,
         ChartSource::ArtifactHub { package, version } => {
-            artifacthub::resolve(name, package, version, cache_dir).await
+            artifacthub::resolve(name, package, version, cache_dir, on_progress).await
         }
         ChartSource::Git { repo, tag, path } => {
-            git::resolve(name, repo, tag, path, cache_dir).await
+            git::resolve(name, repo, tag, path, cache_dir, on_progress).await
         }
         ChartSource::Oci { reference, version } => {
             let chart = crate::oci::chart_name_from_reference(reference);
-            crate::oci::resolve(name, reference, chart, version, cache_dir).await
+            crate::oci::resolve(name, reference, chart, version, cache_dir, on_progress).await
         }
     }
 }
@@ -74,7 +78,7 @@ pub async fn resolve_all(
         let project_root = project_root.to_path_buf();
         let cache_dir = cache_dir.to_path_buf();
         set.spawn(async move {
-            let schema = resolve(&name, &source, &project_root, &cache_dir).await?;
+            let schema = resolve(&name, &source, &project_root, &cache_dir, None).await?;
             Ok::<_, HelmError>((name, schema))
         });
     }
@@ -130,7 +134,7 @@ mod tests {
             reference: reference.to_string(),
             version: "16.4.0".to_string(),
         };
-        let result = resolve("test", &source, tmp.path(), tmp.path())
+        let result = resolve("test", &source, tmp.path(), tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");

@@ -21,12 +21,9 @@ fn scenario_b_chart_sources() {
         .args([
             "-y",
             "add",
-            "pg",
-            "--chart",
-            "--source",
-            "artifacthub",
-            "--package",
             "bitnami/postgresql",
+            "-n",
+            "pg",
             "--version",
             "18.4.0",
         ])
@@ -49,7 +46,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "pg-values.ts"])
+        .args(["check", "pg-values.ts"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(
@@ -67,14 +64,10 @@ fn scenario_b_chart_sources() {
         .args([
             "-y",
             "add",
-            "redis-reg",
-            "--chart",
-            "--source",
-            "registry",
-            "--repo",
             "https://charts.bitnami.com/bitnami",
-            "--chart-name",
             "redis",
+            "-n",
+            "redis-reg",
             "--version",
             "20.0.1",
         ])
@@ -105,7 +98,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "redis-reg-values.ts"])
+        .args(["check", "redis-reg-values.ts"])
         .assert()
         .success();
     let redis_yaml = String::from_utf8_lossy(
@@ -123,12 +116,9 @@ fn scenario_b_chart_sources() {
         .args([
             "-y",
             "add",
-            "prom-git",
-            "--chart",
-            "--source",
-            "git",
-            "--repo",
             "https://github.com/prometheus-community/helm-charts",
+            "-n",
+            "prom-git",
             "--tag",
             "prometheus-27.0.0",
             "--path",
@@ -155,7 +145,7 @@ fn scenario_b_chart_sources() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "prom-git-values.ts"])
+        .args(["check", "prom-git-values.ts"])
         .assert()
         .success();
     let prom_yaml = String::from_utf8_lossy(
@@ -170,7 +160,7 @@ fn scenario_b_chart_sources() {
 
     // ── B-remove: remove pg, verify TOML key gone, types cleaned up ──────────
     husako_at(dir.path())
-        .args(["-y", "remove", "pg"])
+        .args(["remove", "pg"])
         .assert()
         .success();
     assert_toml_key_absent(dir.path(), "pg");
@@ -188,7 +178,7 @@ fn scenario_b_chart_sources() {
 
     // k8s types still work after chart removal
     husako_at(dir.path())
-        .args(["validate", "configmap.ts"])
+        .args(["check", "configmap.ts"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(

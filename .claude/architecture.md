@@ -244,6 +244,8 @@ The TOML document is only loaded from disk if at least one entry needs updating,
 └── types/
     ├── k8s/                        # generated .d.ts + .js per group-version
     └── helm/                       # generated .d.ts + .js per chart
+
+husako.lock                         # project-root lock file (alongside husako.toml, NOT inside .husako/)
 ```
 
 ### Hash function
@@ -260,7 +262,51 @@ djb2: `hash = hash.wrapping_mul(33).wrapping_add(byte)` from seed 5381, formatte
 
 No explicit invalidation. Pinned sources (release+version, git+tag, chart+version) are deterministic by design. File and cluster sources are not cached (intentionally mutable).
 
-## 8. Plugin System
+## 8. Lock File (Incremental Type Generation)
+
+`husako.lock` is written to the **project root** (alongside `husako.toml`) by
+`husako_core::generate()` after every successful run. Lock write failure is non-fatal —
+types are already written; only a warning is printed.
+
+**Structs:** `husako-config/src/lock.rs`
+- `HusakoLock { format_version, husako_version, resources, charts, plugins }` — all maps are `BTreeMap` for deterministic TOML output
+- `ResourceLockEntry`, `ChartLockEntry`, `PluginLockEntry` — `#[serde(tag = "source")]` enums matching `SchemaSource`/`ChartSource`/`PluginSource` field shapes
+
+**Load/save:** `husako_config::load_lock(root)` / `husako_config::save_lock(root, lock)`
+
+**Skip decision module:** `husako-core/src/lock_check.rs`
+- `should_skip_k8s(config, lock, husako_version, types_dir, project_root)` — all resources unchanged?
+- `should_skip_chart(name, source, lock, husako_version, types_dir, project_root)` — per chart
+- `should_skip_plugin(name, source, lock, plugins_dir, project_root)` — per plugin
+
+**Skip criteria (summary):**
+
+| Entry | Identity key | Extra check |
+|---|---|---|
+| `release` resource | `version` | `types/k8s/` exists |
+| `git` resource | `repo + tag + path` | `types/k8s/` exists |
+| `file` resource | `path + content_hash` | `types/k8s/` exists |
+| `cluster` resource | **never** | — |
+| chart (any) | source-specific version/tag | `types/helm/{name}.d.ts` exists |
+| `git` plugin | `url + path` | installed dir + plugin_version match |
+| `path` plugin | `path + content_hash` | installed dir + plugin_version match |
+
+K8s resources are all-or-nothing: if ANY resource fails its skip check, ALL k8s
+types are regenerated (because `resolve_all()` merges them before codegen).
+
+**`GenerateOptions` additions:**
+- `husako_version: String` — set by CLI from `env!("CARGO_PKG_VERSION")`
+- `no_incremental: bool` — skip all lock checks (lock still written at end)
+
+**`--skip-k8s` interaction:** When `skip_k8s` is true, preserve existing resource entries
+from the old lock verbatim in `new_lock`. This ensures the next `husako gen` without
+`--skip-k8s` still benefits from incremental skip.
+
+**File hashing:** `lock_check::hash_file(path)` / `hash_dir(path)` — djb2 over
+content bytes (single file) or sorted relative-path+content bytes (directory). Same
+djb2 algorithm as `husako-helm::cache_hash`.
+
+## 9. Plugin System
 
 **Spec:** `.claude/plugin-spec.md` (authoritative reference)
 
@@ -328,7 +374,7 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
 - `husako plugin remove <name>` — removes from `husako.toml` + deletes `.husako/plugins/<name>/`
 - `husako plugin list` — shows installed plugins from `.husako/plugins/`
 
-## 9. Critical Invariants
+## 10. Critical Invariants
 
 1. **CRD reclassification must precede group-version partitioning** — otherwise CRD schemas stay in `Other` and are never emitted to module files.
 
@@ -342,7 +388,7 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
 
 6. **Module resolution chain order** — `BuiltinResolver` → `PluginResolver` → `HusakoK8sResolver` → `HusakoFileResolver`. Each returns `Err` for unhandled imports, passing to the next resolver.
 
-7. **Generate priority** — `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip. Charts from `[charts]` are always generated when configured. Plugins are always installed first when `[plugins]` is configured.
+7. **Generate priority** — `--skip-k8s` → `--no-incremental` (bypass lock) → lock-file skip check → CLI flags → `husako.toml [resources]` → skip. Charts from `[charts]` are always generated when configured. Plugins are always installed first when `[plugins]` is configured.
 
 8. **Render precedence** — `_spec` > `_specParts` > `_resources`. Calling `.spec({...})` clears `_specParts`.
 

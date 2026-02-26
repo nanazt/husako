@@ -6,20 +6,7 @@ expression: "&result.files[\"k8s/apps/v1.d.ts\"]"
 
 import { _ResourceBuilder, _SchemaBuilder } from "husako/_base";
 
-import { LabelSelector, ObjectMeta } from "k8s/_common";
-
-/** Deployment enables declarative updates. */
-export interface Deployment {
-  apiVersion?: string;
-  kind?: string;
-  metadata?: ObjectMeta;
-  spec?: DeploymentSpec;
-}
-
-export interface DeploymentSpec {
-  replicas?: number;
-  selector: LabelSelector;
-}
+import { LabelSelector } from "k8s/_common";
 
 /** Deployment enables declarative updates. */
 export interface Deployment extends _ResourceBuilder {

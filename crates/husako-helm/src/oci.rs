@@ -28,6 +28,7 @@ pub(crate) async fn resolve(
     chart: &str,
     version: &str,
     cache_dir: &Path,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<serde_json::Value, HelmError> {
     // Check cache
     let cache_key = crate::cache_hash(reference);
@@ -65,7 +66,16 @@ pub(crate) async fn resolve(
     )
     .await?;
     let layer_digest = find_chart_layer_digest(name, &manifest)?;
-    let blob_bytes = download_blob(&client, name, &host, &repo, &layer_digest, token_ref).await?;
+    let blob_bytes = download_blob(
+        &client,
+        name,
+        &host,
+        &repo,
+        &layer_digest,
+        token_ref,
+        on_progress,
+    )
+    .await?;
 
     let schema = crate::registry::extract_values_schema(name, chart, &blob_bytes)?;
 
@@ -463,6 +473,7 @@ async fn download_blob(
     repo: &str,
     digest: &str,
     token: Option<&str>,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<Vec<u8>, HelmError> {
     let scheme = registry_scheme(host);
     let url = format!("{scheme}://{host}/v2/{repo}/blobs/{digest}");
@@ -485,10 +496,22 @@ async fn download_blob(
         )));
     }
 
-    resp.bytes()
+    let total_bytes = resp.content_length();
+    let mut received: u64 = 0;
+    let mut buf = Vec::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map(|b| b.to_vec())
-        .map_err(|e| HelmError::Io(format!("chart '{name}': read blob bytes from {url}: {e}")))
+        .map_err(|e| HelmError::Io(format!("chart '{name}': read blob bytes from {url}: {e}")))?
+    {
+        received += chunk.len() as u64;
+        if let Some(cb) = on_progress {
+            cb(received, total_bytes, None);
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -658,7 +681,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", reference, "postgresql", "16.4.0", cache_dir)
+        let result = resolve("test", reference, "postgresql", "16.4.0", cache_dir, None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -724,7 +747,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{}/myorg/mychart", server.host_with_port());
-        let result = resolve("test", &reference, "mychart", "1.0.0", tmp.path())
+        let result = resolve("test", &reference, "mychart", "1.0.0", tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -792,7 +815,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{host}/myorg/mychart");
-        let result = resolve("test", &reference, "mychart", "2.0.0", tmp.path())
+        let result = resolve("test", &reference, "mychart", "2.0.0", tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -910,7 +933,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let reference = format!("oci://{}/myorg/multichart", server.host_with_port());
-        let result = resolve("test", &reference, "multichart", "3.0.0", tmp.path())
+        let result = resolve("test", &reference, "multichart", "3.0.0", tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");

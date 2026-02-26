@@ -1,4 +1,5 @@
 pub mod emit;
+pub mod lock_check;
 pub mod plugin;
 pub mod progress;
 pub mod quantity;
@@ -68,9 +69,19 @@ pub async fn render(
     source: &str,
     filename: &str,
     options: &RenderOptions,
+    progress: &dyn ProgressReporter,
 ) -> Result<String, HusakoError> {
-    let js = husako_compile_oxc::compile(source, filename)?;
+    progress.set_total(4);
 
+    // Phase 1: Compile
+    let compile_task = progress.start_task(&format!("Compiling {}...", filename));
+    let js = match husako_compile_oxc::compile(source, filename) {
+        Ok(js) => js,
+        Err(e) => {
+            compile_task.finish_err(&format!("Compile failed: {e}"));
+            return Err(HusakoError::Compile(e));
+        }
+    };
     if options.verbose {
         eprintln!(
             "[compile] {} ({} bytes → {} bytes JS)",
@@ -79,6 +90,7 @@ pub async fn render(
             js.len()
         );
     }
+    compile_task.finish_ok(&format!("Compiled {filename}"));
 
     let entry_path = std::path::Path::new(filename)
         .canonicalize()
@@ -102,6 +114,8 @@ pub async fn render(
         plugin_modules,
     };
 
+    // Phase 2: Execute
+    let execute_task = progress.start_task("Executing...");
     if options.verbose {
         eprintln!(
             "[execute] QuickJS: timeout={}ms, heap={}MB",
@@ -113,29 +127,35 @@ pub async fn render(
                 .map_or("none".to_string(), |mb| mb.to_string()),
         );
     }
-
     let execute_start = std::time::Instant::now();
-    let value = husako_runtime_qjs::execute(&js, &exec_options).await?;
-
+    let value = match husako_runtime_qjs::execute(&js, &exec_options).await {
+        Ok(v) => v,
+        Err(e) => {
+            execute_task.finish_err(&format!("Execute failed: {e}"));
+            return Err(HusakoError::Runtime(e));
+        }
+    };
     if options.verbose {
         eprintln!("[execute] done ({}ms)", execute_start.elapsed().as_millis());
     }
+    execute_task.finish_ok("Executed");
 
-    let validate_mode = if options.schema_store.is_some() {
-        "schema-based"
-    } else {
-        "fallback"
-    };
     let doc_count = if let serde_json::Value::Array(arr) = &value {
         arr.len()
     } else {
         1
     };
 
+    // Phase 3: Validate
+    let validate_task = progress.start_task("Validating...");
+    let validate_mode = if options.schema_store.is_some() {
+        "schema-based"
+    } else {
+        "fallback"
+    };
     if options.verbose {
         eprintln!("[validate] {} documents, {}", doc_count, validate_mode);
     }
-
     let validate_start = std::time::Instant::now();
     if let Err(errors) = validate::validate(&value, options.schema_store.as_ref()) {
         let msg = errors
@@ -143,22 +163,31 @@ pub async fn render(
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        validate_task.finish_err("Validation failed");
         return Err(HusakoError::Validation(msg));
     }
-
     if options.verbose {
         eprintln!(
             "[validate] done ({}ms), 0 errors",
             validate_start.elapsed().as_millis()
         );
     }
+    validate_task.finish_ok("Validated");
 
-    let yaml = emit_yaml(&value)?;
-
+    // Phase 4: Emit
+    let emit_task = progress.start_task("Emitting...");
+    let yaml = match emit_yaml(&value) {
+        Ok(y) => y,
+        Err(e) => {
+            emit_task.finish_err(&format!("Emit failed: {e}"));
+            return Err(HusakoError::Emit(e));
+        }
+    };
     if options.verbose {
         let line_count = yaml.lines().count();
         eprintln!("[emit] {} documents ({} lines YAML)", doc_count, line_count);
     }
+    emit_task.finish_ok(&format!("Emitted {} document(s)", doc_count));
 
     Ok(yaml)
 }
@@ -175,19 +204,105 @@ pub struct GenerateOptions {
     pub skip_k8s: bool,
     /// Config from `husako.toml` (config-driven mode).
     pub config: Option<husako_config::HusakoConfig>,
+    /// Current husako binary version (from `env!("CARGO_PKG_VERSION")`).
+    /// Written to `husako.lock` and used to detect binary upgrades.
+    pub husako_version: String,
+    /// When true, skip all lock-file checks and regenerate everything.
+    /// The lock is still written at the end so the next run is incremental.
+    pub no_incremental: bool,
 }
 
 pub async fn generate(
     options: &GenerateOptions,
     progress: &dyn ProgressReporter,
-) -> Result<(), HusakoError> {
+) -> Result<bool, HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
+    let mut any_work_done = false;
 
-    // 1. Process plugins: install and collect presets
+    // Load existing lock (None if --no-incremental or file absent / unreadable)
+    let old_lock: Option<husako_config::HusakoLock> = if options.no_incremental {
+        None
+    } else {
+        husako_config::load_lock(&options.project_root)
+            .ok()
+            .flatten()
+    };
+
+    let mut new_lock = husako_config::HusakoLock {
+        format_version: 1,
+        husako_version: options.husako_version.clone(),
+        resources: std::collections::BTreeMap::new(),
+        charts: std::collections::BTreeMap::new(),
+        plugins: std::collections::BTreeMap::new(),
+    };
+
+    // 1. Process plugins: install or reuse from existing cache
     let installed_plugins = if let Some(config) = &options.config
         && !config.plugins.is_empty()
     {
-        plugin::install_plugins(config, &options.project_root, progress).await?
+        let plugins_dir = options.project_root.join(".husako/plugins");
+        let mut installed = Vec::new();
+
+        for (name, source) in &config.plugins {
+            let plugin_dir = plugins_dir.join(name);
+
+            let can_skip = !options.no_incremental
+                && lock_check::should_skip_plugin(
+                    name,
+                    source,
+                    old_lock.as_ref(),
+                    &plugins_dir,
+                    &options.project_root,
+                );
+
+            if can_skip && let Ok(manifest) = husako_config::load_plugin_manifest(&plugin_dir) {
+                if let Some(entry) = old_lock.as_ref().and_then(|l| l.plugins.get(name.as_str())) {
+                    new_lock.plugins.insert(name.clone(), entry.clone());
+                }
+                installed.push(plugin::InstalledPlugin {
+                    name: name.clone(),
+                    manifest,
+                    dir: plugin_dir,
+                });
+                continue;
+                // If manifest load fails, fall through to reinstall
+            }
+
+            any_work_done = true;
+            let task = progress.start_task(&format!("Installing plugin {name}..."));
+            match plugin::install_plugin(name, source, &options.project_root, &plugin_dir).await {
+                Ok(()) => match husako_config::load_plugin_manifest(&plugin_dir) {
+                    Ok(manifest) => {
+                        task.finish_ok(&format!(
+                            "{name}: installed (v{})",
+                            manifest.plugin.version
+                        ));
+                        let lock_entry = lock_check::build_plugin_entry(
+                            source,
+                            &plugin_dir,
+                            &manifest,
+                            &options.project_root,
+                        );
+                        new_lock.plugins.insert(name.clone(), lock_entry);
+                        installed.push(plugin::InstalledPlugin {
+                            name: name.clone(),
+                            manifest,
+                            dir: plugin_dir,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: invalid manifest: {e}"));
+                        return Err(HusakoError::Config(e));
+                    }
+                },
+                Err(e) => {
+                    task.finish_err(&format!("{name}: {e}"));
+                    return Err(e);
+                }
+            }
+        }
+
+        installed
     } else {
         Vec::new()
     };
@@ -216,54 +331,87 @@ pub async fn generate(
     )?;
 
     // 4. Generate k8s types
-    // Priority: --skip-k8s → CLI flags → husako.toml [schemas] → skip
-    if !options.skip_k8s {
-        let specs = if let Some(openapi_opts) = &options.openapi {
-            // Legacy CLI mode
-            let task = progress.start_task("Fetching OpenAPI specs...");
-            let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
-                source: match &openapi_opts.source {
-                    husako_openapi::OpenApiSource::Url {
-                        base_url,
-                        bearer_token,
-                    } => husako_openapi::OpenApiSource::Url {
-                        base_url: base_url.clone(),
-                        bearer_token: bearer_token.clone(),
-                    },
-                    husako_openapi::OpenApiSource::Directory(p) => {
-                        husako_openapi::OpenApiSource::Directory(p.clone())
-                    }
-                },
-                cache_dir: options.project_root.join(".husako/cache"),
-                offline: openapi_opts.offline,
-            })?;
-            let result = client.fetch_all_specs().await?;
-            task.finish_ok("Fetched OpenAPI specs");
-            Some(result)
-        } else if let Some(config) = &merged_config
-            && !config.resources.is_empty()
-        {
-            // Config-driven mode (includes merged plugin presets)
-            let cache_dir = options.project_root.join(".husako/cache");
-            Some(
-                schema_source::resolve_all(config, &options.project_root, &cache_dir, progress)
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-        if let Some(specs) = specs {
-            let task = progress.start_task("Generating types...");
-            let gen_options = husako_dts::GenerateOptions { specs };
-            let result = husako_dts::generate(&gen_options)?;
-
-            for (rel_path, content) in &result.files {
-                write_file(&types_dir.join(rel_path), content)?;
+    // Priority: --skip-k8s → --no-incremental / lock check → CLI flags → husako.toml [schemas]
+    if options.skip_k8s {
+        // Preserve existing resource lock entries verbatim so the next run
+        // without --skip-k8s still benefits from incremental skip.
+        if let Some(ref old) = old_lock {
+            for (name, entry) in &old.resources {
+                new_lock.resources.insert(name.clone(), entry.clone());
             }
-            task.finish_ok("Generated k8s types");
-            // Drop the large generated-file map off the async executor.
-            drop_in_background(result);
+        }
+    } else {
+        let k8s_skipped = lock_check::should_skip_k8s(
+            options.config.as_ref(),
+            old_lock.as_ref(),
+            &options.husako_version,
+            &types_dir,
+            &options.project_root,
+        );
+
+        if k8s_skipped {
+            if let Some(ref old) = old_lock {
+                for (name, entry) in &old.resources {
+                    new_lock.resources.insert(name.clone(), entry.clone());
+                }
+            }
+        } else {
+            let specs = if let Some(openapi_opts) = &options.openapi {
+                // Legacy CLI mode
+                any_work_done = true;
+                let task = progress.start_task("Fetching OpenAPI specs...");
+                let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
+                    source: match &openapi_opts.source {
+                        husako_openapi::OpenApiSource::Url {
+                            base_url,
+                            bearer_token,
+                        } => husako_openapi::OpenApiSource::Url {
+                            base_url: base_url.clone(),
+                            bearer_token: bearer_token.clone(),
+                        },
+                        husako_openapi::OpenApiSource::Directory(p) => {
+                            husako_openapi::OpenApiSource::Directory(p.clone())
+                        }
+                    },
+                    cache_dir: options.project_root.join(".husako/cache"),
+                    offline: openapi_opts.offline,
+                })?;
+                let result = client.fetch_all_specs().await?;
+                task.finish_ok("Fetched OpenAPI specs");
+                Some(result)
+            } else if let Some(config) = &merged_config
+                && !config.resources.is_empty()
+            {
+                // Config-driven mode (includes merged plugin presets)
+                let cache_dir = options.project_root.join(".husako/cache");
+                Some(
+                    schema_source::resolve_all(config, &options.project_root, &cache_dir, progress)
+                        .await?,
+                )
+            } else {
+                None
+            };
+
+            if let Some(specs) = specs {
+                any_work_done = true;
+                progress.set_total(1);
+                let task = progress.start_task("Generating types...");
+                let gen_options = husako_dts::GenerateOptions { specs };
+                let result = husako_dts::generate(&gen_options)?;
+
+                for (rel_path, content) in &result.files {
+                    write_file(&types_dir.join(rel_path), content)?;
+                }
+                task.finish_ok("Generated k8s types");
+                // Drop the large generated-file map off the async executor.
+                drop_in_background(result);
+            }
+
+            // Build lock entries for all configured resources
+            if let Some(config) = &options.config {
+                new_lock.resources =
+                    lock_check::build_resource_entries(config, &options.project_root);
+            }
         }
     }
 
@@ -272,25 +420,75 @@ pub async fn generate(
         && !config.charts.is_empty()
     {
         let cache_dir = options.project_root.join(".husako/cache");
-        let chart_schemas =
-            husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir).await?;
 
-        for (chart_name, schema) in &chart_schemas {
-            let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
-            let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
-            write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
-            write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
-            task.finish_ok(&format!("{chart_name}: chart types generated"));
+        // Split into charts to generate vs charts whose lock entry is preserved
+        let mut charts_to_generate = std::collections::HashMap::new();
+        for (name, source) in &config.charts {
+            if lock_check::should_skip_chart(
+                name,
+                source,
+                old_lock.as_ref(),
+                &options.husako_version,
+                &types_dir,
+                &options.project_root,
+            ) {
+                if let Some(entry) = old_lock.as_ref().and_then(|l| l.charts.get(name.as_str())) {
+                    new_lock.charts.insert(name.clone(), entry.clone());
+                }
+            } else {
+                charts_to_generate.insert(name.clone(), source.clone());
+            }
         }
-        // Drop the large schema map off the async executor.
-        drop_in_background(chart_schemas);
+
+        if !charts_to_generate.is_empty() {
+            any_work_done = true;
+            // Resolve and generate each chart sequentially to support per-chart progress.
+            progress.set_total(charts_to_generate.len());
+            let mut chart_schemas = std::collections::HashMap::new();
+            for (chart_name, source) in &charts_to_generate {
+                let task = std::sync::Arc::new(
+                    progress.start_task(&format!("Resolving {chart_name} chart schema...")),
+                );
+                let task_cb = std::sync::Arc::clone(&task);
+                let on_progress_cb = move |bytes: u64, total: Option<u64>, pct: Option<u8>| {
+                    task_cb.set_progress(bytes, total, pct);
+                };
+                let schema = husako_helm::resolve(
+                    chart_name,
+                    source,
+                    &options.project_root,
+                    &cache_dir,
+                    Some(&on_progress_cb),
+                )
+                .await
+                .map_err(|e| {
+                    task.finish_err(&format!("{chart_name}: {e}"));
+                    HusakoError::Chart(e)
+                })?;
+                let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, &schema)?;
+                write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
+                write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
+                task.finish_ok(&format!("{chart_name}: chart types generated"));
+
+                let entry = lock_check::build_chart_entry(source, &options.project_root);
+                new_lock.charts.insert(chart_name.clone(), entry);
+                chart_schemas.insert(chart_name.clone(), schema);
+            }
+            // Drop the large schema map off the async executor.
+            drop_in_background(chart_schemas);
+        }
     }
 
     // 6. Write/update tsconfig.json (includes plugin module paths)
     let plugin_paths = plugin::plugin_tsconfig_paths(&installed_plugins);
     write_tsconfig(&options.project_root, merged_config.as_ref(), &plugin_paths)?;
 
-    Ok(())
+    // 7. Save lock (non-fatal on failure — types are already written)
+    if let Err(e) = husako_config::save_lock(&options.project_root, &new_lock) {
+        eprintln!("warning: failed to write husako.lock: {e}");
+    }
+
+    Ok(any_work_done)
 }
 
 /// Drop a large value on a blocking thread to avoid holding the async executor.
@@ -847,7 +1045,24 @@ pub enum AddTarget {
     },
 }
 
-pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<(), HusakoError> {
+pub enum AddOutcome {
+    Added,
+    AlreadyExists,
+}
+
+pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<AddOutcome, HusakoError> {
+    // If the name is already configured (any source/version), it's a no-op.
+    // Users should run `husako update` to change versions.
+    if let Ok(Some(config)) = husako_config::load(project_root) {
+        let already_configured = match target {
+            AddTarget::Resource { name, .. } => config.resources.contains_key(name.as_str()),
+            AddTarget::Chart { name, .. } => config.charts.contains_key(name.as_str()),
+        };
+        if already_configured {
+            return Ok(AddOutcome::AlreadyExists);
+        }
+    }
+
     let (mut doc, path) = husako_config::edit::load_document(project_root)?;
 
     match target {
@@ -860,7 +1075,7 @@ pub fn add_dependency(project_root: &Path, target: &AddTarget) -> Result<(), Hus
     }
 
     husako_config::edit::save_document(&doc, &path)?;
-    Ok(())
+    Ok(AddOutcome::Added)
 }
 
 #[derive(Debug)]
@@ -948,7 +1163,7 @@ pub async fn check_outdated(
             }
             husako_config::SchemaSource::Git { tag, repo, .. } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_git_tag(repo) {
+                match version_check::discover_latest_git_tag(repo, None) {
                     Ok(Some(latest)) => {
                         let up_to_date = tag == &latest;
                         task.finish_ok(&format!("{name}: {tag} → {latest}"));
@@ -998,7 +1213,7 @@ pub async fn check_outdated(
                 version,
             } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_registry(repo, chart).await {
+                match version_check::discover_latest_registry(repo, chart, None).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1026,7 +1241,7 @@ pub async fn check_outdated(
             }
             husako_config::ChartSource::ArtifactHub { package, version } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_artifacthub(package).await {
+                match version_check::discover_latest_artifacthub(package, None).await {
                     Ok(latest) => {
                         let up_to_date = version == &latest;
                         task.finish_ok(&format!("{name}: {version} → {latest}"));
@@ -1054,7 +1269,7 @@ pub async fn check_outdated(
             }
             husako_config::ChartSource::Git { tag, repo, .. } => {
                 let task = progress.start_task(&format!("Checking {name}..."));
-                match version_check::discover_latest_git_tag(repo) {
+                match version_check::discover_latest_git_tag(repo, None) {
                     Ok(Some(latest)) => {
                         let up_to_date = tag == &latest;
                         task.finish_ok(&format!("{name}: {tag} → {latest}"));
@@ -1131,6 +1346,9 @@ pub struct UpdateOptions {
     pub resources_only: bool,
     pub charts_only: bool,
     pub dry_run: bool,
+    /// Current husako binary version — forwarded to the auto-gen call so the
+    /// lock file records the correct version after an update.
+    pub husako_version: String,
 }
 
 #[derive(Debug)]
@@ -1233,17 +1451,19 @@ pub async fn update_dependencies(
 
     // Auto-regenerate types if we updated anything
     if !options.dry_run && !result.updated.is_empty() {
-        let task = progress.start_task("Regenerating types...");
         let config = husako_config::load(&options.project_root)?;
         let gen_options = GenerateOptions {
             project_root: options.project_root.clone(),
             openapi: None,
             skip_k8s: false,
             config,
+            husako_version: options.husako_version.clone(),
+            no_incremental: false,
         };
-        match generate(&gen_options, progress).await {
-            Ok(()) => task.finish_ok("Types regenerated"),
-            Err(e) => task.finish_err(&format!("Type generation failed: {e}")),
+        // generate() manages its own spinners; running an outer task concurrently
+        // would cause multiple standalone ProgressBars to corrupt each other's output.
+        if let Err(e) = generate(&gen_options, progress).await {
+            eprintln!("warning: type regeneration failed: {e}");
         }
     }
 
@@ -1522,7 +1742,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
         count_files_and_size(&types_dir)
     } else {
         issues.push(".husako/types/ directory not found".to_string());
-        suggestions.push("Run 'husako generate' to create type definitions".to_string());
+        suggestions.push("Run 'husako gen' to create type definitions".to_string());
         (0, 0)
     };
 
@@ -1536,7 +1756,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
                 let has_k8s = parsed.pointer("/compilerOptions/paths/k8s~1*").is_some();
                 if !has_husako && !has_k8s {
                     issues.push("tsconfig.json is missing husako path mappings".to_string());
-                    suggestions.push("Run 'husako generate' to update tsconfig.json".to_string());
+                    suggestions.push("Run 'husako gen' to update tsconfig.json".to_string());
                 }
                 (true, has_husako || has_k8s)
             }
@@ -1547,7 +1767,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
         }
     } else {
         issues.push("tsconfig.json not found".to_string());
-        suggestions.push("Run 'husako generate' to create tsconfig.json".to_string());
+        suggestions.push("Run 'husako gen' to create tsconfig.json".to_string());
         (false, false)
     };
 
@@ -1559,7 +1779,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
             (Some(c), Some(t)) if c > t => {
                 issues
                     .push("Types may be stale (husako.toml newer than .husako/types/)".to_string());
-                suggestions.push("Run 'husako generate' to update".to_string());
+                suggestions.push("Run 'husako gen' to update".to_string());
                 true
             }
             _ => false,
@@ -1904,7 +2124,9 @@ mod tests {
             import { build } from "husako";
             build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
-        let yaml = render(ts, "test.ts", &test_options()).await.unwrap();
+        let yaml = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap();
         assert!(yaml.contains("apiVersion: v1"));
         assert!(yaml.contains("kind: Namespace"));
         assert!(yaml.contains("name: test"));
@@ -1913,14 +2135,18 @@ mod tests {
     #[tokio::test]
     async fn compile_error_propagates() {
         let ts = "const = ;";
-        let err = render(ts, "bad.ts", &test_options()).await.unwrap_err();
+        let err = render(ts, "bad.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap_err();
         assert!(matches!(err, HusakoError::Compile(_)));
     }
 
     #[tokio::test]
     async fn missing_build_propagates() {
         let ts = r#"import { build } from "husako"; const x = 1;"#;
-        let err = render(ts, "test.ts", &test_options()).await.unwrap_err();
+        let err = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             HusakoError::Runtime(husako_runtime_qjs::RuntimeError::BuildNotCalled)
@@ -1937,6 +2163,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -1984,6 +2212,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2192,6 +2422,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: Some(config),
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2230,6 +2462,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2332,6 +2566,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2630,6 +2866,76 @@ mod tests {
     }
 
     #[test]
+    fn add_resource_duplicate_returns_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Resource {
+            name: "kubernetes".to_string(),
+            source: husako_config::SchemaSource::Release {
+                version: "1.35".to_string(),
+            },
+        };
+        let first = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(first, AddOutcome::Added));
+
+        let second = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(second, AddOutcome::AlreadyExists));
+
+        // File is unchanged — no duplicate entry written.
+        let content = std::fs::read_to_string(tmp.path().join("husako.toml")).unwrap();
+        assert_eq!(content.matches("kubernetes").count(), 1);
+    }
+
+    #[test]
+    fn add_chart_duplicate_returns_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let target = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.12.0".to_string(),
+            },
+        };
+        let first = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(first, AddOutcome::Added));
+
+        let second = add_dependency(tmp.path(), &target).unwrap();
+        assert!(matches!(second, AddOutcome::AlreadyExists));
+    }
+
+    #[test]
+    fn add_chart_duplicate_different_version_still_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("husako.toml"), "").unwrap();
+
+        let v1 = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.12.0".to_string(),
+            },
+        };
+        add_dependency(tmp.path(), &v1).unwrap();
+
+        // Different version, same name → still AlreadyExists (use `husako update` instead)
+        let v2 = AddTarget::Chart {
+            name: "ingress-nginx".to_string(),
+            source: husako_config::ChartSource::Registry {
+                repo: "https://kubernetes.github.io/ingress-nginx".to_string(),
+                chart: "ingress-nginx".to_string(),
+                version: "4.13.0".to_string(),
+            },
+        };
+        let outcome = add_dependency(tmp.path(), &v2).unwrap();
+        assert!(matches!(outcome, AddOutcome::AlreadyExists));
+    }
+
+    #[test]
     fn remove_resource_from_config() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -2715,6 +3021,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2871,6 +3179,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()

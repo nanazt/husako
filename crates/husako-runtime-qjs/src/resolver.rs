@@ -31,7 +31,7 @@ impl rquickjs::loader::Resolver for PluginResolver {
                 base,
                 name,
                 format!(
-                    "plugin module '{}' mapped to '{}' but file not found. Run 'husako generate' to install plugins",
+                    "plugin module '{}' mapped to '{}' but file not found. Run 'husako gen' to install plugins",
                     name,
                     path.display()
                 ),
@@ -65,7 +65,7 @@ impl rquickjs::loader::Resolver for HusakoK8sResolver {
                 base,
                 name,
                 format!(
-                    "{} modules require 'husako generate' to be run first",
+                    "{} modules require 'husako gen' to be run first",
                     if name.starts_with("helm/") {
                         "helm"
                     } else {
@@ -89,7 +89,7 @@ impl rquickjs::loader::Resolver for HusakoK8sResolver {
                 base,
                 name,
                 format!(
-                    "module '{}' not found. Run 'husako generate' to generate {} modules",
+                    "module '{}' not found. Run 'husako gen' to generate {} modules",
                     name, kind
                 ),
             ))

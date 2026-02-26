@@ -17,11 +17,6 @@ fn scenario_f_oci_chart_source() {
         .args([
             "-y",
             "add",
-            "postgresql",
-            "--chart",
-            "--source",
-            "oci",
-            "--reference",
             "oci://registry-1.docker.io/bitnamicharts/postgresql",
             "--version",
             "18.4.0",
@@ -53,7 +48,7 @@ fn scenario_f_oci_chart_source() {
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "pg-oci-values.ts"])
+        .args(["check", "pg-oci-values.ts"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(

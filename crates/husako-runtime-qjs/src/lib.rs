@@ -700,7 +700,7 @@ export class ConfigMap extends _ResourceBuilder {
             build([new Deployment()]);
         "#;
         let err = execute(js, &test_options()).await.unwrap_err();
-        assert!(err.to_string().contains("husako generate"));
+        assert!(err.to_string().contains("husako gen"));
     }
 
     #[tokio::test]
@@ -806,7 +806,7 @@ export class ConfigMap extends _ResourceBuilder {
             build([]);
         "#;
         let err = execute(js, &test_options()).await.unwrap_err();
-        assert!(err.to_string().contains("husako generate"));
+        assert!(err.to_string().contains("husako gen"));
     }
 
     #[tokio::test]

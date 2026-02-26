@@ -4,11 +4,21 @@
 /// Tests use `SilentProgress` (no-op).
 pub trait ProgressReporter: Send + Sync {
     fn start_task(&self, message: &str) -> Box<dyn TaskHandle>;
+    /// Hint at the total number of steps for the current operation.
+    /// Must be called before the first `start_task` call. Default: no-op.
+    fn set_total(&self, _total: usize) {}
 }
 
 /// Handle for a single in-progress task.
 pub trait TaskHandle: Send + Sync {
     fn set_message(&self, message: &str);
+    /// Report download progress within this task.
+    ///
+    /// - `bytes`: bytes received so far
+    /// - `total_bytes`: total bytes if known from `Content-Length` (None otherwise)
+    /// - `pct`: explicit percentage override (used by git where `%` comes from object count,
+    ///   not bytes). When `None`, the display layer computes pct from `bytes / total_bytes`.
+    fn set_progress(&self, _bytes: u64, _total_bytes: Option<u64>, _pct: Option<u8>) {}
     fn finish_ok(&self, message: &str);
     fn finish_err(&self, message: &str);
 }
@@ -39,6 +49,7 @@ mod tests {
         let progress = SilentProgress;
         let task = progress.start_task("test");
         task.set_message("updated");
+        task.set_progress(1_000_000, Some(10_000_000), None);
         task.finish_ok("done");
     }
 
@@ -47,5 +58,14 @@ mod tests {
         let progress = SilentProgress;
         let task = progress.start_task("test");
         task.finish_err("failed");
+    }
+
+    #[test]
+    fn silent_progress_set_total_no_op() {
+        let progress = SilentProgress;
+        progress.set_total(5);
+        let task = progress.start_task("test");
+        task.set_progress(0, None, Some(45));
+        task.finish_ok("done");
     }
 }

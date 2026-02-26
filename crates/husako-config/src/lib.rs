@@ -1,4 +1,9 @@
 pub mod edit;
+pub mod lock;
+
+pub use lock::{
+    ChartLockEntry, HusakoLock, PluginLockEntry, ResourceLockEntry, load_lock, save_lock,
+};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -55,7 +60,7 @@ pub struct ClusterConfig {
 }
 
 /// A schema dependency entry. Every entry must specify `source` explicitly.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "source")]
 pub enum SchemaSource {
     /// Fetch OpenAPI v3 specs from kubernetes/kubernetes GitHub releases.
@@ -88,7 +93,7 @@ pub enum SchemaSource {
 }
 
 /// A chart values schema source. Specifies where to find `values.schema.json`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "source")]
 pub enum ChartSource {
     /// Fetch from an HTTP Helm chart repository.

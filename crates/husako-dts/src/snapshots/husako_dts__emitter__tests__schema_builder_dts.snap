@@ -6,6 +6,6 @@ expression: dts
 export interface Container extends _SchemaBuilder {
   name(value: string): this;
   image(value: string): this;
-  resources(value: ResourceRequirements): this;
+  resources(value: ResourceRequirements | import("husako").ResourceRequirementsFragment): this;
 }
 export function Container(): Container;

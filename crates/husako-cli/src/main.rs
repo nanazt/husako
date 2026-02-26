@@ -1,10 +1,8 @@
 mod interactive;
-mod name_version_select;
 mod progress;
-mod search_select;
 mod style;
-mod text_input;
 mod theme;
+mod url_detect;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -20,7 +18,7 @@ use crate::progress::IndicatifReporter;
 const DEFAULT_K8S_VERSION: &str = "1.35";
 
 #[derive(Parser)]
-#[command(name = "husako", version)]
+#[command(name = "husako")]
 struct Cli {
     /// Skip confirmation prompts
     #[arg(long, short = 'y', global = true)]
@@ -37,6 +35,13 @@ enum Commands {
         /// Path to the TypeScript entry file, or an entry alias from husako.toml
         file: String,
 
+        /// Write output to a file or directory instead of stdout.
+        /// If path ends with .yaml/.yml, writes to that file directly.
+        /// Otherwise treated as a directory: writes <dir>/<name>.yaml
+        /// where <name> is the entry alias or the entry file's stem.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+
         /// Allow imports outside the project root
         #[arg(long)]
         allow_outside_root: bool,
@@ -50,12 +55,12 @@ enum Commands {
         max_heap_mb: Option<usize>,
 
         /// Print diagnostic traces to stderr
-        #[arg(long)]
+        #[arg(short, long)]
         verbose: bool,
     },
 
     /// Generate type definitions and tsconfig.json
-    #[command(alias = "gen")]
+    #[command(name = "gen", alias = "generate")]
     Generate {
         /// Kubernetes API server URL (e.g. https://localhost:6443)
         #[arg(long)]
@@ -68,6 +73,11 @@ enum Commands {
         /// Skip Kubernetes type generation (only write husako.d.ts + tsconfig)
         #[arg(long)]
         skip_k8s: bool,
+
+        /// Regenerate all types, ignoring husako.lock.
+        /// Use when a git plugin's remote changed or a tag was moved upstream.
+        #[arg(long)]
+        no_incremental: bool,
     },
 
     /// Create a new project from a template
@@ -83,7 +93,7 @@ enum Commands {
     /// Initialize husako in the current directory
     Init {
         /// Template to use (simple, project, multi-env)
-        #[arg(long, default_value = "simple")]
+        #[arg(short, long, default_value = "simple")]
         template: TemplateName,
     },
 
@@ -116,48 +126,41 @@ enum Commands {
 
     /// Add a resource or chart dependency
     Add {
-        /// Dependency name
+        /// URL, ArtifactHub package (e.g. bitnami/postgresql), or local path
+        #[arg(value_name = "URL")]
+        url: Option<String>,
+
+        /// Chart name (for registry URLs: second positional or --name)
+        #[arg(value_name = "CHART")]
+        extra: Option<String>,
+
+        /// Override the derived dependency name
+        #[arg(short, long)]
         name: Option<String>,
 
-        /// Add as a resource dependency
-        #[arg(long, group = "kind")]
-        resource: bool,
-
-        /// Add as a chart dependency
-        #[arg(long, group = "kind")]
-        chart: bool,
-
-        /// Source type (release, cluster, git, file, registry, artifacthub, oci)
+        /// Add a Kubernetes release resource (e.g. --release 1.35)
         #[arg(long)]
-        source: Option<String>,
+        release: Option<String>,
 
-        /// Version
-        #[arg(long)]
+        /// Add a cluster resource; optionally specify a named cluster
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        cluster: Option<String>,
+
+        /// Pin version or partial semver prefix (16, 16.4, 16.4.0); v prefix optional
+        #[arg(short, long)]
         version: Option<String>,
 
-        /// Repository URL
-        #[arg(long)]
-        repo: Option<String>,
-
-        /// Git tag
+        /// Pin to a specific git tag
         #[arg(long)]
         tag: Option<String>,
 
-        /// File or directory path
+        /// Pin to a git branch (clones HEAD; overrides tag/release default)
+        #[arg(long)]
+        branch: Option<String>,
+
+        /// Override git sub-path
         #[arg(long)]
         path: Option<String>,
-
-        /// Chart name in the repository
-        #[arg(long)]
-        chart_name: Option<String>,
-
-        /// ArtifactHub package name (e.g. bitnami/postgresql)
-        #[arg(long)]
-        package: Option<String>,
-
-        /// OCI reference (e.g. oci://ghcr.io/org/chart-name)
-        #[arg(long)]
-        reference: Option<String>,
     },
 
     /// Remove a resource or chart dependency
@@ -197,10 +200,16 @@ enum Commands {
     /// Check project health and diagnose issues
     Debug,
 
-    /// Validate TypeScript without rendering output
-    Validate {
+    /// Check TypeScript without rendering output
+    Check {
         /// TypeScript entry file or alias
         file: String,
+
+        /// Also run TypeScript type checking via tsc --noEmit.
+        /// Requires tsc on PATH (npm install -g typescript) and generated types
+        /// (husako gen). Exits with code 3 if type errors are found.
+        #[arg(long, short = 't')]
+        type_check: bool,
     },
 
     /// Manage plugins
@@ -208,6 +217,9 @@ enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+
+    /// Print version, commit hash, and build date
+    Version,
 
     /// Run test files
     Test {
@@ -258,6 +270,7 @@ async fn main() -> ExitCode {
     match cli.command {
         Commands::Render {
             file,
+            output,
             allow_outside_root,
             timeout_ms,
             max_heap_mb,
@@ -297,6 +310,15 @@ async fn main() -> ExitCode {
                 }
             };
 
+            // Pre-flight: if types are missing, auto-generate before rendering.
+            let types_dir = project_root.join(".husako").join("types");
+            if !types_dir.exists()
+                && let Err(e) = run_auto_generate(&project_root).await
+            {
+                eprintln!("{} Could not generate types: {e}", style::error_prefix());
+                return ExitCode::from(exit_code(&e));
+            }
+
             let schema_store = husako_core::load_schema_store(&project_root);
 
             let filename = abs_file.to_string_lossy();
@@ -309,9 +331,37 @@ async fn main() -> ExitCode {
                 verbose,
             };
 
-            match husako_core::render(&source, &filename, &options).await {
+            let render_progress = IndicatifReporter::new();
+            match husako_core::render(&source, &filename, &options, &render_progress).await {
                 Ok(yaml) => {
-                    print!("{yaml}");
+                    if let Some(out_path) = output {
+                        let file_path = if out_path
+                            .extension()
+                            .is_some_and(|e| e == "yaml" || e == "yml")
+                        {
+                            out_path
+                        } else {
+                            let name = derive_out_name(&file, &options.project_root);
+                            out_path.join(format!("{name}.yaml"))
+                        };
+                        if let Some(parent) = file_path.parent()
+                            && let Err(e) = std::fs::create_dir_all(parent)
+                        {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(1);
+                        }
+                        if let Err(e) = std::fs::write(&file_path, &yaml) {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(1);
+                        }
+                        eprintln!(
+                            "{} Written to {}",
+                            style::check_mark(),
+                            style::bold(&file_path.display().to_string())
+                        );
+                    } else {
+                        print!("{yaml}");
+                    }
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -324,6 +374,7 @@ async fn main() -> ExitCode {
             api_server,
             spec_dir,
             skip_k8s,
+            no_incremental,
         } => {
             let project_root = cwd();
             let progress = IndicatifReporter::new();
@@ -360,10 +411,16 @@ async fn main() -> ExitCode {
                 openapi,
                 skip_k8s,
                 config,
+                husako_version: env!("CARGO_PKG_VERSION").to_string(),
+                no_incremental,
             };
 
             match husako_core::generate(&options, &progress).await {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => {
+                    println!("{} Already up to date.", style::check_mark());
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
                     ExitCode::from(exit_code(&e))
@@ -374,19 +431,12 @@ async fn main() -> ExitCode {
             directory,
             template,
         } => {
-            let k8s_version = match select_k8s_version() {
-                Ok(v) => v,
-                Err(None) => return ExitCode::SUCCESS, // Escape pressed
-                Err(Some(msg)) => {
-                    eprintln!("{} {msg}", style::error_prefix());
-                    return ExitCode::from(1);
-                }
-            };
+            let k8s_version = latest_k8s_version();
 
             let options = ScaffoldOptions {
                 directory: directory.clone(),
                 template,
-                k8s_version,
+                k8s_version: k8s_version.clone(),
             };
 
             match husako_core::scaffold(&options) {
@@ -397,10 +447,15 @@ async fn main() -> ExitCode {
                         template,
                         directory.display()
                     );
+                    eprintln!(
+                        "  kubernetes {}  {}",
+                        style::bold(&k8s_version),
+                        style::dim("· edit husako.toml to use a different version")
+                    );
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  cd {}", directory.display());
-                    eprintln!("  husako generate");
+                    eprintln!("  husako gen");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -413,20 +468,12 @@ async fn main() -> ExitCode {
         // --- M16 ---
         Commands::Init { template } => {
             let project_root = cwd();
-
-            let k8s_version = match select_k8s_version() {
-                Ok(v) => v,
-                Err(None) => return ExitCode::SUCCESS, // Escape pressed
-                Err(Some(msg)) => {
-                    eprintln!("{} {msg}", style::error_prefix());
-                    return ExitCode::from(1);
-                }
-            };
+            let k8s_version = latest_k8s_version();
 
             let options = husako_core::InitOptions {
                 directory: project_root,
                 template,
-                k8s_version,
+                k8s_version: k8s_version.clone(),
             };
 
             match husako_core::init(&options) {
@@ -435,9 +482,14 @@ async fn main() -> ExitCode {
                         "{} Created '{template}' project in current directory",
                         style::check_mark()
                     );
+                    eprintln!(
+                        "  kubernetes {}  {}",
+                        style::bold(&k8s_version),
+                        style::dim("· edit husako.toml to use a different version")
+                    );
                     eprintln!();
                     eprintln!("Next steps:");
-                    eprintln!("  husako generate");
+                    eprintln!("  husako gen");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -463,23 +515,6 @@ async fn main() -> ExitCode {
                     }
                 }
             };
-
-            if !cli.yes {
-                let targets = match (do_cache, do_types) {
-                    (true, true) => "cache and types",
-                    (true, false) => "cache",
-                    (false, true) => "types",
-                    _ => unreachable!(),
-                };
-                match interactive::confirm(&format!("Remove {targets}?")) {
-                    Ok(true) => {}
-                    Ok(false) => return ExitCode::SUCCESS,
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        return ExitCode::from(1);
-                    }
-                }
-            }
 
             let options = husako_core::CleanOptions {
                 project_root,
@@ -574,95 +609,134 @@ async fn main() -> ExitCode {
 
         // --- M17 ---
         Commands::Add {
+            url,
+            extra,
             name,
-            resource: _,
-            chart,
-            source,
+            release,
+            cluster,
             version,
-            repo,
             tag,
+            branch,
             path,
-            chart_name,
-            package,
-            reference,
         } => {
             let project_root = cwd();
 
-            let target = if let Some(src) = source {
-                // Non-interactive mode
-                if chart {
-                    // For charts, derive name from chart_name, package, or reference if not provided
-                    let dep_name = name
-                        .or_else(|| chart_name.clone())
-                        .or_else(|| {
-                            package
-                                .as_deref()
-                                .and_then(|p| p.rsplit('/').next())
-                                .map(String::from)
-                        })
-                        .or_else(|| {
-                            reference.as_deref().map(|r| {
-                                let without_scheme = r.strip_prefix("oci://").unwrap_or(r);
-                                let last =
-                                    without_scheme.rsplit('/').next().unwrap_or(without_scheme);
-                                last.split(':').next().unwrap_or(last).to_string()
-                            })
-                        });
-                    let Some(dep_name) = dep_name else {
-                        eprintln!(
-                            "{} name is required (provide as positional arg, or use --chart-name / --package / --reference)",
-                            style::error_prefix()
+            match resolve_add_target(
+                url,
+                extra,
+                name,
+                release,
+                cluster,
+                version,
+                tag,
+                branch,
+                path,
+                cli.yes,
+                &project_root,
+            )
+            .await
+            {
+                Ok(None) => ExitCode::SUCCESS, // user cancelled cluster confirmation
+                Ok(Some(result)) => {
+                    // Write [cluster] / [clusters.*] if URL came from kubeconfig
+                    if let AddResult::Resource {
+                        cluster_config: Some(ref cc),
+                        ..
+                    } = result
+                    {
+                        let (mut doc, doc_path) =
+                            match husako_config::edit::load_document(&project_root) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    eprintln!("{} {e}", style::error_prefix());
+                                    return ExitCode::from(2u8);
+                                }
+                            };
+                        husako_config::edit::add_cluster_config(
+                            &mut doc,
+                            cc.cluster_name.as_deref(),
+                            &cc.server,
                         );
-                        return ExitCode::from(2);
-                    };
-                    build_chart_target(
-                        dep_name, src, version, repo, tag, path, chart_name, package, reference,
-                    )
-                } else {
-                    let Some(dep_name) = name else {
-                        eprintln!(
-                            "{} name is required for resource dependencies",
-                            style::error_prefix()
-                        );
-                        return ExitCode::from(2);
-                    };
-                    build_resource_target(dep_name, src, version, repo, tag, path)
-                }
-            } else {
-                // Interactive mode
-                interactive::prompt_add()
-            };
-
-            match target {
-                Ok(target) => match husako_core::add_dependency(&project_root, &target) {
-                    Ok(()) => {
-                        let (dep_name, section) = match &target {
-                            husako_core::AddTarget::Resource { name, .. } => (name, "resources"),
-                            husako_core::AddTarget::Chart { name, .. } => (name, "charts"),
+                        if let Err(e) = husako_config::edit::save_document(&doc, &doc_path) {
+                            eprintln!("{} {e}", style::error_prefix());
+                            return ExitCode::from(2u8);
+                        }
+                        let section = match &cc.cluster_name {
+                            None => "[cluster]".to_string(),
+                            Some(n) => format!("[clusters.{}]", n),
                         };
                         eprintln!(
-                            "{} Added {} to [{section}]",
+                            "{} Added {} to husako.toml",
                             style::check_mark(),
-                            style::dep_name(dep_name)
+                            style::bold(&section)
                         );
-                        ExitCode::SUCCESS
                     }
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        ExitCode::from(exit_code(&e))
+
+                    let target = match &result {
+                        AddResult::Resource { name, source, .. } => {
+                            husako_core::AddTarget::Resource {
+                                name: name.clone(),
+                                source: source.clone(),
+                            }
+                        }
+                        AddResult::Chart { name, source } => husako_core::AddTarget::Chart {
+                            name: name.clone(),
+                            source: source.clone(),
+                        },
+                    };
+
+                    match husako_core::add_dependency(&project_root, &target) {
+                        Ok(husako_core::AddOutcome::Added) => {
+                            let (dep_name, section) = match &result {
+                                AddResult::Resource { name, .. } => (name.as_str(), "resources"),
+                                AddResult::Chart { name, .. } => (name.as_str(), "charts"),
+                            };
+                            eprintln!(
+                                "{} Added {} to [{}]\n  {}",
+                                style::check_mark(),
+                                style::dep_name(dep_name),
+                                section,
+                                style::dim(&format_source_detail(&result))
+                            );
+                            eprintln!();
+                            if let Err(e) = run_auto_generate(&project_root).await {
+                                eprintln!(
+                                    "{} Type generation failed: {e}",
+                                    style::warning_prefix()
+                                );
+                            }
+                            ExitCode::SUCCESS
+                        }
+                        Ok(husako_core::AddOutcome::AlreadyExists) => {
+                            let (dep_name, section) = match &result {
+                                AddResult::Resource { name, .. } => (name.as_str(), "resources"),
+                                AddResult::Chart { name, .. } => (name.as_str(), "charts"),
+                            };
+                            eprintln!(
+                                "{} {} is already in [{}]",
+                                style::check_mark(),
+                                style::dep_name(dep_name),
+                                section,
+                            );
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("{} {e}", style::error_prefix());
+                            ExitCode::from(exit_code(&e))
+                        }
                     }
-                },
+                }
                 Err(e) => {
                     eprintln!("{} {e}", style::error_prefix());
-                    ExitCode::from(1)
+                    ExitCode::from(2)
                 }
             }
         }
         Commands::Remove { name } => {
             let project_root = cwd();
 
-            let (dep_name, from_cli) = if let Some(n) = name {
-                (n, true)
+            let dep_name = if let Some(n) = name {
+                n
             } else {
                 // Interactive mode: list deps and let user choose
                 match husako_core::list_dependencies(&project_root) {
@@ -676,7 +750,7 @@ async fn main() -> ExitCode {
                         }
 
                         match interactive::prompt_remove(&items) {
-                            Ok(n) => (n, false),
+                            Ok(n) => n,
                             Err(e) => {
                                 eprintln!("{} {e}", style::error_prefix());
                                 return ExitCode::from(1);
@@ -690,18 +764,6 @@ async fn main() -> ExitCode {
                 }
             };
 
-            // Confirm removal only in CLI mode (not interactive, user already chose)
-            if from_cli && !cli.yes {
-                match interactive::confirm(&format!("Remove '{dep_name}'?")) {
-                    Ok(true) => {}
-                    Ok(false) => return ExitCode::SUCCESS,
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        return ExitCode::from(1);
-                    }
-                }
-            }
-
             match husako_core::remove_dependency(&project_root, &dep_name) {
                 Ok(result) => {
                     eprintln!(
@@ -710,6 +772,10 @@ async fn main() -> ExitCode {
                         style::dep_name(&result.name),
                         result.section
                     );
+                    eprintln!();
+                    if let Err(e) = run_auto_generate(&project_root).await {
+                        eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                    }
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -731,26 +797,30 @@ async fn main() -> ExitCode {
                         return ExitCode::SUCCESS;
                     }
 
-                    eprintln!(
-                        "{:<16} {:<10} {:<12} {:<10} {:<10}",
-                        "Name", "Kind", "Source", "Current", "Latest"
-                    );
-                    for entry in &entries {
-                        let latest = entry.latest.as_deref().unwrap_or("?");
-                        let mark = if entry.up_to_date {
-                            format!(" {}", style::check_mark())
-                        } else {
-                            String::new()
-                        };
+                    let outdated: Vec<_> = entries.iter().filter(|e| !e.up_to_date).collect();
+                    if outdated.is_empty() {
+                        eprintln!("{} All dependencies are up to date", style::check_mark());
+                    } else {
                         eprintln!(
-                            "{:<16} {:<10} {:<12} {:<10} {:<10}{}",
-                            style::dep_name(&entry.name),
-                            entry.kind,
-                            entry.source_type,
-                            entry.current,
-                            latest,
-                            mark,
+                            "{:<16} {:<10} {:<12} {:<10} {:<10}",
+                            style::bold("Name"),
+                            style::bold("Kind"),
+                            style::bold("Source"),
+                            style::bold("Current"),
+                            style::bold("Latest"),
                         );
+                        for entry in outdated {
+                            let latest = entry.latest.as_deref().unwrap_or("?");
+                            eprintln!(
+                                "{:<16} {:<10} {:<12} {:<10} {:<10} {}",
+                                style::dep_name(&entry.name),
+                                entry.kind,
+                                entry.source_type,
+                                entry.current,
+                                latest,
+                                style::arrow_mark(),
+                            );
+                        }
                     }
                     ExitCode::SUCCESS
                 }
@@ -777,6 +847,7 @@ async fn main() -> ExitCode {
                 resources_only,
                 charts_only,
                 dry_run,
+                husako_version: env!("CARGO_PKG_VERSION").to_string(),
             };
 
             match husako_core::update_dependencies(&options, &progress).await {
@@ -987,6 +1058,28 @@ async fn main() -> ExitCode {
                         eprintln!("  {} {suggestion}", style::arrow_mark());
                     }
 
+                    let issue_count = [
+                        !matches!(report.config_ok, Some(true)),
+                        !report.types_exist,
+                        !report.tsconfig_ok || !report.tsconfig_has_paths,
+                        report.stale,
+                    ]
+                    .iter()
+                    .filter(|&&b| b)
+                    .count();
+
+                    eprintln!();
+                    if issue_count == 0 {
+                        eprintln!("{} All checks passed", style::check_mark());
+                    } else {
+                        eprintln!(
+                            "{} {} issue{} found",
+                            style::cross_mark(),
+                            issue_count,
+                            if issue_count == 1 { "" } else { "s" }
+                        );
+                    }
+
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1028,13 +1121,20 @@ async fn main() -> ExitCode {
                         return ExitCode::from(1);
                     }
 
+                    let source_detail = match &source {
+                        husako_config::PluginSource::Git { url, .. } => url.clone(),
+                        husako_config::PluginSource::Path { path } => path.clone(),
+                    };
                     eprintln!(
-                        "{} Added plugin {} to [plugins]",
+                        "{} Added plugin {} to [plugins]\n  {}",
                         style::check_mark(),
-                        style::dep_name(&name)
+                        style::dep_name(&name),
+                        style::dim(&source_detail),
                     );
                     eprintln!();
-                    eprintln!("Run 'husako generate' to install the plugin and generate types.");
+                    if let Err(e) = run_auto_generate(&project_root).await {
+                        eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                    }
                     ExitCode::SUCCESS
                 }
                 PluginAction::Remove { name } => {
@@ -1073,8 +1173,12 @@ async fn main() -> ExitCode {
                             style::check_mark(),
                             style::dep_name(&name)
                         );
+                        eprintln!();
+                        if let Err(e) = run_auto_generate(&project_root).await {
+                            eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                        }
                     } else {
-                        eprintln!("{} Plugin '{}' not found", style::cross_mark(), name);
+                        eprintln!("{} Plugin '{}' not found", style::error_prefix(), name);
                         return ExitCode::from(1);
                     }
 
@@ -1107,7 +1211,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Validate { file } => {
+        Commands::Check { file, type_check } => {
             let project_root = cwd();
 
             let resolved = match resolve_entry(&file, &project_root) {
@@ -1146,7 +1250,7 @@ async fn main() -> ExitCode {
 
             let filename = abs_file.to_string_lossy();
             let options = RenderOptions {
-                project_root,
+                project_root: project_root.clone(),
                 allow_outside_root: false,
                 schema_store,
                 timeout_ms: None,
@@ -1166,6 +1270,30 @@ async fn main() -> ExitCode {
                         "{} All resources pass schema validation",
                         style::check_mark()
                     );
+
+                    if type_check {
+                        match std::process::Command::new("tsc")
+                            .arg("--noEmit")
+                            .current_dir(&project_root)
+                            .output()
+                        {
+                            Ok(out) if out.status.success() => {
+                                eprintln!("{} TypeScript types OK", style::check_mark());
+                            }
+                            Ok(out) => {
+                                eprintln!("{} TypeScript type errors:", style::cross_mark());
+                                eprintln!("{}", String::from_utf8_lossy(&out.stdout));
+                                return ExitCode::from(3);
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "{} tsc not found — install TypeScript to enable type checking",
+                                    style::warning_prefix()
+                                );
+                            }
+                        }
+                    }
+
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1173,6 +1301,16 @@ async fn main() -> ExitCode {
                     ExitCode::from(exit_code(&e))
                 }
             }
+        }
+
+        Commands::Version => {
+            eprintln!(
+                "husako {} ({} {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("HUSAKO_GIT_HASH"),
+                env!("HUSAKO_BUILD_DATE"),
+            );
+            ExitCode::SUCCESS
         }
 
         Commands::Test {
@@ -1297,161 +1435,508 @@ fn resolve_entry(file_arg: &str, project_root: &std::path::Path) -> Result<PathB
     Err(msg)
 }
 
+/// Derive the output file name (no extension) for a render `--output` directory.
+///
+/// - If `file_arg` matches an entry alias in `husako.toml`, returns the alias string as-is
+///   (e.g. `"apps/my-app"` → `"apps/my-app"`, producing `dist/apps/my-app.yaml`).
+/// - Otherwise returns the file stem of `file_arg`
+///   (e.g. `"src/entry.ts"` → `"entry"`).
+fn derive_out_name(file_arg: &str, project_root: &std::path::Path) -> String {
+    if let Ok(Some(cfg)) = husako_config::load(project_root)
+        && cfg.entries.contains_key(file_arg)
+    {
+        return file_arg.to_string();
+    }
+    std::path::Path::new(file_arg)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_arg.to_string())
+}
+
 /// Interactively select a Kubernetes version.
 ///
 /// Returns `Ok(version)` on success, `Err(None)` on Escape (abort),
-/// `Err(Some(msg))` on fatal error.
-///
-/// Falls back to `DEFAULT_K8S_VERSION` when not running in a terminal
-/// (e.g. piped or in CI) or when the network request fails.
-fn select_k8s_version() -> Result<String, Option<String>> {
-    // Non-interactive: use default without prompting
-    if !console::Term::stderr().is_term() {
-        return Ok(DEFAULT_K8S_VERSION.to_string());
-    }
-
-    // Fetch initial page of versions (show feedback while loading)
-    eprintln!("{}", style::dim("Fetching Kubernetes versions..."));
-    let initial = tokio::task::block_in_place(|| {
+/// Fetches the latest Kubernetes version from GitHub.
+/// Falls back to `DEFAULT_K8S_VERSION` silently on any network failure.
+fn latest_k8s_version() -> String {
+    let result = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(husako_core::version_check::discover_recent_releases(10, 0))
+            .block_on(husako_core::version_check::discover_recent_releases(1, 0))
     });
-    // Clear the loading message
-    let _ = console::Term::stderr().clear_last_lines(1);
-
-    match initial {
-        Ok(versions) if !versions.is_empty() => {
-            let mut items: Vec<String> = versions
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    if i == 0 {
-                        format!("{v} (latest)")
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect();
-            let mut has_more = versions.len() == 10;
-            let mut next_offset: usize = 10;
-
-            let result =
-                search_select::run("Kubernetes version:", &mut items, &mut has_more, || {
-                    let new_versions = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(
-                            husako_core::version_check::discover_recent_releases(10, next_offset),
-                        )
-                    })
-                    .map_err(|e| e.to_string())?;
-                    let more = new_versions.len() == 10;
-                    next_offset += 10;
-                    Ok((new_versions, more))
-                });
-
-            match result {
-                Ok(Some(idx)) => {
-                    let selected = &items[idx];
-                    let version = selected
-                        .strip_suffix(" (latest)")
-                        .unwrap_or(selected)
-                        .to_string();
-                    Ok(version)
-                }
-                Ok(None) => Err(None), // Escape
-                Err(e) => Err(Some(e)),
-            }
-        }
-        _ => {
-            eprintln!(
-                "{} could not fetch Kubernetes versions, using default ({DEFAULT_K8S_VERSION})",
-                style::warning_prefix()
-            );
-            Ok(DEFAULT_K8S_VERSION.to_string())
-        }
+    match result {
+        Ok(versions) if !versions.is_empty() => versions.into_iter().next().unwrap(),
+        _ => DEFAULT_K8S_VERSION.to_string(),
     }
 }
 
-fn build_resource_target(
-    name: String,
-    source: String,
-    version: Option<String>,
-    repo: Option<String>,
-    tag: Option<String>,
-    path: Option<String>,
-) -> Result<husako_core::AddTarget, String> {
-    let schema_source = match source.as_str() {
-        "release" => {
-            let version = version.ok_or("--version is required for release source")?;
-            husako_config::SchemaSource::Release { version }
-        }
-        "cluster" => husako_config::SchemaSource::Cluster { cluster: None },
-        "git" => {
-            let repo = repo.ok_or("--repo is required for git source")?;
-            let tag = tag.ok_or("--tag is required for git source")?;
-            let path = path.ok_or("--path is required for git source")?;
-            husako_config::SchemaSource::Git { repo, tag, path }
-        }
-        "file" => {
-            let path = path.ok_or("--path is required for file source")?;
-            husako_config::SchemaSource::File { path }
-        }
-        other => return Err(format!("unknown resource source type: {other}")),
+/// Run generate with default options derived from husako.toml.
+/// Returns Ok(()) on success, or a HusakoError on failure.
+/// Used by commands that need fresh types after config changes.
+async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), HusakoError> {
+    let progress = IndicatifReporter::new();
+    let config = husako_config::load(project_root).ok().flatten();
+    let options = GenerateOptions {
+        project_root: project_root.to_path_buf(),
+        openapi: None,
+        skip_k8s: false,
+        config,
+        husako_version: env!("CARGO_PKG_VERSION").to_string(),
+        no_incremental: false,
     };
-    Ok(husako_core::AddTarget::Resource {
-        name,
-        source: schema_source,
-    })
+    husako_core::generate(&options, &progress).await.map(|_| ())
+}
+
+// --- husako add (URL auto-detect, no interactive) ---
+
+struct ClusterConfigToAdd {
+    cluster_name: Option<String>, // None = [cluster], Some("dev") = [clusters.dev]
+    server: String,
+}
+
+enum AddResult {
+    Resource {
+        name: String,
+        source: husako_config::SchemaSource,
+        cluster_config: Option<ClusterConfigToAdd>,
+    },
+    Chart {
+        name: String,
+        source: husako_config::ChartSource,
+    },
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_chart_target(
-    name: String,
-    source: String,
+async fn resolve_add_target(
+    url: Option<String>,
+    extra: Option<String>,
+    name: Option<String>,
+    release: Option<String>,
+    cluster: Option<String>,
     version: Option<String>,
-    repo: Option<String>,
     tag: Option<String>,
-    path: Option<String>,
-    chart_name: Option<String>,
-    package: Option<String>,
-    reference: Option<String>,
-) -> Result<husako_core::AddTarget, String> {
-    let chart_source = match source.as_str() {
-        "registry" => {
-            let repo = repo.ok_or("--repo is required for registry source")?;
-            let chart = chart_name.ok_or("--chart-name is required for registry source")?;
-            let version = version.ok_or("--version is required for registry source")?;
-            husako_config::ChartSource::Registry {
-                repo,
-                chart,
-                version,
+    branch: Option<String>,
+    path_override: Option<String>,
+    yes: bool,
+    project_root: &std::path::Path,
+) -> Result<Option<AddResult>, String> {
+    use husako_config::{ChartSource, SchemaSource};
+    use url_detect::{SourceKind, UrlDetected, detect_url};
+
+    // 1. Kubernetes release resource
+    if let Some(ver) = release {
+        let dep_name = name.unwrap_or_else(|| "kubernetes".to_string());
+        return Ok(Some(AddResult::Resource {
+            name: dep_name,
+            source: SchemaSource::Release { version: ver },
+            cluster_config: None,
+        }));
+    }
+
+    // 2. Cluster resource
+    if let Some(cluster_val) = cluster {
+        let display_name = if cluster_val.is_empty() {
+            "default"
+        } else {
+            &cluster_val
+        };
+
+        // Stage 1: husako.toml
+        let config_server = husako_config::load(project_root)
+            .ok()
+            .flatten()
+            .and_then(|cfg| {
+                if cluster_val.is_empty() {
+                    cfg.cluster.map(|c| c.server)
+                } else {
+                    cfg.clusters.get(&cluster_val).map(|c| c.server.clone())
+                }
+            });
+
+        // Stage 2: kubeconfig fallback (only if husako.toml had nothing)
+        let kube_server = if config_server.is_none() {
+            let ctx = if cluster_val.is_empty() {
+                None
+            } else {
+                Some(cluster_val.as_str())
+            };
+            husako_openapi::kubeconfig::server_for_context(ctx)
+        } else {
+            None
+        };
+
+        // Fail early if the cluster is not configured anywhere
+        let server_url = match config_server.as_deref().or(kube_server.as_deref()) {
+            Some(url) => url.to_string(),
+            None => {
+                let msg = if cluster_val.is_empty() {
+                    "cluster is not configured — add [cluster] to husako.toml or set a current-context in kubeconfig".to_string()
+                } else {
+                    format!(
+                        "cluster {:?} is not configured — add [clusters.{}] to husako.toml or ensure context {:?} exists in kubeconfig",
+                        cluster_val, cluster_val, cluster_val
+                    )
+                };
+                return Err(msg);
+            }
+        };
+
+        // cluster_config is Some only when URL came from kubeconfig (not husako.toml)
+        let cluster_config = kube_server.map(|s| ClusterConfigToAdd {
+            cluster_name: if cluster_val.is_empty() {
+                None
+            } else {
+                Some(cluster_val.clone())
+            },
+            server: s,
+        });
+
+        // Always show cluster identity (visible even with --yes, useful for audit)
+        eprintln!(
+            "  Cluster: {}  {}",
+            style::dep_name(display_name),
+            style::dim(&server_url),
+        );
+        if cluster_config.is_some() {
+            let section = if cluster_val.is_empty() {
+                "[cluster]".to_string()
+            } else {
+                format!("[clusters.{}]", cluster_val)
+            };
+            eprintln!(
+                "  {} will add {} to husako.toml",
+                style::arrow_mark(),
+                style::bold(&section)
+            );
+        }
+
+        if !yes {
+            eprintln!(
+                "{} Adding a cluster resource will fetch ALL CRDs from the cluster, which may be a large set.",
+                style::warning_prefix()
+            );
+            match interactive::confirm("Continue?") {
+                Ok(true) => {}
+                Ok(false) => return Ok(None),
+                Err(e) => return Err(e),
             }
         }
-        "artifacthub" => {
-            let package = package.ok_or("--package is required for artifacthub source")?;
-            let version = version.ok_or("--version is required for artifacthub source")?;
-            husako_config::ChartSource::ArtifactHub { package, version }
+
+        // cluster_val == "" → --cluster without value → use "cluster" as name
+        let cluster_name = if cluster_val.is_empty() {
+            None
+        } else {
+            Some(cluster_val)
+        };
+        let dep_name =
+            name.unwrap_or_else(|| cluster_name.as_deref().unwrap_or("cluster").to_string());
+        return Ok(Some(AddResult::Resource {
+            name: dep_name,
+            source: SchemaSource::Cluster {
+                cluster: cluster_name,
+            },
+            cluster_config,
+        }));
+    }
+
+    // 3. URL-based detection
+    if let Some(input) = url {
+        let prefix = version.as_deref();
+
+        match detect_url(&input) {
+            Some(UrlDetected::ArtifactHub { package }) => {
+                let dep_name = name.unwrap_or_else(|| after_slash(&package));
+                let ver = husako_core::version_check::discover_latest_artifacthub(&package, prefix)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(AddResult::Chart {
+                    name: dep_name,
+                    source: ChartSource::ArtifactHub {
+                        package,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::Oci { reference }) => {
+                let dep_name = name.unwrap_or_else(|| last_path_component(&reference));
+                let ver = if let Some(v) = version {
+                    v
+                } else {
+                    husako_core::version_check::discover_latest_oci(&reference)
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| {
+                            format!(
+                                "could not detect latest version for '{reference}'; use --version"
+                            )
+                        })?
+                };
+                Ok(Some(AddResult::Chart {
+                    name: dep_name,
+                    source: ChartSource::Oci {
+                        reference,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::Git {
+                repo,
+                sub_path,
+                branch: url_branch,
+            }) => {
+                let effective_branch = branch.or(url_branch);
+                let dep_name = name.unwrap_or_else(|| repo_name(&repo));
+                let tempdir = tempfile::tempdir().map_err(|e| e.to_string())?;
+
+                if let Some(br) = effective_branch {
+                    git_clone_sparse(&repo, &br, tempdir.path()).await?;
+                    let look_in = path_override
+                        .as_deref()
+                        .or(sub_path.as_deref())
+                        .unwrap_or(".");
+                    let kind = url_detect::detect_git_kind(tempdir.path(), look_in)?;
+                    let path = path_override
+                        .or(sub_path)
+                        .unwrap_or_else(|| ".".to_string());
+                    match kind {
+                        SourceKind::Resource => Ok(Some(AddResult::Resource {
+                            name: dep_name,
+                            source: SchemaSource::Git {
+                                repo,
+                                tag: br,
+                                path,
+                            },
+                            cluster_config: None,
+                        })),
+                        SourceKind::Chart => Ok(Some(AddResult::Chart {
+                            name: dep_name,
+                            source: ChartSource::Git {
+                                repo,
+                                tag: br,
+                                path,
+                            },
+                        })),
+                    }
+                } else {
+                    let resolved_tag = if let Some(t) = tag {
+                        t
+                    } else {
+                        husako_core::version_check::discover_latest_git_tag(&repo, prefix)
+                            .map_err(|e| e.to_string())?
+                            .ok_or_else(|| {
+                                format!("no release tags found in '{repo}'; use --tag or --branch")
+                            })?
+                    };
+                    git_clone_sparse(&repo, &resolved_tag, tempdir.path()).await?;
+                    let look_in = path_override
+                        .as_deref()
+                        .or(sub_path.as_deref())
+                        .unwrap_or(".");
+                    let kind = url_detect::detect_git_kind(tempdir.path(), look_in)?;
+                    let path = path_override
+                        .or(sub_path)
+                        .unwrap_or_else(|| ".".to_string());
+                    match kind {
+                        SourceKind::Resource => Ok(Some(AddResult::Resource {
+                            name: dep_name,
+                            source: SchemaSource::Git {
+                                repo,
+                                tag: resolved_tag,
+                                path,
+                            },
+                            cluster_config: None,
+                        })),
+                        SourceKind::Chart => Ok(Some(AddResult::Chart {
+                            name: dep_name,
+                            source: ChartSource::Git {
+                                repo,
+                                tag: resolved_tag,
+                                path,
+                            },
+                        })),
+                    }
+                }
+            }
+
+            Some(UrlDetected::HelmRegistry { repo }) => {
+                // chart name in registry = second positional arg; -n overrides dep key only
+                let chart_name = extra.or_else(|| name.clone()).ok_or_else(|| {
+                    "chart name required for registry URL\nexamples:\n  husako add https://charts.example.com cert-manager\n  husako add https://charts.example.com cert-manager -n my-cert"
+                        .to_string()
+                })?;
+                let dep_name = name.unwrap_or_else(|| chart_name.clone());
+                let ver = husako_core::version_check::discover_latest_registry(
+                    &repo,
+                    &chart_name,
+                    prefix,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(Some(AddResult::Chart {
+                    name: dep_name,
+                    source: ChartSource::Registry {
+                        repo,
+                        chart: chart_name,
+                        version: ver,
+                    },
+                }))
+            }
+
+            Some(UrlDetected::LocalPath { path }) => {
+                let kind = url_detect::detect_local_kind(&path)?;
+                let dep_name = name.unwrap_or_else(|| file_stem(&path));
+                match kind {
+                    SourceKind::Resource => Ok(Some(AddResult::Resource {
+                        name: dep_name,
+                        source: SchemaSource::File { path },
+                        cluster_config: None,
+                    })),
+                    SourceKind::Chart => Ok(Some(AddResult::Chart {
+                        name: dep_name,
+                        source: ChartSource::File { path },
+                    })),
+                }
+            }
+
+            None => Err(format!(
+                "'{input}' is not a recognized URL or package\nexamples:\n  husako add bitnami/postgresql\n  husako add https://github.com/cert-manager/cert-manager\n  husako add --release 1.35"
+            )),
         }
-        "git" => {
-            let repo = repo.ok_or("--repo is required for git source")?;
-            let tag = tag.ok_or("--tag is required for git source")?;
-            let path = path.ok_or("--path is required for git source")?;
-            husako_config::ChartSource::Git { repo, tag, path }
+    } else {
+        Err(
+            "url required, or use --release <version> / --cluster [name]\nsee: husako add --help"
+                .to_string(),
+        )
+    }
+}
+
+/// Shallow-clone a git repo at a specific tag or branch (depth 1).
+async fn git_clone_sparse(repo: &str, tag: &str, dir: &std::path::Path) -> Result<(), String> {
+    let output = tokio::process::Command::new("git")
+        .args(["clone", "--depth", "1", "--branch", tag, repo])
+        .arg(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("git clone: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git clone failed for '{repo}' @ '{tag}': {stderr}"));
+    }
+    Ok(())
+}
+
+fn format_source_detail(result: &AddResult) -> String {
+    use husako_config::{ChartSource, SchemaSource};
+    match result {
+        AddResult::Resource {
+            source: SchemaSource::Release { version },
+            ..
+        } => {
+            format!("release  {version}")
         }
-        "file" => {
-            let path = path.ok_or("--path is required for file source")?;
-            husako_config::ChartSource::File { path }
+        AddResult::Resource {
+            source: SchemaSource::Cluster { cluster },
+            ..
+        } => {
+            format!("cluster  {}", cluster.as_deref().unwrap_or("default"))
         }
-        "oci" => {
-            let reference = reference.ok_or("--reference is required for oci source")?;
-            let version = version.ok_or("--version is required for oci source")?;
-            husako_config::ChartSource::Oci { reference, version }
+        AddResult::Resource {
+            source: SchemaSource::Git { repo, tag, .. },
+            ..
+        } => {
+            format!("git  {repo} @ {tag}")
         }
-        other => return Err(format!("unknown chart source type: {other}")),
-    };
-    Ok(husako_core::AddTarget::Chart {
-        name,
-        source: chart_source,
-    })
+        AddResult::Resource {
+            source: SchemaSource::File { path },
+            ..
+        } => {
+            format!("file  {path}")
+        }
+        AddResult::Chart {
+            source: ChartSource::ArtifactHub { package, version },
+            ..
+        } => {
+            format!("artifacthub  {package} @ {version}")
+        }
+        AddResult::Chart {
+            source:
+                ChartSource::Registry {
+                    repo,
+                    chart,
+                    version,
+                },
+            ..
+        } => {
+            format!("registry  {chart} @ {version}  ({repo})")
+        }
+        AddResult::Chart {
+            source: ChartSource::Oci { reference, version },
+            ..
+        } => {
+            format!("oci  {reference} @ {version}")
+        }
+        AddResult::Chart {
+            source: ChartSource::Git { repo, tag, .. },
+            ..
+        } => {
+            format!("git  {repo} @ {tag}")
+        }
+        AddResult::Chart {
+            source: ChartSource::File { path },
+            ..
+        } => {
+            format!("file  {path}")
+        }
+    }
+}
+
+// --- String helpers ---
+
+fn after_slash(s: &str) -> String {
+    s.rsplit('/').next().unwrap_or(s).to_string()
+}
+
+fn last_path_component(s: &str) -> String {
+    let without_query = s.split('?').next().unwrap_or(s);
+    let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+    without_fragment
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(without_fragment)
+        .split(':')
+        .next()
+        .unwrap_or(without_fragment)
+        .to_string()
+}
+
+fn repo_name(url: &str) -> String {
+    // Last path segment of scheme://host/org/repo
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+fn file_stem(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path)
+            .to_string()
+    } else {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(path)
+            .to_string()
+    }
 }
 
 fn format_size(bytes: u64) -> String {

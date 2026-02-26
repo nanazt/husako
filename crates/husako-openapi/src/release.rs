@@ -5,27 +5,43 @@ use serde_json::Value;
 
 use crate::OpenApiError;
 
+type ProgressCb = dyn Fn(u64, Option<u64>, Option<u8>) + Sync;
+
 /// Fetch Kubernetes OpenAPI specs from a GitHub release tag.
 ///
 /// `version` can be `"1.35"` (mapped to `v1.35.0`) or a full semver like `"1.35.1"`.
 /// Results are cached under `cache_dir/release/{tag}/`.
+///
+/// `on_progress` is called with `(bytes_received, total_bytes, None)` during the download.
+/// `total_bytes` is `Some` when the sum of file sizes is known from the GitHub API listing.
 pub async fn fetch_release_specs(
     version: &str,
     cache_dir: &Path,
+    on_progress: Option<&ProgressCb>,
+) -> Result<HashMap<String, Value>, OpenApiError> {
+    let base = std::env::var("HUSAKO_GITHUB_API_URL")
+        .unwrap_or_else(|_| "https://api.github.com".to_string());
+    fetch_release_specs_from(version, cache_dir, on_progress, &base).await
+}
+
+async fn fetch_release_specs_from(
+    version: &str,
+    cache_dir: &Path,
+    on_progress: Option<&ProgressCb>,
+    api_base: &str,
 ) -> Result<HashMap<String, Value>, OpenApiError> {
     let tag = version_to_tag(version);
     let tag_cache = cache_dir.join(format!("release/{tag}"));
 
-    // Check cache first — tag-based caching is deterministic
+    // Check cache first — tag-based caching is deterministic (skip download entirely)
     if tag_cache.exists() {
         return load_cached_specs(&tag_cache);
     }
 
     // List spec files from the GitHub API
     let client = build_http_client()?;
-    let contents_url = format!(
-        "https://api.github.com/repos/kubernetes/kubernetes/contents/api/openapi-spec/v3?ref={tag}"
-    );
+    let contents_url =
+        format!("{api_base}/repos/kubernetes/kubernetes/contents/api/openapi-spec/v3?ref={tag}");
 
     let resp = client
         .get(&contents_url)
@@ -65,6 +81,13 @@ pub async fn fetch_release_specs(
         OpenApiError::Cache(format!("create cache dir {}: {e}", tag_cache.display()))
     })?;
 
+    // Sum known file sizes for progress reporting (size=0 means unknown)
+    let total_bytes: Option<u64> = {
+        let sum: u64 = spec_files.iter().map(|e| e.size).sum();
+        if sum > 0 { Some(sum) } else { None }
+    };
+    let mut received_bytes: u64 = 0;
+
     for entry in &spec_files {
         let download_url = entry
             .download_url
@@ -86,9 +109,22 @@ pub async fn fetch_release_specs(
             )));
         }
 
-        let spec: Value = spec_resp
-            .json()
+        // Stream body with progress reporting
+        let mut buf = Vec::new();
+        let mut resp = spec_resp;
+        while let Some(chunk) = resp
+            .chunk()
             .await
+            .map_err(|e| release_err(format!("read {}: {e}", entry.name)))?
+        {
+            received_bytes += chunk.len() as u64;
+            if let Some(cb) = on_progress {
+                cb(received_bytes, total_bytes, None);
+            }
+            buf.extend_from_slice(&chunk);
+        }
+
+        let spec: Value = serde_json::from_slice(&buf)
             .map_err(|e| release_err(format!("parse {}: {e}", entry.name)))?;
 
         let discovery_key = filename_to_discovery_key(&entry.name);
@@ -197,6 +233,8 @@ fn release_err(msg: String) -> OpenApiError {
 struct GithubContent {
     name: String,
     download_url: Option<String>,
+    #[serde(default)]
+    size: u64,
 }
 
 #[cfg(test)]
@@ -289,7 +327,7 @@ mod tests {
         .unwrap();
 
         // This should hit cache and NOT make any network requests
-        let result = fetch_release_specs("1.35", cache_dir).await.unwrap();
+        let result = fetch_release_specs("1.35", cache_dir, None).await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result["api/v1"]["info"]["title"], "cached");
     }

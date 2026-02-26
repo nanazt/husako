@@ -10,6 +10,8 @@ export class _SchemaBuilder {
 
 /** Base class for Kubernetes resource builders. */
 export class _ResourceBuilder {
+  /** Render to a plain object for use with build(). */
+  _render(): Record<string, any>;
   /** Set metadata using a MetadataFragment. Returns a new builder (copy-on-write). */
   metadata(fragment: MetadataFragment): this;
   /** Set the resource spec. Returns a new builder (copy-on-write). */

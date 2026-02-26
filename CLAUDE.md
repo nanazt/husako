@@ -90,11 +90,13 @@ crates/
 ├── husako-config/         # husako.toml parser (entry aliases, resource/chart/plugin deps, cluster config)
 │   └── src/
 │       ├── lib.rs              # Config structs, plugin manifest parser
+│       ├── lock.rs             # HusakoLock structs + load/save (husako.lock)
 │       └── edit.rs             # Format-preserving TOML editing
 ├── husako-core/           # Pipeline orchestration + validation + schema source resolution + plugins
 │   └── src/
 │       ├── lib.rs              # generate(), render(), scaffold(), JSONC tsconfig handling
 │       ├── emit.rs             # JSON → YAML emitter (emit_yaml, re-exported at crate root)
+│       ├── lock_check.rs       # Skip decision logic for husako.lock incremental generation
 │       ├── plugin.rs           # Plugin install/remove/list, preset merging, tsconfig paths
 │       ├── quantity.rs         # Kubernetes quantity grammar validation
 │       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
@@ -151,6 +153,7 @@ Boundary rules:
 - **Functions/Methods**: `snake_case`
 - **Constants**: `UPPER_SNAKE_CASE`
 - **Tests**: Inline `#[cfg(test)]` blocks in each module
+- **Async**: Use async I/O (`tokio::fs`, `tokio::process`, etc.) wherever the calling context is already async. `tokio::fs` requires the `fs` feature — add it to the workspace tokio entry in `Cargo.toml` if not already present.
 
 ## Exit Codes (Stable)
 
@@ -159,7 +162,7 @@ Boundary rules:
 | 0    | Success                                    |
 | 1    | Unexpected failure                         |
 | 2    | Invalid args/config                        |
-| 3    | Compile failure (oxc)                      |
+| 3    | Compile failure (oxc) or TypeScript type error (`husako check --type-check`) |
 | 4    | Runtime failure (QuickJS / module loading) |
 | 5    | Type generation failure                    |
 | 6    | OpenAPI fetch/cache failure                |
@@ -196,10 +199,13 @@ cargo test -p husako-core test_name
 ## Gotchas
 
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
+- **`husako.toml`** at the repo root may accumulate local dev test entries (charts, resources). Run `git diff husako.toml` before staging to avoid committing unrelated test config.
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
 - `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
 - **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
 - **QuickJS (`husako-runtime-qjs`) is not async-native**: `rquickjs::AsyncRuntime` + `parallel` feature panics in `event-listener` under tokio's multi-thread runtime; `PromiseFuture` is `!Send`. Use `tokio::task::spawn_blocking` to wrap synchronous QuickJS execution — this is the correct tokio pattern for CPU-bound single-threaded work.
+- **CLI output to stderr**: All user-facing CLI output (`husako list`, `husako info`, `husako debug`, `husako outdated`, etc.) uses `eprintln!()` → stderr. Only YAML data output from `husako render` goes to stdout. Integration tests must use `.stderr()` assertions, not `.stdout()`.
+- **Integration test cache helpers** in `crates/husako-cli/tests/integration.rs`: `write_release_cache(root, version)` seeds `.husako/cache/release/` for cache-hit generation without network; `write_artifacthub_chart_cache(root, package, version)` seeds the Helm ArtifactHub cache; `chart_djb2(s)` computes the cache key matching `husako_helm::cache_hash()`.
 
 ## Writing Docs
 
@@ -219,7 +225,7 @@ Project-level configuration file created by `husako new`. Supports:
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
-The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
+The `Generate` command priority chain for k8s types: `--skip-k8s` → `--no-incremental` (bypass lock) → lock-file skip check → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
 
 ## Git Workflow
 
@@ -265,6 +271,14 @@ Read `.claude/*.md` before making changes to related areas:
 
 When implementing non-trivial features, write a plan document first in `.claude/plans/`.
 
-Plans must include a documentation step when the feature changes user-visible behavior (new CLI flags, new config options, new source types, changed error messages, etc.). Add a task like "Update `.worktrees/docs-site/docs/`" to the plan before implementation begins.
+Every plan **must** include a section that explicitly identifies:
+1. **Tests to add or modify** — new tests for the feature, and existing tests that may need updating (e.g. assertions that reference changed output, struct fields, or error messages).
+2. **Docs to add or modify** — user-visible changes (new CLI flags, new config options, new source types, changed error messages, etc.) require an update to `.worktrees/docs-site/docs/`.
 
-For simple tasks that don't go through planning, ask the user whether documentation needs to be updated after the work is done.
+**In plan mode, always confirm both before calling ExitPlanMode:**
+- "Are there tests to add or modify?" — check every time, without exception.
+- "Are there docs to add or modify?" — check every time, without exception.
+
+Do not treat these as optional — always verify both before finalising a plan.
+
+For simple tasks that don't go through planning, ask the user whether tests or documentation need to be updated after the work is done.

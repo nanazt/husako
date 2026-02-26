@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use husako_bench::{K8S_MEDIUM_TS, K8S_SMALL_TS, SMALL_TS, bench_fixtures_dir};
-use husako_core::{RenderOptions, render};
+use husako_core::{RenderOptions, progress::SilentProgress, render};
 
 fn make_opts(fixtures: &std::path::Path) -> RenderOptions {
     RenderOptions {
@@ -25,14 +25,22 @@ fn bench_render(c: &mut Criterion) {
     group.bench_with_input(
         BenchmarkId::from_parameter("builtin/small"),
         SMALL_TS,
-        |b, src| b.iter(|| rt.block_on(render(src, "bench.ts", &opts)).unwrap()),
+        |b, src| {
+            b.iter(|| {
+                rt.block_on(render(src, "bench.ts", &opts, &SilentProgress))
+                    .unwrap()
+            })
+        },
     );
 
     // k8s variants require `husako gen` in fixtures directory.
     if types_dir.exists() {
         for (id, src) in [("k8s/small", K8S_SMALL_TS), ("k8s/medium", K8S_MEDIUM_TS)] {
             group.bench_with_input(BenchmarkId::from_parameter(id), src, |b, src| {
-                b.iter(|| rt.block_on(render(src, "bench.ts", &opts)).unwrap())
+                b.iter(|| {
+                    rt.block_on(render(src, "bench.ts", &opts, &SilentProgress))
+                        .unwrap()
+                })
             });
         }
     } else {

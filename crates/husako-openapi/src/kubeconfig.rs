@@ -16,6 +16,51 @@ pub fn resolve_credentials(server_url: &str) -> Result<ClusterCredentials, OpenA
     resolve_credentials_from_dir(&kube_dir, server_url)
 }
 
+/// Find the Kubernetes API server URL for a named context (or the current-context if `None`).
+///
+/// Scans `~/.kube/`. Returns `None` if not found or on any error.
+pub fn server_for_context(context_name: Option<&str>) -> Option<String> {
+    server_for_context_from_dir(&dirs_kube(), context_name)
+}
+
+/// Find the server URL for a named context from a specific kubeconfig directory.
+fn server_for_context_from_dir(
+    kube_dir: &std::path::Path,
+    context_name: Option<&str>,
+) -> Option<String> {
+    let entries = std::fs::read_dir(kube_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let config: KubeConfig = match serde_yaml_ng::from_str(&content) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let ctx_name = match context_name {
+            Some(n) => n,
+            None => config.current_context.as_str(),
+        };
+        if ctx_name.is_empty() {
+            continue;
+        }
+        if let Some(ctx) = config.contexts.iter().find(|c| c.name == ctx_name)
+            && let Some(cluster) = config
+                .clusters
+                .iter()
+                .find(|c| c.name == ctx.context.cluster)
+        {
+            return Some(cluster.cluster.server.clone());
+        }
+    }
+    None
+}
+
 /// Resolve credentials from a specific directory of kubeconfig files.
 pub fn resolve_credentials_from_dir(
     kube_dir: &std::path::Path,
@@ -105,6 +150,8 @@ fn dirs_home() -> std::path::PathBuf {
 
 #[derive(Debug, serde::Deserialize)]
 struct KubeConfig {
+    #[serde(default, rename = "current-context")]
+    current_context: String,
     #[serde(default)]
     clusters: Vec<NamedCluster>,
     #[serde(default)]
@@ -126,7 +173,6 @@ struct ClusterInfo {
 
 #[derive(Debug, serde::Deserialize)]
 struct NamedContext {
-    #[allow(dead_code)]
     name: String,
     context: ContextInfo,
 }
@@ -160,6 +206,7 @@ mod tests {
     const STANDARD_KUBECONFIG: &str = r#"
 apiVersion: v1
 kind: Config
+current-context: my-context
 clusters:
   - name: my-cluster
     cluster:
@@ -174,6 +221,56 @@ users:
     user:
       token: my-bearer-token-123
 "#;
+
+    const SERVER_LOOKUP_KUBECONFIG: &str = r#"
+apiVersion: v1
+kind: Config
+current-context: dev
+clusters:
+  - name: dev-cluster
+    cluster:
+      server: https://dev:6443
+contexts:
+  - name: dev
+    context:
+      cluster: dev-cluster
+      user: dev-user
+users:
+  - name: dev-user
+    user:
+      token: dev-token
+"#;
+
+    #[test]
+    fn server_for_context_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_kubeconfig(tmp.path(), "config", SERVER_LOOKUP_KUBECONFIG);
+        assert_eq!(
+            server_for_context_from_dir(tmp.path(), Some("dev")),
+            Some("https://dev:6443".to_string())
+        );
+    }
+
+    #[test]
+    fn server_for_context_current_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_kubeconfig(tmp.path(), "config", SERVER_LOOKUP_KUBECONFIG);
+        // None → uses current-context "dev"
+        assert_eq!(
+            server_for_context_from_dir(tmp.path(), None),
+            Some("https://dev:6443".to_string())
+        );
+    }
+
+    #[test]
+    fn server_for_context_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_kubeconfig(tmp.path(), "config", SERVER_LOOKUP_KUBECONFIG);
+        assert_eq!(
+            server_for_context_from_dir(tmp.path(), Some("nonexistent")),
+            None
+        );
+    }
 
     #[test]
     fn resolve_standard_bearer_token() {

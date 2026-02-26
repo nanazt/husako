@@ -42,7 +42,7 @@ build([ex]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "example.ts"])
+        .args(["check", "example.ts"])
         .assert()
         .success();
     let ex_yaml = String::from_utf8_lossy(
@@ -63,12 +63,9 @@ build([ex]);
         .args([
             "-y",
             "add",
-            "cert-manager",
-            "--resource",
-            "--source",
-            "git",
-            "--repo",
             "https://github.com/cert-manager/cert-manager",
+            "-n",
+            "cert-manager",
             "--tag",
             "v1.16.3",
             "--path",
@@ -109,7 +106,7 @@ build([cert]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["validate", "certificate.ts"])
+        .args(["check", "certificate.ts"])
         .assert()
         .success();
     let cert_yaml = String::from_utf8_lossy(
@@ -130,7 +127,7 @@ build([cert]);
 
     // ── C-remove: remove cert-manager, verify types gone, example still works ─
     husako_at(dir.path())
-        .args(["-y", "remove", "cert-manager"])
+        .args(["remove", "cert-manager"])
         .assert()
         .success();
     assert_toml_key_absent(dir.path(), "cert-manager");
@@ -149,7 +146,7 @@ build([cert]);
     );
 
     husako_at(dir.path())
-        .args(["validate", "example.ts"])
+        .args(["check", "example.ts"])
         .assert()
         .success();
     let ex_after = String::from_utf8_lossy(

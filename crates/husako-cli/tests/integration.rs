@@ -145,6 +145,15 @@ fn project_with_k8s(ts_content: &str) -> (tempfile::TempDir, std::path::PathBuf)
 }
 
 #[test]
+fn version_subcommand() {
+    husako()
+        .arg("version")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("husako "));
+}
+
+#[test]
 fn missing_build() {
     let f = write_temp_ts(r#"import { build } from "husako"; const x = 1;"#);
     husako()
@@ -687,7 +696,7 @@ fn generate_skip_k8s() {
     let root = dir.path();
 
     husako_at(root)
-        .args(["generate", "--skip-k8s"])
+        .args(["gen", "--skip-k8s"])
         .assert()
         .success();
 
@@ -826,7 +835,7 @@ fn generate_spec_dir() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -876,7 +885,7 @@ fn generate_updates_existing_tsconfig() {
     .unwrap();
 
     husako_at(root)
-        .args(["generate", "--skip-k8s"])
+        .args(["gen", "--skip-k8s"])
         .assert()
         .success();
 
@@ -1147,7 +1156,7 @@ fn generate_creates_schema_json() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1174,7 +1183,8 @@ fn new_simple_creates_project() {
         .assert()
         .success()
         .stderr(predicates::str::contains("Created 'simple' project"))
-        .stderr(predicates::str::contains("husako generate"));
+        .stderr(predicates::str::contains("kubernetes"))
+        .stderr(predicates::str::contains("husako gen"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1190,7 +1200,8 @@ fn new_project_template() {
         .args(["new", "--template", "project", target.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Created 'project' project"));
+        .stderr(predicates::str::contains("Created 'project' project"))
+        .stderr(predicates::str::contains("kubernetes"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1209,7 +1220,8 @@ fn new_multi_env_template() {
         .args(["new", "--template", "multi-env", target.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Created 'multi-env' project"));
+        .stderr(predicates::str::contains("Created 'multi-env' project"))
+        .stderr(predicates::str::contains("kubernetes"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1341,7 +1353,7 @@ build([Deployment()]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .code(4)
-        .stderr(predicates::str::contains("husako generate"));
+        .stderr(predicates::str::contains("husako gen"));
 }
 
 #[test]
@@ -1354,7 +1366,7 @@ fn generate_creates_js_modules() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1377,7 +1389,7 @@ fn render_with_generated_modules() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1646,6 +1658,10 @@ build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { n
     )
     .unwrap();
 
+    // Pre-seed .husako/types/ so auto-generate is skipped (entry file has no k8s imports).
+    // Without this, husako render triggers generate → GitHub API → flaky in CI.
+    std::fs::create_dir_all(root.join(".husako/types")).unwrap();
+
     // Render using alias
     husako_at(root)
         .args(["render", "dev"])
@@ -1755,6 +1771,113 @@ build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { n
         .assert()
         .success()
         .stdout(predicates::str::contains("kind: Namespace"));
+}
+
+// --- render --output ---
+
+const SIMPLE_NAMESPACE_TS: &str = r#"
+import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "out" } }; } }]);
+"#;
+
+#[test]
+fn render_output_to_yaml_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("out.yaml");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicates::str::contains("Written to"));
+
+    let contents = std::fs::read_to_string(&out).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_to_dir_uses_stem() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out_dir = root.join("dist");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out_dir.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("");
+
+    let out_file = out_dir.join("entry.yaml");
+    let contents = std::fs::read_to_string(&out_file).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_alias_preserves_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        "[entries]\n\"apps/my-app\" = \"src/apps/my-app.ts\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src/apps")).unwrap();
+    std::fs::write(root.join("src/apps/my-app.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out_dir = root.join("dist");
+
+    husako_at(root)
+        .args([
+            "render",
+            "apps/my-app",
+            "--output",
+            out_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout("");
+
+    // alias "apps/my-app" → dist/apps/my-app.yaml
+    let out_file = out_dir.join("apps").join("my-app.yaml");
+    let contents = std::fs::read_to_string(&out_file).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+}
+
+#[test]
+fn render_output_creates_nested_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("a").join("b").join("c").join("out.yaml");
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert!(out.exists());
+}
+
+#[test]
+fn render_output_overwrites_existing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    let out = root.join("out.yaml");
+    std::fs::write(&out, "old content").unwrap();
+
+    husako_at(root)
+        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let contents = std::fs::read_to_string(&out).unwrap();
+    assert!(contents.contains("kind: Namespace"));
+    assert!(!contents.contains("old content"));
 }
 
 #[test]
@@ -2296,4 +2419,1548 @@ build([repo]);
         .stdout(predicates::str::contains("kind: GitRepository"))
         .stdout(predicates::str::contains("name: my-repo"))
         .stdout(predicates::str::contains("tag: v1.0.0"));
+}
+
+// --- husako add error cases ---
+
+#[test]
+fn add_no_args_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root).args(["add"]).assert().failure().code(2);
+}
+
+#[test]
+fn add_registry_missing_name_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[charts]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "https://charts.jetstack.io"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn add_unrecognized_url_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "foo_unknown_bar"])
+        .assert()
+        .failure()
+        .code(2);
+}
+
+// --- husako add --cluster ---
+
+#[test]
+fn add_cluster_shows_server_url_from_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[cluster]\nserver = \"https://localhost:6443\"\n[resources]\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Cluster:"))
+        .stderr(predicates::str::contains("default"))
+        .stderr(predicates::str::contains("https://localhost:6443"));
+}
+
+#[test]
+fn add_cluster_named_shows_server_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[clusters.dev]\nserver = \"https://dev:6443\"\n[resources]\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "dev", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Cluster:"))
+        .stderr(predicates::str::contains("dev"))
+        .stderr(predicates::str::contains("https://dev:6443"));
+}
+
+#[test]
+fn add_cluster_not_configured_fails() {
+    // No [cluster] in husako.toml; HOME overridden so ~/.kube/ is empty,
+    // preventing a real local kubeconfig from unexpectedly providing a server URL.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster"])
+        .env("HOME", dir.path())
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicates::str::contains("not configured"));
+}
+
+const KUBECONFIG_WITH_CURRENT_CONTEXT: &str = r#"
+apiVersion: v1
+kind: Config
+current-context: my-ctx
+clusters:
+  - name: my-cluster
+    cluster:
+      server: https://k8s.local:6443
+contexts:
+  - name: my-ctx
+    context:
+      cluster: my-cluster
+      user: my-user
+users:
+  - name: my-user
+    user:
+      token: tok
+"#;
+
+const KUBECONFIG_WITH_DEV_CONTEXT: &str = r#"
+apiVersion: v1
+kind: Config
+current-context: dev
+clusters:
+  - name: dev-cluster
+    cluster:
+      server: https://dev:6443
+contexts:
+  - name: dev
+    context:
+      cluster: dev-cluster
+      user: dev-user
+users:
+  - name: dev-user
+    user:
+      token: tok
+"#;
+
+#[test]
+fn add_cluster_writes_cluster_config_from_kubeconfig() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+    let kube_dir = dir.path().join(".kube");
+    std::fs::create_dir_all(&kube_dir).unwrap();
+    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_CURRENT_CONTEXT).unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "--yes"])
+        .env("HOME", dir.path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("will add [cluster]"))
+        .stderr(predicates::str::contains("Added [cluster] to husako.toml"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("[cluster]"));
+    assert!(content.contains("https://k8s.local:6443"));
+}
+
+#[test]
+fn add_cluster_named_writes_clusters_section_from_kubeconfig() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
+    let kube_dir = dir.path().join(".kube");
+    std::fs::create_dir_all(&kube_dir).unwrap();
+    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_DEV_CONTEXT).unwrap();
+
+    husako_at(root)
+        .args(["add", "--cluster", "dev", "--yes"])
+        .env("HOME", dir.path())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("will add [clusters.dev]"))
+        .stderr(predicates::str::contains(
+            "Added [clusters.dev] to husako.toml",
+        ));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("https://dev:6443"));
+}
+
+// --- husako gen: no-op path ---
+
+#[test]
+fn gen_no_config_prints_already_up_to_date() {
+    let dir = tempfile::tempdir().unwrap();
+    // No husako.toml, no config → generate has nothing to do.
+    husako_at(dir.path())
+        .args(["gen"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Already up to date"));
+}
+
+// --- husako check ---
+
+#[test]
+fn check_valid_ts_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "dev" } }; } }]);
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("compiles successfully"))
+        .stderr(predicates::str::contains("husako.build() called with 1"));
+}
+
+#[test]
+fn check_invalid_ts_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let entry = root.join("entry.ts");
+    std::fs::write(&entry, "const x: string = 42;\n").unwrap();
+
+    husako_at(root)
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn check_missing_build_call_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let entry = root.join("entry.ts");
+    // Valid TS but no husako.build() call → exit 7
+    std::fs::write(&entry, "const x = 1;\n").unwrap();
+
+    husako_at(root)
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .failure()
+        .code(7);
+}
+
+#[test]
+fn check_with_k8s_builder_and_ts_types_succeeds() {
+    let (_dir, entry) = project_with_k8s(
+        r#"import { build, name, namespace, label } from "husako";
+import { Deployment } from "k8s/apps/v1";
+
+interface AppConfig {
+    appName: string;
+    replicas: number;
+}
+
+function makeDeployment(config: AppConfig) {
+    return Deployment()
+        .metadata(name(config.appName).namespace("default").label("app", config.appName))
+        .replicas(config.replicas);
+}
+
+const deploy = makeDeployment({ appName: "nginx", replicas: 3 });
+build([deploy]);
+"#,
+    );
+
+    husako_at(entry.parent().unwrap())
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("compiles successfully"))
+        .stderr(predicates::str::contains("husako.build() called with 1"));
+}
+
+#[test]
+fn check_with_multiple_resources_succeeds() {
+    let (_dir, entry) = project_with_k8s(
+        r#"import { build, name, namespace } from "husako";
+import { Deployment } from "k8s/apps/v1";
+import { Namespace } from "k8s/core/v1";
+
+const ns = Namespace().metadata(name("myapp"));
+const deploy = Deployment()
+    .metadata(name("myapp").namespace("myapp"))
+    .replicas(1);
+
+build([ns, deploy]);
+"#,
+    );
+
+    husako_at(entry.parent().unwrap())
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("compiles successfully"))
+        .stderr(predicates::str::contains("husako.build() called with 2"));
+}
+
+#[test]
+fn check_typescript_syntax_features_succeed() {
+    let (_dir, entry) = project_with_k8s(
+        r#"import { build, name } from "husako";
+import { Deployment } from "k8s/apps/v1";
+
+type Env = "dev" | "prod";
+
+enum Scale {
+    Small = 1,
+    Large = 3,
+}
+
+function makeReplicas(env: Env): number {
+    return env === "prod" ? Scale.Large : Scale.Small;
+}
+
+function makeDeployment<T extends { name: string }>(meta: T, env: Env) {
+    return Deployment()
+        .metadata(name(meta.name))
+        .replicas(makeReplicas(env));
+}
+
+const deploy = makeDeployment({ name: "api" }, "prod" as Env);
+build([deploy]);
+"#,
+    );
+
+    husako_at(entry.parent().unwrap())
+        .args(["check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("compiles successfully"))
+        .stderr(predicates::str::contains("husako.build() called with 1"));
+}
+
+#[test]
+fn check_compile_error_exits_3() {
+    let f = write_temp_ts("const = ;\n");
+    husako()
+        .args(["check", f.path().to_str().unwrap()])
+        .assert()
+        .code(3);
+}
+
+// ============================================================
+// Track A: tests requiring no network calls
+// ============================================================
+
+// --- husako clean ---
+
+const K8S_METALLB_TOML: &str = r#"
+[resources]
+k8s = { source = "release", version = "1.35" }
+
+[charts]
+metallb = { source = "artifacthub", package = "metallb/metallb", version = "0.15.3" }
+"#;
+
+#[test]
+fn clean_removes_types_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let types_dir = root.join(".husako/types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::write(types_dir.join("dummy.d.ts"), "").unwrap();
+
+    husako_at(root)
+        .args(["clean", "--types", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(".husako/types/"));
+
+    assert!(!types_dir.exists(), ".husako/types/ should be removed");
+}
+
+#[test]
+fn clean_removes_cache_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let cache_dir = root.join(".husako/cache");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::write(cache_dir.join("dummy.json"), "{}").unwrap();
+
+    husako_at(root)
+        .args(["clean", "--cache", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(".husako/cache/"));
+
+    assert!(!cache_dir.exists(), ".husako/cache/ should be removed");
+}
+
+#[test]
+fn clean_removes_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let types_dir = root.join(".husako/types");
+    let cache_dir = root.join(".husako/cache");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::write(types_dir.join("dummy.d.ts"), "").unwrap();
+    std::fs::write(cache_dir.join("dummy.json"), "{}").unwrap();
+
+    husako_at(root)
+        .args(["clean", "--all", "--yes"])
+        .assert()
+        .success();
+
+    assert!(!types_dir.exists(), ".husako/types/ should be removed");
+    assert!(!cache_dir.exists(), ".husako/cache/ should be removed");
+}
+
+// --- husako init ---
+
+#[test]
+fn init_creates_project_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    husako_at(root).args(["init"]).assert().success();
+
+    assert!(
+        root.join("husako.toml").exists(),
+        "husako.toml should be created in current dir"
+    );
+}
+
+#[test]
+fn init_with_project_template() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    husako_at(root)
+        .args(["init", "--template", "project"])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        content.contains("[entries]"),
+        "project template should include [entries] section"
+    );
+}
+
+// --- husako list / husako ls ---
+
+#[test]
+fn list_resources_from_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    husako_at(root)
+        .args(["list"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("k8s"))
+        .stderr(predicates::str::contains("metallb"));
+}
+
+#[test]
+fn list_resources_only_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    let output = husako_at(root)
+        .args(["list", "--resources"])
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success());
+    assert!(stderr.contains("k8s"), "should contain k8s");
+    assert!(!stderr.contains("metallb"), "should not contain metallb");
+}
+
+#[test]
+fn list_charts_only_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    let output = husako_at(root).args(["list", "--charts"]).output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success());
+    assert!(stderr.contains("metallb"), "should contain metallb");
+    assert!(!stderr.contains("k8s"), "should not contain k8s");
+}
+
+#[test]
+fn list_empty_no_config() {
+    let dir = tempfile::tempdir().unwrap();
+    husako_at(dir.path()).args(["list"]).assert().success();
+}
+
+#[test]
+fn ls_alias_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    husako_at(root)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("k8s"))
+        .stderr(predicates::str::contains("metallb"));
+}
+
+// --- husako remove / husako rm ---
+
+#[test]
+fn remove_resource_from_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["remove", "k8s", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Removed k8s"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        !content.contains("k8s"),
+        "k8s should be removed from config"
+    );
+}
+
+#[test]
+fn remove_chart_from_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[charts]\nmetallb = { source = \"artifacthub\", package = \"metallb/metallb\", version = \"0.15.3\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["remove", "metallb", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Removed metallb"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        !content.contains("metallb"),
+        "metallb should be removed from config"
+    );
+}
+
+#[test]
+fn remove_nonexistent_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["remove", "nonexistent", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not found"));
+}
+
+#[test]
+fn rm_alias_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["rm", "k8s", "--yes"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Removed k8s"));
+}
+
+// --- husako info ---
+
+#[test]
+fn info_no_config() {
+    let dir = tempfile::tempdir().unwrap();
+    husako_at(dir.path()).args(["info"]).assert().success();
+}
+
+#[test]
+fn info_with_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    husako_at(root)
+        .args(["info"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("k8s"))
+        .stderr(predicates::str::contains("metallb"));
+}
+
+#[test]
+fn info_with_types_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+    let types_dir = root.join(".husako/types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::write(types_dir.join("some.d.ts"), "").unwrap();
+
+    husako_at(root).args(["info"]).assert().success();
+}
+
+#[test]
+fn info_dependency_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["info", "k8s"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("k8s"))
+        .stderr(predicates::str::contains("1.35"));
+}
+
+#[test]
+fn info_dependency_not_found_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["info", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not found"));
+}
+
+// --- husako debug ---
+
+#[test]
+fn debug_no_config() {
+    let dir = tempfile::tempdir().unwrap();
+    husako_at(dir.path())
+        .args(["debug"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("husako.toml not found"));
+}
+
+#[test]
+fn debug_with_types_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+    let types_dir = root.join(".husako/types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    std::fs::write(types_dir.join("some.d.ts"), "").unwrap();
+
+    husako_at(root)
+        .args(["debug"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(".husako/types/ exists"));
+}
+
+#[test]
+fn debug_missing_types_shows_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+    // No .husako/types/ directory
+
+    husako_at(root)
+        .args(["debug"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            ".husako/types/ directory not found",
+        ));
+}
+
+// --- husako test ---
+
+#[test]
+fn test_passing_tests_exit_0() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("entry.test.ts"),
+        r#"import { test, describe } from "husako/test";
+describe("suite", () => {
+    test("passes", () => {
+        if (1 !== 1) throw new Error("should not fail");
+    });
+});
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["test", "entry.test.ts"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_failing_tests_exit_nonzero() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("entry.test.ts"),
+        r#"import { test } from "husako/test";
+test("fails", () => { throw new Error("intentional failure"); });
+"#,
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["test", "entry.test.ts"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_no_test_file_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    husako_at(root)
+        .args(["test", "nonexistent.test.ts"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_auto_discovery_no_files() {
+    let dir = tempfile::tempdir().unwrap();
+    // Empty dir — no *.test.ts or *.spec.ts files
+
+    husako_at(dir.path())
+        .args(["test"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("No test files found"));
+}
+
+// --- husako gen: lock-based skip ---
+
+/// Seed `.husako/cache/release/v{tag}/` with a minimal valid OpenAPI spec
+/// so `fetch_release_specs()` is a cache hit — no network needed.
+fn write_release_cache(root: &Path, version: &str) {
+    let v = version.strip_prefix('v').unwrap_or(version);
+    let parts: Vec<&str> = v.split('.').collect();
+    let tag = if parts.len() == 2 {
+        format!("v{v}.0")
+    } else {
+        format!("v{v}")
+    };
+    let cache_dir = root.join(format!(".husako/cache/release/{tag}"));
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let spec = rich_mock_spec();
+    std::fs::write(
+        cache_dir.join("apis__apps__v1_openapi.json"),
+        spec.to_string(),
+    )
+    .unwrap();
+
+    let manifest: Vec<(String, String)> = vec![(
+        "apis/apps/v1".to_string(),
+        "apis__apps__v1_openapi.json".to_string(),
+    )];
+    std::fs::write(
+        cache_dir.join("_manifest.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Compute a djb2 hash string identical to `husako_helm::cache_hash()`.
+fn chart_djb2(s: &str) -> String {
+    let mut hash: u64 = 5381;
+    for byte in s.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(u64::from(byte));
+    }
+    format!("{hash:016x}")
+}
+
+/// Seed `.husako/cache/helm/artifacthub/{hash}/{version}.json` with a
+/// minimal JSON Schema so the chart resolver is a cache hit.
+fn write_artifacthub_chart_cache(root: &Path, package: &str, version: &str) {
+    let cache_key = chart_djb2(package);
+    let cache_dir = root.join(format!(".husako/cache/helm/artifacthub/{cache_key}"));
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "replicaCount": { "type": "integer" } }
+    });
+    std::fs::write(
+        cache_dir.join(format!("{version}.json")),
+        serde_json::to_string(&schema).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn gen_with_lock_skips_unchanged_resources() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    // Write a lock file that matches current config + husako version
+    std::fs::write(
+        root.join("husako.lock"),
+        "# This file is generated by husako. Commit it to version control.\n\
+         # Do not edit it manually.\n\n\
+         format_version = 1\n\
+         husako_version = \"0.1.0\"\n\n\
+         [resources.k8s]\n\
+         source = \"release\"\n\
+         version = \"1.35\"\n\
+         generated_at = \"2024-01-01T00:00:00Z\"\n",
+    )
+    .unwrap();
+
+    // Pre-seed .husako/types/k8s/ with some files so the dir is non-empty
+    let k8s_dir = root.join(".husako/types/k8s");
+    std::fs::create_dir_all(k8s_dir.join("apps")).unwrap();
+    std::fs::write(k8s_dir.join("apps/v1.d.ts"), "// generated").unwrap();
+
+    husako_at(root)
+        .args(["gen"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Already up to date"));
+}
+
+#[test]
+fn gen_no_incremental_ignores_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    // Lock says current version — would skip without --no-incremental
+    std::fs::write(
+        root.join("husako.lock"),
+        "# This file is generated by husako. Commit it to version control.\n\
+         # Do not edit it manually.\n\n\
+         format_version = 1\n\
+         husako_version = \"0.1.0\"\n\n\
+         [resources.k8s]\n\
+         source = \"release\"\n\
+         version = \"1.35\"\n\
+         generated_at = \"2024-01-01T00:00:00Z\"\n",
+    )
+    .unwrap();
+
+    // Seed release cache so generation can complete without network
+    write_release_cache(root, "1.35");
+
+    husako_at(root)
+        .args(["gen", "--no-incremental"])
+        .assert()
+        .success();
+
+    // Generation ran — types dir was created
+    assert!(
+        root.join(".husako/types/k8s").exists(),
+        ".husako/types/k8s/ should be created"
+    );
+}
+
+// --- husako render: -o short flag ---
+
+#[test]
+fn render_short_o_flag_writes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let entry = root.join("entry.ts");
+    std::fs::write(
+        &entry,
+        r#"import { build } from "husako";
+build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "dev" } }; } }]);
+"#,
+    )
+    .unwrap();
+
+    let out = root.join("out.yaml");
+    husako_at(root)
+        .args([
+            "render",
+            entry.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(out.exists(), "out.yaml should be written");
+    assert!(
+        out.metadata().unwrap().len() > 0,
+        "out.yaml should not be empty"
+    );
+}
+
+// --- husako add: duplicate cases (no network needed) ---
+
+#[test]
+fn add_duplicate_resource_shows_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    // --release branch returns without network; AlreadyExists does not regen
+    husako_at(root)
+        .args(["add", "--release", "1.35", "--name", "k8s"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("already in"));
+
+    // toml unchanged
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert_eq!(
+        content.trim(),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }",
+    );
+}
+
+// --- husako outdated: no config ---
+
+#[test]
+fn outdated_no_config_shows_no_deps() {
+    let dir = tempfile::tempdir().unwrap();
+    husako_at(dir.path())
+        .args(["outdated"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("No versioned dependencies found"));
+}
+
+// ============================================================
+// Track B: tests using mockito + env var URL injection
+// ============================================================
+
+#[tokio::test]
+async fn outdated_release_source_newer_available() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"},{"name":"v1.34.3"}]"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.34\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["outdated"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("1.34"))
+        .stderr(predicates::str::contains("1.35"));
+}
+
+#[tokio::test]
+async fn outdated_release_source_up_to_date() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["outdated"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("up to date"));
+}
+
+#[tokio::test]
+async fn outdated_artifacthub_chart_newer_available() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/api/v1/packages/helm/metallb/metallb")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"version":"0.15.3","available_versions":[]}"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[charts]\nmetallb = { source = \"artifacthub\", package = \"metallb/metallb\", version = \"0.14.0\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["outdated"])
+        .env("HUSAKO_ARTIFACTHUB_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("0.14.0"))
+        .stderr(predicates::str::contains("0.15.3"));
+}
+
+#[tokio::test]
+async fn outdated_network_error_graceful() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(500)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.34\" }\n",
+    )
+    .unwrap();
+
+    // Error is logged per-entry; overall command still exits 0
+    husako_at(root)
+        .args(["outdated"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn update_bumps_resource_version_in_toml() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.34\" }\n",
+    )
+    .unwrap();
+
+    // Pre-seed release cache for auto-regen after update
+    write_release_cache(root, "1.35");
+
+    husako_at(root)
+        .args(["update"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Updated"))
+        .stderr(predicates::str::contains("k8s"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        content.contains("1.35"),
+        "husako.toml should be updated to version 1.35"
+    );
+}
+
+#[tokio::test]
+async fn update_dry_run_does_not_modify_toml() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let toml_content = "[resources]\nk8s = { source = \"release\", version = \"1.34\" }\n";
+    std::fs::write(root.join("husako.toml"), toml_content).unwrap();
+
+    husako_at(root)
+        .args(["update", "--dry-run"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Would update"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        content.contains("1.34"),
+        "husako.toml should still contain 1.34 after --dry-run"
+    );
+    assert!(
+        !content.contains("1.35"),
+        "husako.toml should not be updated in dry-run mode"
+    );
+}
+
+#[tokio::test]
+async fn update_resources_only_skips_charts() {
+    // GitHub API mock for k8s version check
+    let mut github_server = mockito::Server::new_async().await;
+    let _gm = github_server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    // ArtifactHub mock for metallb version check (check_outdated checks all deps)
+    let mut ah_server = mockito::Server::new_async().await;
+    let _am = ah_server
+        .mock("GET", "/api/v1/packages/helm/metallb/metallb")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"version":"0.14.0","available_versions":[]}"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    // Cache for k8s regen after update
+    write_release_cache(root, "1.35");
+    // Cache for metallb (not updated but still needs chart schema during regen)
+    write_artifacthub_chart_cache(root, "metallb/metallb", "0.15.3");
+
+    husako_at(root)
+        .args(["update", "--resources-only"])
+        .env("HUSAKO_GITHUB_API_URL", github_server.url())
+        .env("HUSAKO_ARTIFACTHUB_URL", ah_server.url())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("1.35"), "k8s should be updated to 1.35");
+    assert!(
+        content.contains("0.15.3"),
+        "metallb version should remain 0.15.3"
+    );
+}
+
+#[tokio::test]
+async fn update_charts_only_skips_resources() {
+    // GitHub API mock (check_outdated checks k8s even with --charts-only)
+    let mut github_server = mockito::Server::new_async().await;
+    let _gm = github_server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    // ArtifactHub mock returning newer version
+    let mut ah_server = mockito::Server::new_async().await;
+    let _am = ah_server
+        .mock("GET", "/api/v1/packages/helm/metallb/metallb")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"version":"0.15.3","available_versions":[]}"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), K8S_METALLB_TOML).unwrap();
+
+    // k8s stays at 1.35, metallb updated to 0.15.3
+    write_release_cache(root, "1.35");
+    write_artifacthub_chart_cache(root, "metallb/metallb", "0.15.3");
+
+    husako_at(root)
+        .args(["update", "--charts-only"])
+        .env("HUSAKO_GITHUB_API_URL", github_server.url())
+        .env("HUSAKO_ARTIFACTHUB_URL", ah_server.url())
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    // k8s version unchanged (still 1.35 as originally set in K8S_METALLB_TOML)
+    assert!(content.contains("1.35"), "k8s version should be unchanged");
+    // metallb should now be 0.15.3 (was already 0.15.3 in K8S_METALLB_TOML — just confirm not 0.14.0)
+    assert!(
+        !content.contains("0.14.0"),
+        "metallb should not be downgraded"
+    );
+}
+
+#[tokio::test]
+async fn update_all_current_no_changes() {
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/repos/kubernetes/kubernetes/tags?per_page=100")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"[{"name":"v1.35.0"}]"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[resources]\nk8s = { source = \"release\", version = \"1.35\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["update"])
+        .env("HUSAKO_GITHUB_API_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("up to date"));
+}
+
+#[tokio::test]
+async fn add_artifacthub_chart_writes_toml() {
+    let mut server = mockito::Server::new_async().await;
+    // discover_latest_artifacthub fetches /api/v1/packages/helm/{package}
+    let _m = server
+        .mock("GET", "/api/v1/packages/helm/metallb/metallb")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"version":"0.15.3","available_versions":[]}"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "").unwrap();
+
+    // Pre-seed chart cache for auto-regen triggered after add
+    write_artifacthub_chart_cache(root, "metallb/metallb", "0.15.3");
+
+    husako_at(root)
+        .args(["add", "metallb/metallb", "--name", "metallb"])
+        .env("HUSAKO_ARTIFACTHUB_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Added metallb"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        content.contains("metallb"),
+        "husako.toml should contain metallb entry"
+    );
+}
+
+#[tokio::test]
+async fn add_release_resource_writes_toml() {
+    // --release provides version directly — no GitHub network call for discovery.
+    // But run_auto_generate fires after add → needs release cache.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("husako.toml"), "").unwrap();
+
+    write_release_cache(root, "1.35");
+
+    husako_at(root)
+        .args(["add", "--release", "1.35", "--name", "k8s"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Added k8s"));
+
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(
+        content.contains("k8s"),
+        "husako.toml should contain k8s entry"
+    );
+    assert!(
+        content.contains("1.35"),
+        "husako.toml should contain version 1.35"
+    );
+}
+
+#[tokio::test]
+async fn add_duplicate_chart_shows_message() {
+    // ArtifactHub is called by discover_latest_artifacthub before the duplicate check
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", "/api/v1/packages/helm/metallb/metallb")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"version":"0.15.3","available_versions":[]}"#)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("husako.toml"),
+        "[charts]\nmetallb = { source = \"artifacthub\", package = \"metallb/metallb\", version = \"0.15.3\" }\n",
+    )
+    .unwrap();
+
+    husako_at(root)
+        .args(["add", "metallb/metallb", "--name", "metallb"])
+        .env("HUSAKO_ARTIFACTHUB_URL", server.url())
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("already in"));
+
+    // toml unchanged
+    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
+    assert!(content.contains("0.15.3"), "version should be unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// TypeScript type-check integration tests (husako check --type-check)
+// ---------------------------------------------------------------------------
+
+/// Write both `.js` runtime modules and post-fix `.d.ts` type declarations, plus
+/// a `tsconfig.json` with the correct path mappings. Returns (tempdir, entry_path).
+///
+/// The `.d.ts` files reflect the post-fix generated types:
+/// - No raw interface for GVK schemas (Deployment) — only the builder class
+/// - No raw interface for builder schemas (Container, LabelSelector, DeploymentSpec)
+/// - `resources()` accepts `ResourceRequirements | ResourceRequirementsFragment`
+fn project_with_typed_k8s(ts_content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Write runtime JS modules (same as existing write_k8s_modules)
+    write_k8s_modules(root);
+
+    // Write post-fix d.ts files
+    let types_k8s = root.join(".husako/types/k8s");
+    std::fs::create_dir_all(types_k8s.join("apps")).unwrap();
+    std::fs::create_dir_all(types_k8s.join("core")).unwrap();
+
+    std::fs::write(
+        types_k8s.join("_common.d.ts"),
+        r#"// Auto-generated by husako. Do not edit.
+
+import { _SchemaBuilder } from "husako/_base";
+
+export interface ObjectMeta {
+  name?: string;
+  namespace?: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+}
+
+export interface LabelSelectorRequirement {
+  key: string;
+  operator: string;
+  values?: string[];
+}
+
+export interface LabelSelector extends _SchemaBuilder {
+  matchExpressions(value: LabelSelectorRequirement[]): this;
+  matchLabels(value: Record<string, string>): this;
+}
+export function LabelSelector(): LabelSelector;
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        types_k8s.join("apps/v1.d.ts"),
+        r#"// Auto-generated by husako. Do not edit.
+
+import { _ResourceBuilder, _SchemaBuilder } from "husako/_base";
+
+import { LabelSelector } from "k8s/_common";
+
+export interface Deployment extends _ResourceBuilder {
+  /** Set the resource specification. */
+  spec(value: DeploymentSpec): this;
+  replicas(value: number): this;
+  selector(value: LabelSelector): this;
+  /** Set pod containers (shortcut for template.spec.containers). */
+  containers(value: any[]): this;
+  /** Set pod init containers (shortcut for template.spec.initContainers). */
+  initContainers(value: any[]): this;
+}
+export function Deployment(): Deployment;
+
+export interface DeploymentSpec extends _SchemaBuilder {
+  replicas(value: number): this;
+  selector(value: LabelSelector): this;
+}
+export function DeploymentSpec(): DeploymentSpec;
+"#,
+    )
+    .unwrap();
+
+    std::fs::write(
+        types_k8s.join("core/v1.d.ts"),
+        r#"// Auto-generated by husako. Do not edit.
+
+import { _SchemaBuilder } from "husako/_base";
+
+export interface ResourceRequirements {
+  limits?: Record<string, string>;
+  requests?: Record<string, string>;
+}
+
+export interface Container extends _SchemaBuilder {
+  name(value: string): this;
+  image(value: string): this;
+  resources(value: ResourceRequirements | import("husako").ResourceRequirementsFragment): this;
+}
+export function Container(): Container;
+"#,
+    )
+    .unwrap();
+
+    // Write husako SDK type stubs
+    let types_husako = root.join(".husako/types");
+    std::fs::create_dir_all(types_husako.join("husako")).unwrap();
+    std::fs::write(types_husako.join("husako.d.ts"), husako_sdk::HUSAKO_DTS).unwrap();
+    std::fs::write(
+        types_husako.join("husako/_base.d.ts"),
+        husako_sdk::HUSAKO_BASE_DTS,
+    )
+    .unwrap();
+
+    // Write tsconfig.json with path mappings
+    std::fs::write(
+        root.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "paths": {
+      "husako": [".husako/types/husako.d.ts"],
+      "husako/_base": [".husako/types/husako/_base.d.ts"],
+      "k8s/*": [".husako/types/k8s/*"]
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    let entry = root.join("entry.ts");
+    std::fs::write(&entry, ts_content).unwrap();
+    (dir, entry)
+}
+
+#[test]
+fn check_sdk_template_type_safe() {
+    let tsc_available = std::process::Command::new("tsc")
+        .arg("--version")
+        .output()
+        .is_ok();
+    assert!(
+        tsc_available,
+        "tsc must be installed to run this test (npm install -g typescript)"
+    );
+
+    let (_dir, entry) = project_with_typed_k8s(
+        r#"import { Deployment } from "k8s/apps/v1";
+import { Container } from "k8s/core/v1";
+import { LabelSelector } from "k8s/_common";
+import { metadata, cpu, memory, requests, limits, build } from "husako";
+
+const nginx = Deployment()
+  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
+  .replicas(1)
+  .selector(LabelSelector().matchLabels({ app: "nginx" }))
+  .containers([
+    Container()
+      .name("nginx")
+      .image("nginx:1.25")
+      .resources(requests(cpu("250m").memory("128Mi")).limits(cpu("500m").memory("256Mi"))),
+  ]);
+
+build([nginx]);
+"#,
+    );
+
+    husako_at(entry.parent().unwrap())
+        .args(["check", "--type-check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("TypeScript types OK"));
 }

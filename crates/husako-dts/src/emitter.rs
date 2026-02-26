@@ -105,12 +105,19 @@ fn emit_property_methods_dts(out: &mut String, props: &[PropertyInfo], skip: &[&
         if let Some(desc) = &prop.description {
             let _ = writeln!(out, "  /** {desc} */");
         }
-        let _ = writeln!(
-            out,
-            "  {}(value: {}): this;",
-            prop.name,
+        // resources: ResourceRequirements — also accept the husako DSL builder fragment,
+        // which is structurally incompatible with the raw OpenAPI plain-object type.
+        let ts_type = if prop.name == "resources"
+            && matches!(&prop.ts_type, TsType::Ref(name) if name == "ResourceRequirements")
+        {
+            format!(
+                "{} | import(\"husako\").ResourceRequirementsFragment",
+                format_ts_type(&prop.ts_type)
+            )
+        } else {
             format_ts_type(&prop.ts_type)
-        );
+        };
+        let _ = writeln!(out, "  {}(value: {}): this;", prop.name, ts_type);
     }
 }
 
@@ -314,6 +321,11 @@ pub fn emit_common(schemas: &[&SchemaInfo]) -> String {
     }
 
     for schema in schemas {
+        // Skip raw interface for schemas that also get a builder class — emitting both
+        // causes TypeScript declaration merging which makes methods non-callable.
+        if should_generate_builder(schema) {
+            continue;
+        }
         let _ = write!(out, "{}", emit_interface(schema));
         let _ = writeln!(out);
     }
@@ -374,8 +386,17 @@ pub fn emit_group_version(schemas: &[&SchemaInfo], common_names: &HashSet<String
         );
     }
 
-    // Collect all referenced types
-    let refs = collect_refs(schemas);
+    // Collect referenced types from non-GVK schemas only.
+    // GVK schemas' raw interfaces are not emitted (see below), so their top-level
+    // property types (e.g. Deployment.metadata: ObjectMeta) would create stale imports.
+    // Non-GVK spec schemas (e.g. DeploymentSpec) still reference common types in their
+    // builder method signatures, so those imports are preserved correctly.
+    let non_gvk: Vec<&SchemaInfo> = schemas
+        .iter()
+        .filter(|s| s.gvk.is_none())
+        .copied()
+        .collect();
+    let refs = collect_refs(&non_gvk);
     let local_names: HashSet<&str> = schemas.iter().map(|s| s.ts_name.as_str()).collect();
 
     // Import common types that are referenced but not defined locally
@@ -395,8 +416,12 @@ pub fn emit_group_version(schemas: &[&SchemaInfo], common_names: &HashSet<String
         );
     }
 
-    // Emit interfaces
+    // Emit interfaces — skip schemas that also get a builder class to avoid
+    // TypeScript declaration merging which makes methods non-callable.
     for schema in schemas {
+        if schema.gvk.is_some() || should_generate_builder(schema) {
+            continue;
+        }
         let _ = write!(out, "{}", emit_interface(schema));
         let _ = writeln!(out);
     }
@@ -998,5 +1023,124 @@ mod tests {
         let schemas: Vec<&SchemaInfo> = vec![&schema];
         let output = emit_group_version_js(&schemas);
         insta::assert_snapshot!(output);
+    }
+
+    /// GVK schemas must NOT emit a raw data interface — only the builder class.
+    /// Emitting both causes TypeScript declaration merging which breaks method calls.
+    #[test]
+    fn emit_group_version_no_raw_interface_for_gvk() {
+        let mut deployment = make_schema(
+            "Deployment",
+            vec![PropertyInfo {
+                name: "spec".to_string(),
+                ts_type: TsType::Ref("DeploymentSpec".to_string()),
+                required: false,
+                description: None,
+            }],
+        );
+        deployment.gvk = Some(GroupVersionKind {
+            group: "apps".to_string(),
+            version: "v1".to_string(),
+            kind: "Deployment".to_string(),
+        });
+
+        let schemas: Vec<&SchemaInfo> = vec![&deployment];
+        let common = HashSet::new();
+        let output = emit_group_version(&schemas, &common);
+
+        // Must contain the builder interface
+        assert!(
+            output.contains("extends _ResourceBuilder"),
+            "expected _ResourceBuilder in output:\n{output}"
+        );
+        // Must NOT contain a plain data interface (no `export interface Deployment {` without `extends`)
+        assert!(
+            !output.contains("export interface Deployment {"),
+            "raw interface must not be emitted for GVK schema:\n{output}"
+        );
+    }
+
+    /// Schemas with `resources: ResourceRequirements` must emit a union type that also
+    /// accepts `ResourceRequirementsFragment` from the husako DSL.
+    #[test]
+    fn emit_schema_builder_resources_type() {
+        let container = SchemaInfo {
+            full_name: "io.k8s.api.core.v1.Container".to_string(),
+            ts_name: "Container".to_string(),
+            location: SchemaLocation::GroupVersion {
+                group: "core".to_string(),
+                version: "v1".to_string(),
+            },
+            properties: vec![
+                PropertyInfo {
+                    name: "name".to_string(),
+                    ts_type: TsType::String,
+                    required: true,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "resources".to_string(),
+                    ts_type: TsType::Ref("ResourceRequirements".to_string()),
+                    required: false,
+                    description: None,
+                },
+            ],
+            gvk: None,
+            description: None,
+        };
+
+        let dts = emit_schema_builder_class(&container);
+        assert!(
+            dts.contains(
+                "resources(value: ResourceRequirements | import(\"husako\").ResourceRequirementsFragment): this;"
+            ),
+            "expected union type for resources:\n{dts}"
+        );
+    }
+
+    /// A complex common schema (with Ref properties) must NOT emit a raw data interface
+    /// — only the builder class. The raw interface causes the same declaration-merging
+    /// problem as GVK schemas.
+    #[test]
+    fn emit_common_no_raw_interface_for_builder() {
+        let label_selector = SchemaInfo {
+            full_name: "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector".to_string(),
+            ts_name: "LabelSelector".to_string(),
+            location: SchemaLocation::Common,
+            properties: vec![
+                PropertyInfo {
+                    name: "matchLabels".to_string(),
+                    ts_type: TsType::Map(Box::new(TsType::String)),
+                    required: false,
+                    description: None,
+                },
+                PropertyInfo {
+                    name: "matchExpressions".to_string(),
+                    ts_type: TsType::Array(Box::new(TsType::Ref(
+                        "LabelSelectorRequirement".to_string(),
+                    ))),
+                    required: false,
+                    description: None,
+                },
+            ],
+            gvk: None,
+            description: None,
+        };
+
+        assert!(should_generate_builder(&label_selector));
+
+        let schemas: Vec<&SchemaInfo> = vec![&label_selector];
+        let output = emit_common(&schemas);
+
+        // Must emit the builder class
+        assert!(
+            output.contains("extends _SchemaBuilder"),
+            "expected _SchemaBuilder in output:\n{output}"
+        );
+        // Must NOT emit a plain data interface
+        assert!(
+            !output.contains("export interface LabelSelector {"),
+            "raw interface must not be emitted for builder schema:\n{output}"
+        );
     }
 }

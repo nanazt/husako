@@ -18,12 +18,16 @@ dialoguer.workspace = true
 fuzzy-matcher.workspace = true
 console.workspace = true
 indicatif.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
 husako-dts = { path = "../husako-dts", version = "0" }
+husako-sdk = { path = "../husako-sdk", version = "0" }
+mockito.workspace = true
 predicates = "3"
 insta.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 tempfile.workspace = true
+tokio.workspace = true

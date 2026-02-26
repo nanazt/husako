@@ -17,8 +17,12 @@ pub async fn resolve(
     package: &str,
     version: &str,
     cache_dir: &Path,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<serde_json::Value, HelmError> {
-    resolve_from(name, package, version, cache_dir, ARTIFACTHUB_BASE).await
+    let base = std::env::var("HUSAKO_ARTIFACTHUB_URL")
+        .map(|u| format!("{u}/api/v1/packages/helm"))
+        .unwrap_or_else(|_| ARTIFACTHUB_BASE.to_string());
+    resolve_from(name, package, version, cache_dir, &base, on_progress).await
 }
 
 async fn resolve_from(
@@ -27,6 +31,7 @@ async fn resolve_from(
     version: &str,
     cache_dir: &Path,
     base_url: &str,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<serde_json::Value, HelmError> {
     // Check cache
     let cache_key = crate::cache_hash(package);
@@ -92,14 +97,21 @@ async fn resolve_from(
     let chart_name = package.rsplit('/').next().unwrap_or(package);
 
     if !repo_url.is_empty() {
-        return crate::registry::resolve(name, repo_url, chart_name, version, cache_dir)
-            .await
-            .map_err(|e| {
-                HelmError::NotFound(format!(
-                    "chart '{name}': no values_schema on ArtifactHub; \
+        return crate::registry::resolve(
+            name,
+            repo_url,
+            chart_name,
+            version,
+            cache_dir,
+            on_progress,
+        )
+        .await
+        .map_err(|e| {
+            HelmError::NotFound(format!(
+                "chart '{name}': no values_schema on ArtifactHub; \
                      registry fallback ({repo_url}) also failed: {e}"
-                ))
-            });
+            ))
+        });
     }
 
     Err(HelmError::NotFound(format!(
@@ -125,7 +137,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", "my-org/my-chart", "1.0.0", cache_dir)
+        let result = resolve("test", "my-org/my-chart", "1.0.0", cache_dir, None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -141,7 +153,7 @@ mod tests {
         std::fs::create_dir_all(&cache_sub).unwrap();
         std::fs::write(cache_sub.join("1.0.0.json"), "not json").unwrap();
 
-        let err = resolve("test", "my-org/my-chart", "1.0.0", cache_dir)
+        let err = resolve("test", "my-org/my-chart", "1.0.0", cache_dir, None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("parse cached schema"));
@@ -169,6 +181,7 @@ mod tests {
             "1.0.0",
             tmp.path(),
             &server.url(),
+            None,
         )
         .await
         .unwrap();
@@ -198,6 +211,7 @@ mod tests {
             "1.0.0",
             tmp.path(),
             &server.url(),
+            None,
         )
         .await
         .unwrap_err();
@@ -244,6 +258,7 @@ mod tests {
             "16.4.0",
             tmp.path(),
             &server.url(),
+            None,
         )
         .await
         .unwrap();
@@ -289,6 +304,7 @@ mod tests {
             "1.0.0",
             tmp.path(),
             &server.url(),
+            None,
         )
         .await
         .unwrap();

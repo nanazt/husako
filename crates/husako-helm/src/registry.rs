@@ -21,10 +21,11 @@ pub async fn resolve(
     chart: &str,
     version: &str,
     cache_dir: &Path,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<serde_json::Value, HelmError> {
     // Delegate OCI registries to the dedicated OCI resolver
     if repo.starts_with("oci://") {
-        return crate::oci::resolve(name, repo, chart, version, cache_dir).await;
+        return crate::oci::resolve(name, repo, chart, version, cache_dir, on_progress).await;
     }
 
     // Check cache
@@ -52,11 +53,12 @@ pub async fn resolve(
     // Some Helm registry index.yaml files list OCI URLs as archive URLs
     // (e.g. Bitnami moved their HTTP registry to OCI). Delegate to oci::resolve.
     if archive_url.starts_with("oci://") {
-        return crate::oci::resolve(name, &archive_url, chart, version, cache_dir).await;
+        return crate::oci::resolve(name, &archive_url, chart, version, cache_dir, on_progress)
+            .await;
     }
 
     // Download and extract
-    let archive_bytes = fetch_url_bytes(&client, name, &archive_url).await?;
+    let archive_bytes = fetch_url_bytes(&client, name, &archive_url, on_progress).await?;
     let schema = extract_values_schema(name, chart, &archive_bytes)?;
 
     // Cache
@@ -91,11 +93,12 @@ async fn fetch_url(client: &reqwest::Client, name: &str, url: &str) -> Result<St
         .map_err(|e| HelmError::Io(format!("chart '{name}': read response from {url}: {e}")))
 }
 
-/// Fetch a URL as bytes.
+/// Fetch a URL as bytes, streaming chunks and reporting progress.
 async fn fetch_url_bytes(
     client: &reqwest::Client,
     name: &str,
     url: &str,
+    on_progress: Option<&crate::ProgressCb>,
 ) -> Result<Vec<u8>, HelmError> {
     let resp = client
         .get(url)
@@ -110,10 +113,22 @@ async fn fetch_url_bytes(
         )));
     }
 
-    resp.bytes()
+    let total_bytes = resp.content_length();
+    let mut received: u64 = 0;
+    let mut buf = Vec::new();
+    let mut resp = resp;
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map(|b| b.to_vec())
-        .map_err(|e| HelmError::Io(format!("chart '{name}': read bytes from {url}: {e}")))
+        .map_err(|e| HelmError::Io(format!("chart '{name}': read bytes from {url}: {e}")))?
+    {
+        received += chunk.len() as u64;
+        if let Some(cb) = on_progress {
+            cb(received, total_bytes, None);
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 /// Parse index.yaml and find the archive URL for a specific chart and version.
@@ -245,7 +260,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path())
+        let result = resolve("test", oci_url, "my-chart", "1.0.0", tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -364,7 +379,7 @@ entries:
         )
         .unwrap();
 
-        let result = resolve("test", repo, chart, version, tmp.path())
+        let result = resolve("test", repo, chart, version, tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -403,7 +418,7 @@ entries:
             .await;
 
         let tmp = tempfile::tempdir().unwrap();
-        let result = resolve("test", &host_url, chart, version, tmp.path())
+        let result = resolve("test", &host_url, chart, version, tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -442,7 +457,7 @@ entries:
         )
         .unwrap();
 
-        let result = resolve("test", &host_url, chart, version, tmp.path())
+        let result = resolve("test", &host_url, chart, version, tmp.path(), None)
             .await
             .unwrap();
         assert_eq!(result["type"], "object");
@@ -460,7 +475,7 @@ entries:
             .await;
 
         let tmp = tempfile::tempdir().unwrap();
-        let err = resolve("test", &server.url(), "my-chart", "1.0.0", tmp.path())
+        let err = resolve("test", &server.url(), "my-chart", "1.0.0", tmp.path(), None)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("404"));
