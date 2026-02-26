@@ -123,7 +123,6 @@ The dep name, source type, resource/chart kind, and version are all detected aut
 | `https://charts.example.com` | Helm registry | required via `--name` |
 | `./path` or `/abs/path` | Local file or dir | file stem or dir name |
 | `--release [name]` | Kubernetes release | `k8s` or given name |
-| `--cluster [name]` | Live cluster | `cluster` or given name |
 
 | Flag | Description |
 |------|-------------|
@@ -133,7 +132,6 @@ The dep name, source type, resource/chart kind, and version are all detected aut
 | `--branch <branch>` | Pin a git source to a branch instead of the latest tag |
 | `--path <subdir>` | Subdirectory within a git repo |
 | `--release [name]` | Add a Kubernetes release schema source |
-| `--cluster [name]` | Add a live-cluster schema source; resolves server URL from `husako.toml` or kubeconfig, and writes `[cluster]`/`[clusters.*]` to `husako.toml` if not already present (fails if URL found nowhere) |
 
 For registry URLs, the chart name must be given as a second positional argument or via `--name`.
 
@@ -342,7 +340,6 @@ The commit hash has a `-dirty` suffix if the working tree had uncommitted change
 
 | Flag | Description |
 |------|-------------|
-| `-y, --yes` | Skip all confirmation prompts |
 | `--verbose` | Enable verbose diagnostic output |
 
 ---
