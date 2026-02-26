@@ -1760,11 +1760,12 @@ async fn resolve_add_target(
             }
 
             Some(UrlDetected::HelmRegistry { repo }) => {
-                // chart name: --name takes priority over second positional
-                let chart_name = name.or(extra).ok_or_else(|| {
-                    "--name <chart> or second argument required for registry URL\nexamples:\n  husako add https://charts.example.com cert-manager\n  husako add https://charts.example.com --name cert-manager"
+                // chart name in registry = second positional arg; -n overrides dep key only
+                let chart_name = extra.or_else(|| name.clone()).ok_or_else(|| {
+                    "chart name required for registry URL\nexamples:\n  husako add https://charts.example.com cert-manager\n  husako add https://charts.example.com cert-manager -n my-cert"
                         .to_string()
                 })?;
+                let dep_name = name.unwrap_or_else(|| chart_name.clone());
                 let ver = husako_core::version_check::discover_latest_registry(
                     &repo,
                     &chart_name,
@@ -1773,7 +1774,7 @@ async fn resolve_add_target(
                 .await
                 .map_err(|e| e.to_string())?;
                 Ok(Some(AddResult::Chart {
-                    name: chart_name.clone(),
+                    name: dep_name,
                     source: ChartSource::Registry {
                         repo,
                         chart: chart_name,
