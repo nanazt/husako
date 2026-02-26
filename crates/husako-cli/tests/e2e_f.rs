@@ -17,11 +17,6 @@ fn scenario_f_oci_chart_source() {
         .args([
             "-y",
             "add",
-            "postgresql",
-            "--chart",
-            "--source",
-            "oci",
-            "--reference",
             "oci://registry-1.docker.io/bitnamicharts/postgresql",
             "--version",
             "18.4.0",
