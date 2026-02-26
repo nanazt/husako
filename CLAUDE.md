@@ -220,7 +220,7 @@ Project-level configuration file created by `husako new`. Supports:
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 
-The `Generate` command priority chain for k8s types: `--skip-k8s` → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
+The `Generate` command priority chain for k8s types: `--skip-k8s` → `--no-incremental` (bypass lock) → lock-file skip check → CLI flags (legacy) → `husako.toml [resources]` → skip. Chart types from `[charts]` are always generated when configured.
 
 ## Git Workflow
 
