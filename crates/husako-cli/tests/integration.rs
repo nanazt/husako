@@ -2458,146 +2458,6 @@ fn add_unrecognized_url_errors() {
         .code(2);
 }
 
-// --- husako add --cluster ---
-
-#[test]
-fn add_cluster_shows_server_url_from_config() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(
-        root.join("husako.toml"),
-        "[cluster]\nserver = \"https://localhost:6443\"\n[resources]\n",
-    )
-    .unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "--yes"])
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Cluster:"))
-        .stderr(predicates::str::contains("default"))
-        .stderr(predicates::str::contains("https://localhost:6443"));
-}
-
-#[test]
-fn add_cluster_named_shows_server_url() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(
-        root.join("husako.toml"),
-        "[clusters.dev]\nserver = \"https://dev:6443\"\n[resources]\n",
-    )
-    .unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "dev", "--yes"])
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("Cluster:"))
-        .stderr(predicates::str::contains("dev"))
-        .stderr(predicates::str::contains("https://dev:6443"));
-}
-
-#[test]
-fn add_cluster_not_configured_fails() {
-    // No [cluster] in husako.toml; HOME overridden so ~/.kube/ is empty,
-    // preventing a real local kubeconfig from unexpectedly providing a server URL.
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster"])
-        .env("HOME", dir.path())
-        .assert()
-        .failure()
-        .code(2)
-        .stderr(predicates::str::contains("not configured"));
-}
-
-const KUBECONFIG_WITH_CURRENT_CONTEXT: &str = r#"
-apiVersion: v1
-kind: Config
-current-context: my-ctx
-clusters:
-  - name: my-cluster
-    cluster:
-      server: https://k8s.local:6443
-contexts:
-  - name: my-ctx
-    context:
-      cluster: my-cluster
-      user: my-user
-users:
-  - name: my-user
-    user:
-      token: tok
-"#;
-
-const KUBECONFIG_WITH_DEV_CONTEXT: &str = r#"
-apiVersion: v1
-kind: Config
-current-context: dev
-clusters:
-  - name: dev-cluster
-    cluster:
-      server: https://dev:6443
-contexts:
-  - name: dev
-    context:
-      cluster: dev-cluster
-      user: dev-user
-users:
-  - name: dev-user
-    user:
-      token: tok
-"#;
-
-#[test]
-fn add_cluster_writes_cluster_config_from_kubeconfig() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
-    let kube_dir = dir.path().join(".kube");
-    std::fs::create_dir_all(&kube_dir).unwrap();
-    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_CURRENT_CONTEXT).unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "--yes"])
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("will add [cluster]"))
-        .stderr(predicates::str::contains("Added [cluster] to husako.toml"));
-
-    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
-    assert!(content.contains("[cluster]"));
-    assert!(content.contains("https://k8s.local:6443"));
-}
-
-#[test]
-fn add_cluster_named_writes_clusters_section_from_kubeconfig() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
-    let kube_dir = dir.path().join(".kube");
-    std::fs::create_dir_all(&kube_dir).unwrap();
-    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_DEV_CONTEXT).unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "dev", "--yes"])
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("will add [clusters.dev]"))
-        .stderr(predicates::str::contains(
-            "Added [clusters.dev] to husako.toml",
-        ));
-
-    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
-    assert!(content.contains("https://dev:6443"));
-}
-
 // --- husako gen: no-op path ---
 
 #[test]
@@ -2784,7 +2644,7 @@ fn clean_removes_types_dir() {
     std::fs::write(types_dir.join("dummy.d.ts"), "").unwrap();
 
     husako_at(root)
-        .args(["clean", "--types", "--yes"])
+        .args(["clean", "--types"])
         .assert()
         .success()
         .stderr(predicates::str::contains(".husako/types/"));
@@ -2801,7 +2661,7 @@ fn clean_removes_cache_dir() {
     std::fs::write(cache_dir.join("dummy.json"), "{}").unwrap();
 
     husako_at(root)
-        .args(["clean", "--cache", "--yes"])
+        .args(["clean", "--cache"])
         .assert()
         .success()
         .stderr(predicates::str::contains(".husako/cache/"));
@@ -2820,10 +2680,7 @@ fn clean_removes_all() {
     std::fs::write(types_dir.join("dummy.d.ts"), "").unwrap();
     std::fs::write(cache_dir.join("dummy.json"), "{}").unwrap();
 
-    husako_at(root)
-        .args(["clean", "--all", "--yes"])
-        .assert()
-        .success();
+    husako_at(root).args(["clean", "--all"]).assert().success();
 
     assert!(!types_dir.exists(), ".husako/types/ should be removed");
     assert!(!cache_dir.exists(), ".husako/cache/ should be removed");
@@ -2941,7 +2798,7 @@ fn remove_resource_from_config() {
     .unwrap();
 
     husako_at(root)
-        .args(["remove", "k8s", "--yes"])
+        .args(["remove", "k8s"])
         .assert()
         .success()
         .stderr(predicates::str::contains("Removed k8s"));
@@ -2964,7 +2821,7 @@ fn remove_chart_from_config() {
     .unwrap();
 
     husako_at(root)
-        .args(["remove", "metallb", "--yes"])
+        .args(["remove", "metallb"])
         .assert()
         .success()
         .stderr(predicates::str::contains("Removed metallb"));
@@ -2987,7 +2844,7 @@ fn remove_nonexistent_errors() {
     .unwrap();
 
     husako_at(root)
-        .args(["remove", "nonexistent", "--yes"])
+        .args(["remove", "nonexistent"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("not found"));
@@ -3004,7 +2861,7 @@ fn rm_alias_works() {
     .unwrap();
 
     husako_at(root)
-        .args(["rm", "k8s", "--yes"])
+        .args(["rm", "k8s"])
         .assert()
         .success()
         .stderr(predicates::str::contains("Removed k8s"));

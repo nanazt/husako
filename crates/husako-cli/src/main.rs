@@ -20,10 +20,6 @@ const DEFAULT_K8S_VERSION: &str = "1.35";
 #[derive(Parser)]
 #[command(name = "husako")]
 struct Cli {
-    /// Skip confirmation prompts
-    #[arg(long, short = 'y', global = true)]
-    yes: bool,
-
     #[command(subcommand)]
     command: Commands,
 }
@@ -141,10 +137,6 @@ enum Commands {
         /// Add a Kubernetes release resource (e.g. --release 1.35)
         #[arg(long)]
         release: Option<String>,
-
-        /// Add a cluster resource; optionally specify a named cluster
-        #[arg(long, num_args = 0..=1, default_missing_value = "")]
-        cluster: Option<String>,
 
         /// Pin version or partial semver prefix (16, 16.4, 16.4.0); v prefix optional
         #[arg(short, long)]
@@ -389,10 +381,7 @@ async fn main() -> ExitCode {
                 })
             } else {
                 api_server.map(|url| husako_openapi::FetchOptions {
-                    source: husako_openapi::OpenApiSource::Url {
-                        base_url: url,
-                        bearer_token: None,
-                    },
+                    source: husako_openapi::OpenApiSource::Url { base_url: url },
                     cache_dir: project_root.join(".husako/cache"),
                     offline: false,
                 })
@@ -613,7 +602,6 @@ async fn main() -> ExitCode {
             extra,
             name,
             release,
-            cluster,
             version,
             tag,
             branch,
@@ -621,57 +609,9 @@ async fn main() -> ExitCode {
         } => {
             let project_root = cwd();
 
-            match resolve_add_target(
-                url,
-                extra,
-                name,
-                release,
-                cluster,
-                version,
-                tag,
-                branch,
-                path,
-                cli.yes,
-                &project_root,
-            )
-            .await
-            {
-                Ok(None) => ExitCode::SUCCESS, // user cancelled cluster confirmation
+            match resolve_add_target(url, extra, name, release, version, tag, branch, path).await {
+                Ok(None) => ExitCode::SUCCESS,
                 Ok(Some(result)) => {
-                    // Write [cluster] / [clusters.*] if URL came from kubeconfig
-                    if let AddResult::Resource {
-                        cluster_config: Some(ref cc),
-                        ..
-                    } = result
-                    {
-                        let (mut doc, doc_path) =
-                            match husako_config::edit::load_document(&project_root) {
-                                Ok(d) => d,
-                                Err(e) => {
-                                    eprintln!("{} {e}", style::error_prefix());
-                                    return ExitCode::from(2u8);
-                                }
-                            };
-                        husako_config::edit::add_cluster_config(
-                            &mut doc,
-                            cc.cluster_name.as_deref(),
-                            &cc.server,
-                        );
-                        if let Err(e) = husako_config::edit::save_document(&doc, &doc_path) {
-                            eprintln!("{} {e}", style::error_prefix());
-                            return ExitCode::from(2u8);
-                        }
-                        let section = match &cc.cluster_name {
-                            None => "[cluster]".to_string(),
-                            Some(n) => format!("[clusters.{}]", n),
-                        };
-                        eprintln!(
-                            "{} Added {} to husako.toml",
-                            style::check_mark(),
-                            style::bold(&section)
-                        );
-                    }
-
                     let target = match &result {
                         AddResult::Resource { name, source, .. } => {
                             husako_core::AddTarget::Resource {
@@ -1488,16 +1428,10 @@ async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), HusakoE
 
 // --- husako add (URL auto-detect, no interactive) ---
 
-struct ClusterConfigToAdd {
-    cluster_name: Option<String>, // None = [cluster], Some("dev") = [clusters.dev]
-    server: String,
-}
-
 enum AddResult {
     Resource {
         name: String,
         source: husako_config::SchemaSource,
-        cluster_config: Option<ClusterConfigToAdd>,
     },
     Chart {
         name: String,
@@ -1511,13 +1445,10 @@ async fn resolve_add_target(
     extra: Option<String>,
     name: Option<String>,
     release: Option<String>,
-    cluster: Option<String>,
     version: Option<String>,
     tag: Option<String>,
     branch: Option<String>,
     path_override: Option<String>,
-    yes: bool,
-    project_root: &std::path::Path,
 ) -> Result<Option<AddResult>, String> {
     use husako_config::{ChartSource, SchemaSource};
     use url_detect::{SourceKind, UrlDetected, detect_url};
@@ -1528,117 +1459,10 @@ async fn resolve_add_target(
         return Ok(Some(AddResult::Resource {
             name: dep_name,
             source: SchemaSource::Release { version: ver },
-            cluster_config: None,
         }));
     }
 
-    // 2. Cluster resource
-    if let Some(cluster_val) = cluster {
-        let display_name = if cluster_val.is_empty() {
-            "default"
-        } else {
-            &cluster_val
-        };
-
-        // Stage 1: husako.toml
-        let config_server = husako_config::load(project_root)
-            .ok()
-            .flatten()
-            .and_then(|cfg| {
-                if cluster_val.is_empty() {
-                    cfg.cluster.map(|c| c.server)
-                } else {
-                    cfg.clusters.get(&cluster_val).map(|c| c.server.clone())
-                }
-            });
-
-        // Stage 2: kubeconfig fallback (only if husako.toml had nothing)
-        let kube_server = if config_server.is_none() {
-            let ctx = if cluster_val.is_empty() {
-                None
-            } else {
-                Some(cluster_val.as_str())
-            };
-            husako_openapi::kubeconfig::server_for_context(ctx)
-        } else {
-            None
-        };
-
-        // Fail early if the cluster is not configured anywhere
-        let server_url = match config_server.as_deref().or(kube_server.as_deref()) {
-            Some(url) => url.to_string(),
-            None => {
-                let msg = if cluster_val.is_empty() {
-                    "cluster is not configured — add [cluster] to husako.toml or set a current-context in kubeconfig".to_string()
-                } else {
-                    format!(
-                        "cluster {:?} is not configured — add [clusters.{}] to husako.toml or ensure context {:?} exists in kubeconfig",
-                        cluster_val, cluster_val, cluster_val
-                    )
-                };
-                return Err(msg);
-            }
-        };
-
-        // cluster_config is Some only when URL came from kubeconfig (not husako.toml)
-        let cluster_config = kube_server.map(|s| ClusterConfigToAdd {
-            cluster_name: if cluster_val.is_empty() {
-                None
-            } else {
-                Some(cluster_val.clone())
-            },
-            server: s,
-        });
-
-        // Always show cluster identity (visible even with --yes, useful for audit)
-        eprintln!(
-            "  Cluster: {}  {}",
-            style::dep_name(display_name),
-            style::dim(&server_url),
-        );
-        if cluster_config.is_some() {
-            let section = if cluster_val.is_empty() {
-                "[cluster]".to_string()
-            } else {
-                format!("[clusters.{}]", cluster_val)
-            };
-            eprintln!(
-                "  {} will add {} to husako.toml",
-                style::arrow_mark(),
-                style::bold(&section)
-            );
-        }
-
-        if !yes {
-            eprintln!(
-                "{} Adding a cluster resource will fetch ALL CRDs from the cluster, which may be a large set.",
-                style::warning_prefix()
-            );
-            match interactive::confirm("Continue?") {
-                Ok(true) => {}
-                Ok(false) => return Ok(None),
-                Err(e) => return Err(e),
-            }
-        }
-
-        // cluster_val == "" → --cluster without value → use "cluster" as name
-        let cluster_name = if cluster_val.is_empty() {
-            None
-        } else {
-            Some(cluster_val)
-        };
-        let dep_name =
-            name.unwrap_or_else(|| cluster_name.as_deref().unwrap_or("cluster").to_string());
-        return Ok(Some(AddResult::Resource {
-            name: dep_name,
-            source: SchemaSource::Cluster {
-                cluster: cluster_name,
-            },
-            cluster_config,
-        }));
-    }
-
-    // 3. URL-based detection
+    // 2. URL-based detection
     if let Some(input) = url {
         let prefix = version.as_deref();
 
@@ -1707,7 +1531,6 @@ async fn resolve_add_target(
                                 tag: br,
                                 path,
                             },
-                            cluster_config: None,
                         })),
                         SourceKind::Chart => Ok(Some(AddResult::Chart {
                             name: dep_name,
@@ -1745,7 +1568,6 @@ async fn resolve_add_target(
                                 tag: resolved_tag,
                                 path,
                             },
-                            cluster_config: None,
                         })),
                         SourceKind::Chart => Ok(Some(AddResult::Chart {
                             name: dep_name,
@@ -1790,7 +1612,6 @@ async fn resolve_add_target(
                     SourceKind::Resource => Ok(Some(AddResult::Resource {
                         name: dep_name,
                         source: SchemaSource::File { path },
-                        cluster_config: None,
                     })),
                     SourceKind::Chart => Ok(Some(AddResult::Chart {
                         name: dep_name,
@@ -1804,10 +1625,7 @@ async fn resolve_add_target(
             )),
         }
     } else {
-        Err(
-            "url required, or use --release <version> / --cluster [name]\nsee: husako add --help"
-                .to_string(),
-        )
+        Err("url required, or use --release <version>\nsee: husako add --help".to_string())
     }
 }
 
@@ -1837,12 +1655,6 @@ fn format_source_detail(result: &AddResult) -> String {
             ..
         } => {
             format!("release  {version}")
-        }
-        AddResult::Resource {
-            source: SchemaSource::Cluster { cluster },
-            ..
-        } => {
-            format!("cluster  {}", cluster.as_deref().unwrap_or("default"))
         }
         AddResult::Resource {
             source: SchemaSource::Git { repo, tag, .. },

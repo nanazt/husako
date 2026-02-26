@@ -1,7 +1,6 @@
 mod cache;
 pub mod crd;
 mod fetch;
-pub mod kubeconfig;
 pub mod release;
 
 use std::collections::HashMap;
@@ -24,17 +23,12 @@ pub enum OpenApiError {
     NoCachedData,
     #[error("CRD parse error: {0}")]
     Crd(String),
-    #[error("kubeconfig error: {0}")]
-    Kubeconfig(String),
     #[error("GitHub release error: {0}")]
     Release(String),
 }
 
 pub enum OpenApiSource {
-    Url {
-        base_url: String,
-        bearer_token: Option<String>,
-    },
+    Url { base_url: String },
     Directory(PathBuf),
 }
 
@@ -58,7 +52,6 @@ pub struct DiscoveryPath {
 pub struct OpenApiClient {
     http_client: Option<reqwest::Client>,
     base_url: Option<String>,
-    bearer_token: Option<String>,
     directory: Option<PathBuf>,
     cache_dir: PathBuf,
     offline: bool,
@@ -67,10 +60,7 @@ pub struct OpenApiClient {
 impl OpenApiClient {
     pub fn new(options: FetchOptions) -> Result<Self, OpenApiError> {
         match options.source {
-            OpenApiSource::Url {
-                base_url,
-                bearer_token,
-            } => {
+            OpenApiSource::Url { base_url } => {
                 let client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(30))
                     .build()
@@ -78,7 +68,6 @@ impl OpenApiClient {
                 Ok(Self {
                     http_client: Some(client),
                     base_url: Some(base_url),
-                    bearer_token,
                     directory: None,
                     cache_dir: options.cache_dir,
                     offline: options.offline,
@@ -87,7 +76,6 @@ impl OpenApiClient {
             OpenApiSource::Directory(path) => Ok(Self {
                 http_client: None,
                 base_url: None,
-                bearer_token: None,
                 directory: Some(path),
                 cache_dir: options.cache_dir,
                 offline: true,
@@ -109,9 +97,8 @@ impl OpenApiClient {
         }
 
         let client = self.http_client.as_ref().unwrap();
-        let token = self.bearer_token.as_deref();
 
-        match fetch::fetch_discovery(client, base_url, token).await {
+        match fetch::fetch_discovery(client, base_url).await {
             Ok(index) => {
                 let _ = cache::write_discovery(&self.cache_dir, &key, &index);
                 Ok(index)
@@ -156,10 +143,8 @@ impl OpenApiClient {
 
         // Fetch from server
         let client = self.http_client.as_ref().unwrap();
-        let token = self.bearer_token.as_deref();
 
-        match fetch::fetch_spec(client, base_url, &discovery_path.server_relative_url, token).await
-        {
+        match fetch::fetch_spec(client, base_url, &discovery_path.server_relative_url).await {
             Ok(spec) => {
                 let _ = cache::write_spec(&self.cache_dir, &key, group_version, &spec);
                 // Update hash
@@ -194,7 +179,6 @@ impl OpenApiClient {
         // Network source: fetch all specs concurrently with JoinSet
         let client = self.http_client.as_ref().unwrap().clone();
         let base_url = self.base_url.clone().unwrap();
-        let bearer_token = self.bearer_token.clone();
         let cache_dir = self.cache_dir.clone();
         let server_key = cache::server_key(&base_url);
         let existing_hashes = cache::read_hashes(&cache_dir, &server_key).unwrap_or_default();
@@ -203,7 +187,6 @@ impl OpenApiClient {
         for (gv, dp) in index.paths {
             let client = client.clone();
             let base_url = base_url.clone();
-            let token = bearer_token.clone();
             let cache_dir = cache_dir.clone();
             let server_key = server_key.clone();
             let new_hash = fetch::extract_hash(&dp.server_relative_url);
@@ -219,22 +202,16 @@ impl OpenApiClient {
                 }
 
                 // Fetch from server
-                let spec = match fetch::fetch_spec(
-                    &client,
-                    &base_url,
-                    &dp.server_relative_url,
-                    token.as_deref(),
-                )
-                .await
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        // Fallback to cache on error
-                        return cache::read_spec(&cache_dir, &server_key, &gv)
-                            .map_err(|_| e)
-                            .map(|s| (gv, s, None));
-                    }
-                };
+                let spec =
+                    match fetch::fetch_spec(&client, &base_url, &dp.server_relative_url).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            // Fallback to cache on error
+                            return cache::read_spec(&cache_dir, &server_key, &gv)
+                                .map_err(|_| e)
+                                .map(|s| (gv, s, None));
+                        }
+                    };
 
                 let _ = cache::write_spec(&cache_dir, &server_key, &gv, &spec);
                 Ok((gv, spec, new_hash))
@@ -364,7 +341,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -404,7 +380,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -443,7 +418,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -501,7 +475,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -565,7 +538,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: "https://localhost:6443".to_string(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: true,
@@ -585,7 +557,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: "https://localhost:6443".to_string(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: true,
@@ -624,7 +595,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -662,7 +632,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
@@ -733,7 +702,6 @@ mod tests {
         let client = OpenApiClient::new(FetchOptions {
             source: OpenApiSource::Url {
                 base_url: server.url(),
-                bearer_token: None,
             },
             cache_dir: tmp.path().to_path_buf(),
             offline: false,
