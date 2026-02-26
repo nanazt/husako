@@ -1,63 +1,91 @@
-# Plan: Replace "real language" copy across docs and README
+# Plan: Add optional `path` subdir field to `PluginSource::Git`
 
 ## Context
 
-The phrase "A Real Language" / "real language features" / "real programming language"
-appears in three places. The tone is defensive and invites comparison. Replacing with
-"Resources as Code" framing (concrete, fits the IaC ecosystem vocabulary).
+The Flux CD plugin is bundled inside the husako repository at `plugins/flux/`. External users who want to reference it need to either (a) clone husako and use `source = "path"`, or (b) reference it from the git repo with a subdirectory. Option (a) is impractical for real projects. Option (b) doesn't work today because `PluginSource::Git` only has a `url` field.
 
----
+`SchemaSource::Git` and `ChartSource::Git` already support an optional subdirectory via a `path` field. `PluginSource::Git` should follow the same pattern.
 
-## Changes
+**Goal:** Add an optional `path: Option<String>` to `PluginSource::Git` so users can reference a plugin inside a monorepo:
 
-### 1. `docs/index.md` — feature card title
-
-**Branch: `feature/docs-site`**
-
-```diff
--  - title: A Real Language
-+  - title: Resources as Code
-     details: Use functions, variables, loops, and imports to compose resources. Share
-              common metadata, parameterize environments, reuse pod templates across
-              deployments.
+```toml
+flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
 ```
 
-`details` text stays as-is — it already explains what "Resources as Code" means.
+## Files to modify
 
----
+| File | Change |
+|------|--------|
+| `crates/husako-config/src/lib.rs` | Add `path: Option<String>` to `PluginSource::Git` |
+| `crates/husako-core/src/plugin.rs` | Update `install_git` to support subdir via sparse-checkout |
+| `crates/husako-config/src/edit.rs` | Update `add_plugin` serialization (TOML editing helper) |
+| `.claude/plugin-spec.md` | Update source type table + example |
+| `docs/advanced/plugins.md` | Update install example to use husako repo + path |
+| `docs/guide/configuration.md` | Same fix in overview snippet and plugins section |
 
-### 2. `docs/index.md` — hero tagline
+## Implementation
 
-```diff
--  tagline: Type safety, autocomplete, and real language features — instead of
--           templating hacks on top of YAML.
-+  tagline: Type safety, autocomplete, and the full TypeScript language — instead of
-+           templating hacks on top of YAML.
+### 1. `crates/husako-config/src/lib.rs`
+
+Change `PluginSource::Git`:
+
+```rust
+#[serde(rename = "git")]
+Git { url: String, path: Option<String> },
 ```
 
----
+### 2. `crates/husako-core/src/plugin.rs`
 
-### 3. `README.md` — opening paragraph
+Update `install_plugin` to pass `path` to `install_git`:
 
-```diff
--  husako compiles TypeScript to Kubernetes YAML. You get type safety, autocomplete,
--  and the full expressiveness of a real programming language — functions, variables,
--  loops, imports — instead of templating hacks on top of YAML.
-+  husako compiles TypeScript to Kubernetes YAML. You get type safety, autocomplete,
-+  and the full expressiveness of TypeScript — functions, variables, loops, imports —
-+  instead of templating hacks on top of YAML.
+```rust
+PluginSource::Git { url, path } => install_git(name, url, path.as_deref(), target_dir),
 ```
 
----
+Update `install_git` signature and logic:
 
-## Target branch
+```rust
+fn install_git(name: &str, url: &str, subdir: Option<&str>, target_dir: &Path) -> Result<(), HusakoError>
+```
 
-All three files live in (or are accessible from) `feature/docs-site`. Commit there so
-the change is included when that branch merges to master.
+**When `subdir` is `None`:** behavior unchanged — shallow-clone the whole repo.
+
+**When `subdir` is `Some(sub)`:** use git sparse-checkout to download only the subdirectory, then move its contents to `target_dir`:
+
+```
+git init <tmp>
+git -C <tmp> remote add origin <url>
+git -C <tmp> sparse-checkout set <sub>
+git -C <tmp> pull --depth 1 origin HEAD
+cp -r <tmp>/<sub>/* <target_dir>/
+rm -rf <tmp>
+```
+
+Use a temp directory alongside `target_dir` (e.g., `target_dir` + `_tmp`) to stage the clone, then move the subdirectory into `target_dir`. Clean up on failure.
+
+### 3. `crates/husako-config/src/edit.rs`
+
+The `add_plugin` function builds the TOML inline table. It should emit `path` when set:
+
+```toml
+flux = { source = "git", url = "...", path = "plugins/flux" }
+```
+
+Check existing `add_plugin` logic and add `path` field serialization when `Some`.
+
+### 4. Docs and spec
+
+- `docs/advanced/plugins.md` line 32: change to:
+  ```toml
+  flux = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/flux" }
+  ```
+- `docs/guide/configuration.md`: same in overview snippet and plugins section
+- `.claude/plugin-spec.md`: update source table row for `git` to add `path (optional)` column and update example
 
 ## Verification
 
-After edit, confirm:
-- `docs/index.md` hero tagline: contains `full TypeScript language`
-- `docs/index.md` feature card: title is `Resources as Code`
-- `README.md`: no remaining `real programming language` or `real language features`
+1. `cargo fmt --all` + `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+2. `cargo test --workspace --all-features` — all existing tests pass
+3. Add unit test in `husako-config` verifying that a git source with `path` deserializes correctly
+4. Add unit test in `husako-core/plugin.rs` for the subdir branch of `install_git` (can mock or skip git network call — just verify error on missing git, or use a local bare repo fixture if one exists)
+5. Verify `husako add` CLI still works for plugin git source (manual smoke test or existing integration test)

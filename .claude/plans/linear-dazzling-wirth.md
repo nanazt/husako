@@ -1,312 +1,164 @@
-# Plan: husako add --cluster also writes [clusters.*] to husako.toml
+# Plan: husako render --output (file output support)
 
 ## Context
 
-`husako add --cluster dev` currently reads the server URL from kubeconfig and
-*displays* it, but never persists it. The user must manually add `[clusters.dev]`
-to husako.toml, or `husako generate` will fail later.
+`husako render` currently only outputs to stdout. For FluxCD/GitOps workflows — and general use
+cases where users want to write rendered manifests to files — a `--output` flag is needed.
 
-This inconsistency is resolved by automatically writing `[cluster]` / `[clusters.*]`
-to husako.toml when the URL is sourced from kubeconfig (= the section is not yet
-present in husako.toml). If the section already exists, it is left unchanged
-(non-destructive).
+Multi-document YAML (multiple resources with `---`) is fully supported by FluxCD, so one YAML
+file per entry is sufficient; no need to split by resource.
 
-## Target UX
+## Target behaviour
 
-### URL from kubeconfig, not yet in husako.toml
+```bash
+# Write to a specific file
+husako render entry.ts --output out.yaml
+# → writes out.yaml
 
-```
-  Cluster: dev  https://dev:6443
-  → will add [clusters.dev] to husako.toml
-warning: Adding a cluster resource will fetch ALL CRDs from the cluster, which may be a large set.
-Continue? (y/n):
+# Write to a directory (uses file stem as filename)
+husako render entry.ts --output ./dist
+# → writes dist/entry.yaml  (creates dirs as needed)
 
-✔ Added [clusters.dev] to husako.toml
-✔ Added dev-crds to [resources]
-  cluster  dev
-```
+# Alias with slash → preserves path structure
+husako render apps/my-app --output ./dist
+# → writes dist/apps/my-app.yaml  (alias string used as path)
 
-### URL already in husako.toml (existing behavior unchanged)
-
-```
-  Cluster: dev  https://dev:6443
-warning: ...
-Continue? (y/n):
-
-✔ Added dev-crds to [resources]
-  cluster  dev
+# No --output → stdout (unchanged)
+husako render entry.ts
 ```
 
-- `→` hint line → `style::arrow_mark()` (cyan)
-- Section name in success messages → `style::bold()`
-
----
+**Path resolution rule:**
+- `--output` path ends with `.yaml` or `.yml` → write to that exact file
+- Otherwise → treat as directory:
+  - Entry resolved by alias → `<dir>/<alias>.yaml` (preserving `/` in alias)
+  - Entry resolved by direct path → `<dir>/<stem>.yaml` (file stem only)
 
 ## Changes
 
-### 1. `crates/husako-config/src/edit.rs`
+### 1. `crates/husako-cli/src/main.rs` — `Commands::Render` struct
 
-Add `pub fn add_cluster_config(doc, cluster_name, server)`:
+Add `--output` flag (keep `file: String` as required positional, no changes to other flags):
 
 ```rust
-/// Write a cluster connection entry to husako.toml.
-///
-/// `cluster_name = None`       → `[cluster]` section
-/// `cluster_name = Some(name)` → `[clusters.name]` section
-///
-/// Does nothing if the section already exists (non-destructive).
-pub fn add_cluster_config(
-    doc: &mut DocumentMut,
-    cluster_name: Option<&str>,
-    server: &str,
-) {
-    match cluster_name {
-        None => {
-            if doc.get("cluster").is_none() {
-                let mut t = Table::new();
-                t.insert("server", value(server));
-                doc["cluster"] = Item::Table(t);
-            }
-        }
-        Some(name) => {
-            // Ensure [clusters] outer table exists (implicit — no [clusters] header)
-            if doc.get("clusters").is_none() {
-                let mut outer = Table::new();
-                outer.set_implicit(true);
-                doc["clusters"] = Item::Table(outer);
-            }
-            // Add [clusters.name] subtable only if absent
-            if doc["clusters"].as_table().map_or(true, |t| !t.contains_key(name)) {
-                let mut inner = Table::new();
-                inner.insert("server", value(server));
-                doc["clusters"][name] = Item::Table(inner);
-            }
+Render {
+    /// Path to the TypeScript entry file, or an entry alias from husako.toml
+    file: String,
+
+    /// Write output to a file or directory instead of stdout.
+    /// If path ends with .yaml/.yml, write to that file directly.
+    /// Otherwise treat as directory: writes <dir>/<name>.yaml
+    /// where <name> is the alias string or the entry file's stem.
+    #[arg(long, short = 'o', value_name = "PATH")]
+    output: Option<PathBuf>,
+
+    // existing flags unchanged
+    #[arg(long)] allow_outside_root: bool,
+    #[arg(long)] timeout_ms: Option<u64>,
+    #[arg(long)] max_heap_mb: Option<usize>,
+    #[arg(long)] verbose: bool,
+},
+```
+
+### 2. `crates/husako-cli/src/main.rs` — new helper `derive_out_name()`
+
+Add below `resolve_entry`:
+
+```rust
+/// Return the output name for a file argument (no extension, may contain `/`).
+/// - If file_arg matches an alias in config → return the alias string as-is
+///   (so "apps/my-app" becomes the path component "apps/my-app").
+/// - Otherwise → return the file stem of the path.
+fn derive_out_name(file_arg: &str, project_root: &Path) -> String {
+    if let Ok(Some(cfg)) = husako_config::load(project_root) {
+        if cfg.entries.contains_key(file_arg) {
+            return file_arg.to_string();
         }
     }
+    Path::new(file_arg)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| file_arg.to_string())
 }
 ```
 
-`toml_edit::Table::set_implicit(true)` prevents a standalone `[clusters]` header,
-yielding the `[clusters.dev]` format.
+### 3. `crates/husako-cli/src/main.rs` — render handler output logic
 
-Add 3 unit tests to the existing `#[cfg(test)]` block:
-- `add_cluster_config_single` — writes `[cluster]` section
-- `add_cluster_config_named` — writes `[clusters.dev]` section
-- `add_cluster_config_no_overwrite` — does not modify an already-present section
-
-### 2. `crates/husako-cli/src/main.rs`
-
-#### a) Add `ClusterConfigToAdd` struct and extend `AddResult::Resource`
+After `render()` returns `Ok(yaml)`:
 
 ```rust
-struct ClusterConfigToAdd {
-    cluster_name: Option<String>, // None = [cluster], Some("dev") = [clusters.dev]
-    server: String,
-}
-
-enum AddResult {
-    Resource {
-        name: String,
-        source: husako_config::SchemaSource,
-        cluster_config: Option<ClusterConfigToAdd>, // ← new field
-    },
-    Chart { name: String, source: husako_config::ChartSource },
-}
-```
-
-#### b) `resolve_add_target()` — cluster branch
-
-Split the URL lookup into two stages to track the source:
-
-```rust
-// Stage 1: husako.toml
-let config_server = husako_config::load(project_root)
-    .ok().flatten()
-    .and_then(|cfg| {
-        if cluster_val.is_empty() { cfg.cluster.map(|c| c.server) }
-        else { cfg.clusters.get(&cluster_val).map(|c| c.server.clone()) }
-    });
-
-// Stage 2: kubeconfig fallback (only if husako.toml had nothing)
-let kube_server = if config_server.is_none() {
-    let ctx = if cluster_val.is_empty() { None } else { Some(cluster_val.as_str()) };
-    husako_openapi::kubeconfig::server_for_context(ctx)
-} else {
-    None
-};
-
-// Fail if neither source has the URL
-let server_url = match config_server.as_deref().or(kube_server.as_deref()) {
-    Some(url) => url.to_string(),
-    None => return Err(/* not configured error, same as before */),
-};
-
-// cluster_config is Some only when URL came from kubeconfig
-let cluster_config = kube_server.map(|s| ClusterConfigToAdd {
-    cluster_name: if cluster_val.is_empty() { None } else { Some(cluster_val.clone()) },
-    server: s,
-});
-
-// Print cluster identity + "will add" hint (both unconditional)
-eprintln!("  Cluster: {}  {}", style::dep_name(display_name), style::dim(&server_url));
-if cluster_config.is_some() {
-    let section = if cluster_val.is_empty() { "[cluster]".to_string() }
-                  else { format!("[clusters.{}]", cluster_val) };
-    eprintln!("  {} will add {} to husako.toml", style::arrow_mark(), style::bold(&section));
-}
-
-// ... confirmation prompt (unchanged) ...
-
-return Ok(Some(AddResult::Resource {
-    name: dep_name,
-    source: SchemaSource::Cluster { cluster: cluster_name },
-    cluster_config,
-}));
-```
-
-#### c) `Commands::Add` handler — write cluster config, then resource dep
-
-```rust
-Ok(Some(result)) => {
-    // 1. Write [cluster] / [clusters.*] if sourced from kubeconfig
-    if let AddResult::Resource { cluster_config: Some(ref cc), .. } = result {
-        let (mut doc, doc_path) = match husako_config::edit::load_document(&project_root) {
-            Ok(d) => d,
-            Err(e) => { eprintln!("{} {e}", style::error_prefix()); return ExitCode::from(2u8); }
+Ok(yaml) => {
+    if let Some(out_path) = output {
+        // Determine actual file path
+        let file_path = if out_path.extension().is_some_and(|e| e == "yaml" || e == "yml") {
+            out_path
+        } else {
+            let name = derive_out_name(&file, &project_root);
+            out_path.join(format!("{name}.yaml"))
         };
-        husako_config::edit::add_cluster_config(&mut doc, cc.cluster_name.as_deref(), &cc.server);
-        if let Err(e) = husako_config::edit::save_document(&doc, &doc_path) {
+        // Create parent directories (async — handler is already in tokio runtime)
+        if let Some(parent) = file_path.parent() {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                eprintln!("{} {e}", style::error_prefix());
+                return ExitCode::from(1);
+            }
+        }
+        // Write file (async)
+        if let Err(e) = tokio::fs::write(&file_path, &yaml).await {
             eprintln!("{} {e}", style::error_prefix());
-            return ExitCode::from(2u8);
+            return ExitCode::from(1);
         }
-        let section = match &cc.cluster_name {
-            None => "[cluster]".to_string(),
-            Some(n) => format!("[clusters.{}]", n),
-        };
-        eprintln!("{} Added {} to husako.toml", style::check_mark(), style::bold(&section));
+        eprintln!(
+            "{} Written to {}",
+            style::check_mark(),
+            style::bold(&file_path.display().to_string())
+        );
+    } else {
+        print!("{yaml}");
     }
-
-    // 2. Add resource dep (existing flow)
-    let target = match &result { ... };
-    match husako_core::add_dependency(&project_root, &target) { ... }
+    ExitCode::SUCCESS
 }
 ```
 
-**All `AddResult::Resource` sites to update:**
-
-| Location | Change |
-|----------|--------|
-| Line ~582: `{ name, source }` in target-build match | Add `..` → `{ name, source, .. }` |
-| Line ~1365: Release variant construction | Add `cluster_config: None` |
-| Lines ~1512, ~1549: Git Resource variants | Add `cluster_config: None` |
-| Line ~1596: LocalPath Resource variant | Add `cluster_config: None` |
-| Line ~1442: Cluster variant | Set `cluster_config` to computed value |
-
-`format_source_detail()` already uses `..` on all arms — no change needed.
-
-`load_document` returns `(DocumentMut, PathBuf)` — use the returned `PathBuf`
-for `save_document` (do not reconstruct the path manually).
-
-### 3. `crates/husako-cli/tests/integration.rs`
-
-Existing 3 cluster tests remain valid — the two husako.toml-based tests
-(`add_cluster_shows_server_url_from_config`, `add_cluster_named_shows_server_url`)
-will NOT show the "will add" message since the URL comes from husako.toml.
-
-Add kubeconfig fixture constants and 2 new tests:
-
-```rust
-const KUBECONFIG_WITH_CURRENT_CONTEXT: &str = r#"
-apiVersion: v1
-kind: Config
-current-context: my-ctx
-clusters:
-  - name: my-cluster
-    cluster:
-      server: https://k8s.local:6443
-contexts:
-  - name: my-ctx
-    context:
-      cluster: my-cluster
-      user: my-user
-users:
-  - name: my-user
-    user:
-      token: tok
-"#;
-
-const KUBECONFIG_WITH_DEV_CONTEXT: &str = r#"
-apiVersion: v1
-kind: Config
-current-context: dev
-clusters:
-  - name: dev-cluster
-    cluster:
-      server: https://dev:6443
-contexts:
-  - name: dev
-    context:
-      cluster: dev-cluster
-      user: dev-user
-users:
-  - name: dev-user
-    user:
-      token: tok
-"#;
-
-#[test]
-fn add_cluster_writes_cluster_config_from_kubeconfig() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
-    let kube_dir = dir.path().join(".kube");
-    std::fs::create_dir_all(&kube_dir).unwrap();
-    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_CURRENT_CONTEXT).unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "--yes"])
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("will add [cluster]"))
-        .stderr(predicates::str::contains("Added [cluster] to husako.toml"));
-
-    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
-    assert!(content.contains("[cluster]"));
-    assert!(content.contains("https://k8s.local:6443"));
-}
-
-#[test]
-fn add_cluster_named_writes_clusters_section_from_kubeconfig() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::write(root.join("husako.toml"), "[resources]\n").unwrap();
-    let kube_dir = dir.path().join(".kube");
-    std::fs::create_dir_all(&kube_dir).unwrap();
-    std::fs::write(kube_dir.join("config"), KUBECONFIG_WITH_DEV_CONTEXT).unwrap();
-
-    husako_at(root)
-        .args(["add", "--cluster", "dev", "--yes"])
-        .env("HOME", dir.path())
-        .assert()
-        .success()
-        .stderr(predicates::str::contains("will add [clusters.dev]"))
-        .stderr(predicates::str::contains("Added [clusters.dev] to husako.toml"));
-
-    let content = std::fs::read_to_string(root.join("husako.toml")).unwrap();
-    assert!(content.contains("https://dev:6443"));
-}
-```
-
-### 4. `.worktrees/docs-site/docs/reference/cli.md`
-
-Update the `--cluster` flag description:
+### 4. `crates/husako-cli/tests/integration.rs` — new tests
 
 ```
-| `--cluster [name]` | Add a live-cluster schema source; resolves server URL from `husako.toml` or kubeconfig, and writes `[cluster]`/`[clusters.*]` to `husako.toml` if not already present (fails if URL found nowhere) |
+render_output_to_yaml_file
+  render entry.ts --output out.yaml → file exists, contains valid YAML, stdout empty
+
+render_output_to_dir_uses_stem
+  render entry.ts --output ./dist → dist/entry.yaml exists
+
+render_output_alias_preserves_path
+  alias "apps/my-app" + --output ./dist → dist/apps/my-app.yaml (subdirs created)
+
+render_output_creates_nested_dirs
+  --output ./a/b/c/out.yaml → creates a/b/c/ and writes out.yaml
+
+render_output_overwrites_existing
+  write existing file → no error, content replaced
 ```
 
----
+### 5. `.worktrees/docs-site/docs/reference/cli.md` — update husako render section
+
+Three targeted changes (lines 48–61):
+
+1. Description: `"Compile a TypeScript entry file and emit YAML to stdout."` →
+   `"Compile a TypeScript entry file and emit YAML to stdout or a file."`
+
+2. Add `--output` row to the flags table:
+   ```
+   | `-o, --output <path>` | Write YAML to a file or directory instead of stdout. If path ends with `.yaml` or `.yml`, writes to that exact file. Otherwise treated as a directory: writes `<dir>/<name>.yaml` where `<name>` is the entry alias or file stem. |
+   ```
+
+3. No other changes — no new snapshot files, no existing test changes needed.
+
+## Critical files
+
+- `crates/husako-cli/src/main.rs` — `Commands::Render` + handler + `derive_out_name()`
+- `crates/husako-cli/tests/integration.rs` — 5 new tests
+- `.worktrees/docs-site/docs/reference/cli.md` — flags table update
+
+No changes to `husako-core` (render() already returns `String`).
 
 ## Verification
 
