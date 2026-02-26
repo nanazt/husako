@@ -75,7 +75,7 @@ The core pipeline is: **TypeScript → Compile → Execute → Validate → Emit
 2. **Runtime** (`husako-runtime-qjs`): Executes compiled JS in QuickJS, loads builtin modules (`"husako"`, `"k8s/*"`, `"helm/*"`, plugin modules), captures `husako.build()` output via Rust-side sink
 3. **Core** (`husako-core`): Orchestrates the pipeline, validates strict JSON contract and Kubernetes quantity grammar, manages plugin lifecycle
 4. **Emitter** (`husako-core::emit`): Converts validated `serde_json::Value` to YAML output (`emit_yaml`, re-exported as `husako_core::emit_yaml`)
-5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; kubeconfig credential resolution; GitHub release spec download
+5. **OpenAPI** (`husako-openapi`): Fetches and caches Kubernetes OpenAPI v3 specs; CRD YAML→OpenAPI conversion; GitHub release spec download
 6. **Type Generator** (`husako-dts`): Generates `.d.ts` type definitions and `_schema.json` from OpenAPI specs; JSON Schema → TypeScript for Helm charts
 7. **Helm** (`husako-helm`): Resolves Helm chart `values.schema.json` from file, registry, ArtifactHub, or git sources
 8. **SDK** (`husako-sdk`): Builtin JS runtime sources and base `.d.ts` for the `"husako"` module
@@ -99,7 +99,7 @@ crates/
 │       ├── lock_check.rs       # Skip decision logic for husako.lock incremental generation
 │       ├── plugin.rs           # Plugin install/remove/list, preset merging, tsconfig paths
 │       ├── quantity.rs         # Kubernetes quantity grammar validation
-│       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
+│       ├── schema_source.rs    # Schema source dispatch (file, release, git)
 │       └── validate.rs         # JSON Schema validation engine
 ├── husako-compile-oxc/    # TS → JS compilation via oxc
 │   └── src/lib.rs
@@ -108,11 +108,10 @@ crates/
 │       ├── lib.rs              # QuickJS runtime, build() capture
 │       ├── loader.rs           # Module loader (compile + resolve chain)
 │       └── resolver.rs         # Import resolvers (builtin, plugin, k8s/*, helm/*, file)
-├── husako-openapi/        # OpenAPI v3 fetch + disk cache + CRD/kubeconfig/release
+├── husako-openapi/        # OpenAPI v3 fetch + disk cache + CRD/release
 │   └── src/
 │       ├── lib.rs
 │       ├── crd.rs              # CRD YAML → OpenAPI JSON conversion
-│       ├── kubeconfig.rs       # Bearer token extraction from ~/.kube/
 │       └── release.rs          # GitHub k8s release spec download + cache
 ├── husako-helm/           # Helm chart values.schema.json resolution (file, registry, artifacthub, git)
 │   └── src/
@@ -218,10 +217,9 @@ cargo test -p husako-core test_name
 Project-level configuration file created by `husako new`. Supports:
 
 - **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
-- **Resource dependencies**: `[resources]` declares k8s schema sources with 4 types: `release`, `cluster`, `git`, `file` (aliased from legacy `[schemas]`)
+- **Resource dependencies**: `[resources]` declares k8s schema sources with 3 types: `release`, `git`, `file` (aliased from legacy `[schemas]`)
 - **Chart dependencies**: `[charts]` declares Helm chart sources with 5 types: `registry`, `artifacthub`, `git`, `file`, `oci`
 - **Plugins**: `[plugins]` declares plugin sources with 2 types: `git` (URL), `path` (local directory)
-- **Cluster config**: `[cluster]` (single) or `[clusters.*]` (multiple named clusters)
 
 The `Render` command resolves the file argument as: direct path → entry alias → error with available aliases.
 

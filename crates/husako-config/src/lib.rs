@@ -32,14 +32,6 @@ pub struct HusakoConfig {
     #[serde(default)]
     pub entries: HashMap<String, String>,
 
-    /// Single cluster connection (shorthand for the common case).
-    #[serde(default)]
-    pub cluster: Option<ClusterConfig>,
-
-    /// Named cluster connections for multi-cluster setups.
-    #[serde(default)]
-    pub clusters: HashMap<String, ClusterConfig>,
-
     /// Resource schema dependencies (renamed from `schemas`).
     #[serde(default, alias = "schemas")]
     pub resources: HashMap<String, SchemaSource>,
@@ -53,12 +45,6 @@ pub struct HusakoConfig {
     pub plugins: HashMap<String, PluginSource>,
 }
 
-/// Cluster connection configuration.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ClusterConfig {
-    pub server: String,
-}
-
 /// A schema dependency entry. Every entry must specify `source` explicitly.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "source")]
@@ -67,15 +53,6 @@ pub enum SchemaSource {
     /// `kubernetes = { source = "release", version = "1.35" }`
     #[serde(rename = "release")]
     Release { version: String },
-
-    /// Fetch all specs from a live K8s API server.
-    /// `cluster-crds = { source = "cluster" }` — uses `[cluster]`
-    /// `dev-crds = { source = "cluster", cluster = "dev" }` — uses `[clusters.dev]`
-    #[serde(rename = "cluster")]
-    Cluster {
-        #[serde(default)]
-        cluster: Option<String>,
-    },
 
     /// Clone a git repo at a tag and extract CRD YAML manifests.
     /// `cert-manager = { source = "git", repo = "...", tag = "v1.17.2", path = "deploy/crds" }`
@@ -232,40 +209,8 @@ fn validate(config: &HusakoConfig) -> Result<(), ConfigError> {
         }
     }
 
-    // Cannot have both [cluster] and [clusters]
-    if config.cluster.is_some() && !config.clusters.is_empty() {
-        return Err(ConfigError::Validation(
-            "cannot use both [cluster] and [clusters]; use one or the other".to_string(),
-        ));
-    }
-
-    // Schema cluster references must resolve
+    // Schema source validation
     for (name, source) in &config.resources {
-        if let SchemaSource::Cluster {
-            cluster: Some(cluster_name),
-        } = source
-            && !config.clusters.contains_key(cluster_name)
-        {
-            return Err(ConfigError::Validation(format!(
-                "schema '{name}' references unknown cluster '{cluster_name}'; \
-                 define it in [clusters.{cluster_name}]"
-            )));
-        }
-
-        if let SchemaSource::Cluster { cluster: None } = source {
-            if config.cluster.is_none() && config.clusters.is_empty() {
-                return Err(ConfigError::Validation(format!(
-                    "schema '{name}' uses source = \"cluster\" but no [cluster] section is defined"
-                )));
-            }
-            if config.cluster.is_none() && !config.clusters.is_empty() {
-                return Err(ConfigError::Validation(format!(
-                    "schema '{name}' uses source = \"cluster\" without a cluster name; \
-                     specify which cluster to use, e.g. cluster = \"dev\""
-                )));
-            }
-        }
-
         // File paths must be relative
         if let SchemaSource::File { path } = source
             && Path::new(path).is_absolute()
@@ -312,29 +257,19 @@ mod tests {
 dev = "env/dev.ts"
 staging = "env/staging.ts"
 
-[cluster]
-server = "https://10.0.0.1:6443"
-
 [schemas]
 kubernetes = { source = "release", version = "1.35" }
-cluster-crds = { source = "cluster" }
 cert-manager = { source = "git", repo = "https://github.com/cert-manager/cert-manager", tag = "v1.17.2", path = "deploy/crds" }
 my-crd = { source = "file", path = "./crds/my-crd.yaml" }
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.entries.len(), 2);
         assert_eq!(config.entries["dev"], "env/dev.ts");
-        assert_eq!(config.resources.len(), 4);
-        assert!(config.cluster.is_some());
-        assert_eq!(config.cluster.unwrap().server, "https://10.0.0.1:6443");
+        assert_eq!(config.resources.len(), 3);
 
         assert!(matches!(
             config.resources["kubernetes"],
             SchemaSource::Release { ref version } if version == "1.35"
-        ));
-        assert!(matches!(
-            config.resources["cluster-crds"],
-            SchemaSource::Cluster { cluster: None }
         ));
         assert!(matches!(
             config.resources["cert-manager"],
@@ -347,31 +282,10 @@ my-crd = { source = "file", path = "./crds/my-crd.yaml" }
     }
 
     #[test]
-    fn parse_multi_cluster_config() {
-        let toml = r#"
-[clusters.dev]
-server = "https://dev:6443"
-
-[clusters.prod]
-server = "https://prod:6443"
-
-[schemas]
-dev-crds = { source = "cluster", cluster = "dev" }
-prod-crds = { source = "cluster", cluster = "prod" }
-"#;
-        let config: HusakoConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.clusters.len(), 2);
-        assert!(config.cluster.is_none());
-        validate(&config).unwrap();
-    }
-
-    #[test]
     fn parse_empty_config() {
         let config: HusakoConfig = toml::from_str("").unwrap();
         assert!(config.entries.is_empty());
         assert!(config.resources.is_empty());
-        assert!(config.cluster.is_none());
-        assert!(config.clusters.is_empty());
     }
 
     #[test]
@@ -414,77 +328,6 @@ dev = "env/dev.ts"
         };
         let err = validate(&config).unwrap_err();
         assert!(err.to_string().contains("absolute path"));
-    }
-
-    #[test]
-    fn reject_both_cluster_and_clusters() {
-        let config = HusakoConfig {
-            cluster: Some(ClusterConfig {
-                server: "https://a:6443".to_string(),
-            }),
-            clusters: HashMap::from([(
-                "dev".to_string(),
-                ClusterConfig {
-                    server: "https://b:6443".to_string(),
-                },
-            )]),
-            ..Default::default()
-        };
-        let err = validate(&config).unwrap_err();
-        assert!(err.to_string().contains("cannot use both"));
-    }
-
-    #[test]
-    fn reject_unknown_cluster_reference() {
-        let config = HusakoConfig {
-            clusters: HashMap::from([(
-                "dev".to_string(),
-                ClusterConfig {
-                    server: "https://dev:6443".to_string(),
-                },
-            )]),
-            resources: HashMap::from([(
-                "crds".to_string(),
-                SchemaSource::Cluster {
-                    cluster: Some("staging".to_string()),
-                },
-            )]),
-            ..Default::default()
-        };
-        let err = validate(&config).unwrap_err();
-        assert!(err.to_string().contains("unknown cluster 'staging'"));
-    }
-
-    #[test]
-    fn reject_cluster_source_without_cluster_section() {
-        let config = HusakoConfig {
-            resources: HashMap::from([(
-                "crds".to_string(),
-                SchemaSource::Cluster { cluster: None },
-            )]),
-            ..Default::default()
-        };
-        let err = validate(&config).unwrap_err();
-        assert!(err.to_string().contains("no [cluster] section"));
-    }
-
-    #[test]
-    fn reject_unnamed_cluster_with_named_clusters() {
-        let config = HusakoConfig {
-            clusters: HashMap::from([(
-                "dev".to_string(),
-                ClusterConfig {
-                    server: "https://dev:6443".to_string(),
-                },
-            )]),
-            resources: HashMap::from([(
-                "crds".to_string(),
-                SchemaSource::Cluster { cluster: None },
-            )]),
-            ..Default::default()
-        };
-        let err = validate(&config).unwrap_err();
-        assert!(err.to_string().contains("specify which cluster"));
     }
 
     #[test]

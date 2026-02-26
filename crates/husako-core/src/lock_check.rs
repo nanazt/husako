@@ -132,9 +132,6 @@ fn resource_identity_matches(
     project_root: &Path,
 ) -> bool {
     match source {
-        // Cluster sources are never skipped — live state changes unpredictably
-        SchemaSource::Cluster { .. } => false,
-
         SchemaSource::Release { version } => {
             matches!(
                 lock.resources.get(name),
@@ -344,10 +341,6 @@ pub fn build_resource_entries(
                 version: version.clone(),
                 generated_at: now.clone(),
             },
-            SchemaSource::Cluster { cluster } => ResourceLockEntry::Cluster {
-                cluster: cluster.clone(),
-                generated_at: now.clone(),
-            },
             SchemaSource::Git { repo, tag, path } => ResourceLockEntry::Git {
                 repo: repo.clone(),
                 tag: tag.clone(),
@@ -532,28 +525,6 @@ mod tests {
                 version: "1.35".to_string(),
             },
         );
-        assert!(!should_skip_k8s(
-            Some(&config),
-            Some(&lock),
-            "0.3.0",
-            root,
-            root
-        ));
-    }
-
-    #[test]
-    fn no_skip_cluster_always() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        make_k8s_types_dir(root);
-        let lock = lock_with_resource(
-            "crds",
-            ResourceLockEntry::Cluster {
-                cluster: None,
-                generated_at: "2026-01-01T00:00:00Z".to_string(),
-            },
-        );
-        let config = config_with_resource("crds", SchemaSource::Cluster { cluster: None });
         assert!(!should_skip_k8s(
             Some(&config),
             Some(&lock),

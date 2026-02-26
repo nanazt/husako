@@ -37,12 +37,6 @@ pub enum ResourceLockEntry {
         version: String,
         generated_at: String,
     },
-    #[serde(rename = "cluster")]
-    Cluster {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cluster: Option<String>,
-        generated_at: String,
-    },
     #[serde(rename = "git")]
     Git {
         repo: String,
@@ -178,13 +172,6 @@ mod tests {
                 path: "./crds/my-crd.yaml".to_string(),
                 content_hash: "a1b2c3d4e5f67890".to_string(),
                 generated_at: "2026-02-26T14:03:05Z".to_string(),
-            },
-        );
-        resources.insert(
-            "dev-crds".to_string(),
-            ResourceLockEntry::Cluster {
-                cluster: Some("dev".to_string()),
-                generated_at: "2026-02-26T14:00:00Z".to_string(),
             },
         );
 
