@@ -296,6 +296,15 @@ async fn main() -> ExitCode {
                 }
             };
 
+            // Pre-flight: if types are missing, auto-generate before rendering.
+            let types_dir = project_root.join(".husako").join("types");
+            if !types_dir.exists()
+                && let Err(e) = run_auto_generate(&project_root).await
+            {
+                eprintln!("{} Could not generate types: {e}", style::error_prefix());
+                return ExitCode::from(exit_code(&e));
+            }
+
             let schema_store = husako_core::load_schema_store(&project_root);
 
             let filename = abs_file.to_string_lossy();
@@ -667,6 +676,13 @@ async fn main() -> ExitCode {
                                 section,
                                 style::dim(&format_source_detail(&result))
                             );
+                            eprintln!();
+                            if let Err(e) = run_auto_generate(&project_root).await {
+                                eprintln!(
+                                    "{} Type generation failed: {e}",
+                                    style::warning_prefix()
+                                );
+                            }
                             ExitCode::SUCCESS
                         }
                         Err(e) => {
@@ -733,6 +749,10 @@ async fn main() -> ExitCode {
                         style::dep_name(&result.name),
                         result.section
                     );
+                    eprintln!();
+                    if let Err(e) = run_auto_generate(&project_root).await {
+                        eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                    }
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1057,7 +1077,9 @@ async fn main() -> ExitCode {
                         style::dep_name(&name)
                     );
                     eprintln!();
-                    eprintln!("Run 'husako gen' to install the plugin and generate types.");
+                    if let Err(e) = run_auto_generate(&project_root).await {
+                        eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                    }
                     ExitCode::SUCCESS
                 }
                 PluginAction::Remove { name } => {
@@ -1096,6 +1118,10 @@ async fn main() -> ExitCode {
                             style::check_mark(),
                             style::dep_name(&name)
                         );
+                        eprintln!();
+                        if let Err(e) = run_auto_generate(&project_root).await {
+                            eprintln!("{} Type generation failed: {e}", style::warning_prefix());
+                        }
                     } else {
                         eprintln!("{} Plugin '{}' not found", style::cross_mark(), name);
                         return ExitCode::from(1);
@@ -1352,6 +1378,21 @@ fn latest_k8s_version() -> String {
         Ok(versions) if !versions.is_empty() => versions.into_iter().next().unwrap(),
         _ => DEFAULT_K8S_VERSION.to_string(),
     }
+}
+
+/// Run generate with default options derived from husako.toml.
+/// Returns Ok(()) on success, or a HusakoError on failure.
+/// Used by commands that need fresh types after config changes.
+async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), HusakoError> {
+    let progress = IndicatifReporter::new();
+    let config = husako_config::load(project_root).ok().flatten();
+    let options = GenerateOptions {
+        project_root: project_root.to_path_buf(),
+        openapi: None,
+        skip_k8s: false,
+        config,
+    };
+    husako_core::generate(&options, &progress).await
 }
 
 // --- husako add (URL auto-detect, no interactive) ---

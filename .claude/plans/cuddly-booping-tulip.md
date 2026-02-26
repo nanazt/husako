@@ -1,114 +1,135 @@
-# Plan: Rename `husako generate` → `husako gen` (primary command)
+# Plan: Auto-run `husako gen` after config-mutating commands and before render (if types missing)
 
 ## Context
 
-`husako generate` is the most-used command but verbose to type. `gen` already exists
-as a clap alias, but docs and error messages all say `generate`. The goal is to flip
-the primary name to `gen`, keep `generate` as a hidden backwards-compat alias, and
-update all user-facing references (messages, docs) to use `gen`. Internal Rust names
-(`Generate`, `GenerateOptions`, `generate()`) are **unchanged** for code readability.
+`husako update` already auto-regenerates types after updating versions — this is the
+right pattern. `husako add`, `husako remove`, `husako plugin add`, and `husako plugin
+remove` all modify `husako.toml` but currently leave type regeneration to the user.
+`husako render` fails with a runtime error (exit 4) when types are missing, forcing
+users to know they need `husako gen` first.
+
+Goal: make the most common workflows self-contained — adding a dependency or rendering
+should just work without manual gen steps.
+
+**Design decisions:**
+- `husako update`: already auto-gens — no change needed
+- `husako add / remove / plugin add / plugin remove`: auto-gen after config write; gen
+  failure is non-fatal (warn + succeed, since the config change itself succeeded)
+- `husako render`: if `.husako/types/` is missing → auto-gen then render; stale types
+  → no warning, render proceeds (husako debug handles staleness info)
+- No `--no-gen` flag — always auto-gen for simplicity
 
 ---
 
 ## Changes
 
-### 1. `crates/husako-cli/src/main.rs`
+### `crates/husako-cli/src/main.rs` only
 
-#### a) Flip primary command name, keep `generate` as hidden alias
+#### A) New async helper `run_auto_generate(project_root)`
+
+Add near the top of the file (after existing helpers):
 
 ```rust
-// Before
-#[command(alias = "gen")]
-Generate { ... }
-
-// After
-#[command(name = "gen", alias = "generate")]
-Generate { ... }
+/// Run generate with default options derived from husako.toml config.
+/// Returns Ok(()) on success, or an error on failure.
+/// Used by commands that implicitly need fresh types after config changes.
+async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), husako_core::HusakoError> {
+    let progress = IndicatifReporter::new();
+    let config = husako_config::load(project_root).ok().flatten();
+    let options = husako_core::GenerateOptions {
+        project_root: project_root.to_path_buf(),
+        openapi: None,   // derive from config; no CLI overrides
+        skip_k8s: false,
+        config,
+    };
+    husako_core::generate(&options, &progress).await
+}
 ```
 
-`clap` derives the subcommand name from the variant by default (`Generate` → `"generate"`).
-`name = "gen"` overrides the primary name to `gen`. `alias = "generate"` keeps the old
-name working for backwards compatibility — it does not appear in `--help` output because
-clap aliases are hidden by default.
-`Commands::Generate` (the Rust match arm) is unchanged.
+#### B) `Commands::Add` success branch
 
-#### b) Three `eprintln!` suggestion lines → `husako gen`
+After the existing `✔ Added ...` eprintln chain, call auto-gen.
+Gen failure prints a warning but the command still exits SUCCESS:
 
-| Line (approx) | Location |
-|---------------|----------|
-| ~427 | `Commands::New` success — "Next steps: husako generate" |
-| ~461 | `Commands::Init` success — "Next steps: husako generate" |
-| ~1060 | `Commands::Plugin { add }` — "Run 'husako generate' to install..." |
+```rust
+eprintln!();
+match run_auto_generate(&project_root).await {
+    Ok(()) => {}
+    Err(e) => eprintln!("{} Type generation failed: {e}", style::warning_prefix()),
+}
+```
 
----
+#### C) `Commands::Remove` success branch
 
-### 2. `crates/husako-core/src/lib.rs`
+Same pattern after the `✔ Removed ...` line.
 
-Four error message strings that say `"Run 'husako generate' to ..."` → `"Run 'husako gen' to ..."`:
+#### D) `Commands::Plugin { PluginAction::Add }` success branch
 
-- ~line 1525: `"Run 'husako generate' to create type definitions"`
-- ~line 1539: `"Run 'husako generate' to update tsconfig.json"`
-- ~line 1550: `"Run 'husako generate' to create tsconfig.json"`
-- ~line 1562: `"Run 'husako generate' to update"`
+Replace the current `eprintln!("Run 'husako gen' to install the plugin and generate types.")`:
 
----
+```rust
+// Remove suggestion line, add auto-gen:
+eprintln!();
+match run_auto_generate(&project_root).await {
+    Ok(()) => {}
+    Err(e) => eprintln!("{} Type generation failed: {e}", style::warning_prefix()),
+}
+```
 
-### 3. `crates/husako-runtime-qjs/src/resolver.rs`
+#### E) `Commands::Plugin { PluginAction::Remove }` success branch
 
-Three error strings → `husako gen`:
+Add auto-gen after the `✔ Removed plugin ...` line (same pattern).
 
-- ~line 34: `"... Run 'husako generate' to install plugins"`
-- ~line 68: `"... require 'husako generate' to be run first"`
-- ~line 92: `"... Run 'husako generate' to generate {} modules"`
+#### F) `Commands::Render` — pre-flight check
 
----
+Before calling `husako_core::render(...)`, check if `.husako/types/` exists:
 
-### 4. `crates/husako-runtime-qjs/src/lib.rs` (unit tests)
+```rust
+// Pre-flight: if types directory is missing, auto-gen first
+let types_dir = project_root.join(".husako").join("types");
+if !types_dir.exists() {
+    if let Err(e) = run_auto_generate(&project_root).await {
+        eprintln!("{} Could not generate types: {e}", style::error_prefix());
+        return ExitCode::from(exit_code(&e));
+    }
+}
+// ... existing render call follows
+```
 
-Two assertions that check `contains("husako generate")` → `contains("husako gen")`.
-
----
-
-### 5. `crates/husako-cli/tests/integration.rs`
-
-- **6 test args**: `.args(["generate", ...])` → `.args(["gen", ...])`
-- **2 error message assertions**: `contains("husako generate")` → `contains("husako gen")`
-
----
-
-### 6. Docs (`.worktrees/docs-site/docs/`)
-
-Bulk replace `husako generate` → `husako gen` across all 7 affected files:
-
-| File | Occurrences |
-|------|-------------|
-| `guide/getting-started.md` | 5 |
-| `guide/configuration.md` | 3 |
-| `guide/helm.md` | 4 |
-| `guide/testing.md` | 7 |
-| `reference/cli.md` | 7 (including section heading) |
-| `reference/import-system.md` | 4 |
-| `advanced/plugins.md` | 4 |
-| `advanced/benchmarks.md` | 2 |
-
-`reference/cli.md` heading `## husako generate` → `## husako gen`.
+For render, gen failure IS fatal (render can't proceed without types), so exit with error.
+Stale types (toml newer than types dir): no warning — render proceeds with existing types.
 
 ---
 
-### 7. `CLAUDE.md` + `.claude/*.md`
+## Tests
 
-- `CLAUDE.md` already uses `husako gen` on line 38. Other occurrences of `husako generate` → `husako gen`.
-- `.claude/plugin-spec.md` and `.claude/testing.md`: update ~6 references.
+### Integration test impact
+
+Existing `husako add` / `husako remove` tests use minimal `husako.toml` files (usually
+`[resources]\n` or similar). When `run_auto_generate` is triggered:
+- No `[resources]` or `[charts]` configured → `generate()` writes only the base SDK
+  types (`husako.d.ts`, `tsconfig.json`) and succeeds
+- Tests should still pass without changes
+
+If any add/remove tests break due to auto-gen output (stderr assertions), update those
+assertions to allow the additional output lines.
+
+### New test for render pre-flight (optional)
+
+```rust
+#[test]
+fn render_auto_generates_when_types_missing() {
+    // Create project with husako.toml but no .husako/types/
+    // Run husako render — assert no "husako gen to be run first" error
+}
+```
 
 ---
 
-## What is NOT changed
+## Docs
 
-- `Commands::Generate` enum variant
-- `GenerateOptions` struct
-- `generate()` function
-- `HusakoError::GenerateIo` etc.
-- Any other internal Rust identifiers
+Update `.worktrees/docs-site/docs/guide/getting-started.md` to remove the explicit
+"run husako gen after adding dependencies" step — the commands handle it now.
 
 ---
 
@@ -120,9 +141,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
-Manual check:
+Manual smoke tests:
 ```bash
-husako gen --help        # ✔ works, primary name shown
-husako generate --help   # ✔ works via hidden alias (not shown in husako --help)
-husako --help            # shows "gen" only, no "generate"
+husako add --resource release 1.35  # → auto-gens types after adding
+husako remove kubernetes            # → auto-gens types after removing
+husako plugin add --url <url>       # → auto-gens (not just suggestion message)
+husako render entry.ts              # (no types) → auto-gens first, then renders
 ```
