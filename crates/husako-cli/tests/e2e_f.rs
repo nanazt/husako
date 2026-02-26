@@ -15,7 +15,6 @@ fn scenario_f_oci_chart_source() {
     // ── F1: add OCI chart via non-interactive flags ───────────────────────────
     husako_at(dir.path())
         .args([
-            "-y",
             "add",
             "oci://registry-1.docker.io/bitnamicharts/postgresql",
             "--version",
