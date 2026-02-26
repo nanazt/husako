@@ -218,12 +218,12 @@ Reports any issues with suggested fixes.
 
 ---
 
-## husako validate
+## husako check
 
 Compile TypeScript and validate resource structure without emitting YAML.
 
 ```
-husako validate <file-or-alias>
+husako check <file-or-alias>
 ```
 
 Runs the full pipeline (TypeScript compile → execute → validate JSON contract) but does not write output.
