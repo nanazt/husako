@@ -270,6 +270,10 @@ Every plan **must** include a section that explicitly identifies:
 1. **Tests to add or modify** — new tests for the feature, and existing tests that may need updating (e.g. assertions that reference changed output, struct fields, or error messages).
 2. **Docs to add or modify** — user-visible changes (new CLI flags, new config options, new source types, changed error messages, etc.) require an update to `.worktrees/docs-site/docs/`.
 
+**In plan mode, always confirm both before calling ExitPlanMode:**
+- "Are there tests to add or modify?" — check every time, without exception.
+- "Are there docs to add or modify?" — check every time, without exception.
+
 Do not treat these as optional — always verify both before finalising a plan.
 
 For simple tasks that don't go through planning, ask the user whether tests or documentation need to be updated after the work is done.
