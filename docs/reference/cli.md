@@ -221,12 +221,36 @@ Reports any issues with suggested fixes.
 Compile TypeScript and validate resource structure without emitting YAML.
 
 ```
-husako check <file-or-alias>
+husako check <file-or-alias> [--type-check]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--type-check`, `-t` | Also run TypeScript type checking via `tsc --noEmit` (see below) |
 
 Runs the full pipeline (TypeScript compile → execute → validate JSON contract) but does not write output.
 
 Useful in CI to catch errors early.
+
+### Type checking
+
+`husako check` uses [oxc](https://oxc.rs/) to strip TypeScript types and execute the file in QuickJS. This catches syntax errors, runtime failures, and schema validation errors, but **does not perform TypeScript type checking** — type errors such as incorrect argument types or missing properties are invisible to oxc.
+
+To also check TypeScript types, pass `--type-check` (or `-t`):
+
+```
+husako check --type-check <file-or-alias>
+```
+
+This runs `tsc --noEmit` in the project root after the standard checks. Requirements:
+
+- TypeScript must be installed: `npm install -g typescript`
+- Types must be generated first: `husako gen`
+
+Exit codes when `--type-check` is used:
+- **0** — all checks pass, including TypeScript types
+- **3** — TypeScript type errors found
+- If `tsc` is not on PATH, a warning is printed but the command still exits 0
 
 ---
 
@@ -293,6 +317,24 @@ Run `husako gen` (or `husako gen --skip-k8s`) before `husako test` to ensure
 `husako/test.d.ts` and `tsconfig.json` path mappings are written.
 
 See [Writing Tests](/guide/testing) for full examples and the assertion API reference.
+
+---
+
+## husako version
+
+Print the version, commit hash, and build date.
+
+```
+husako version
+```
+
+Example output:
+
+```
+husako 0.1.0 (abc1234-dirty 2026-02-27)
+```
+
+The commit hash has a `-dirty` suffix if the working tree had uncommitted changes at build time.
 
 ---
 
