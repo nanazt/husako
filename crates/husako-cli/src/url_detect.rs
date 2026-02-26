@@ -164,6 +164,15 @@ pub fn detect_git_kind(dir: &Path, sub_path: &str) -> Result<SourceKind, String>
         return Ok(SourceKind::Chart);
     }
 
+    // JSON file with "$schema" key → Helm values schema (Chart)
+    if target.is_file() && target.extension().and_then(|e| e.to_str()) == Some("json") {
+        let content = std::fs::read_to_string(&target)
+            .map_err(|e| format!("could not read {}: {e}", target.display()))?;
+        if content.contains("\"$schema\"") {
+            return Ok(SourceKind::Chart);
+        }
+    }
+
     // CRD YAML → Resource
     if has_crd_content(&target)? {
         return Ok(SourceKind::Resource);
@@ -404,6 +413,22 @@ mod tests {
     fn detect_git_kind_empty_dir_returns_err() {
         let dir = tempfile::tempdir().unwrap();
         assert!(detect_git_kind(dir.path(), ".").is_err());
+    }
+
+    #[test]
+    fn detect_git_kind_json_schema_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("charts/prometheus");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("values.schema.json"),
+            r#"{"$schema":"http://json-schema.org/draft-07/schema#","properties":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_git_kind(dir.path(), "charts/prometheus/values.schema.json").unwrap(),
+            SourceKind::Chart
+        );
     }
 
     #[test]
