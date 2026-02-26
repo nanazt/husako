@@ -19,14 +19,10 @@ pub fn extract_hash(server_relative_url: &str) -> Option<String> {
 pub async fn fetch_discovery(
     client: &Client,
     base_url: &str,
-    bearer_token: Option<&str>,
 ) -> Result<DiscoveryIndex, OpenApiError> {
     let url = format!("{base_url}/openapi/v3");
-    let mut req = client.get(&url);
-    if let Some(token) = bearer_token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
+    let resp = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| OpenApiError::Http(format!("GET {url}: {e}")))?;
@@ -45,14 +41,10 @@ pub async fn fetch_spec(
     client: &Client,
     base_url: &str,
     server_relative_url: &str,
-    bearer_token: Option<&str>,
 ) -> Result<serde_json::Value, OpenApiError> {
     let url = format!("{base_url}{server_relative_url}");
-    let mut req = client.get(&url);
-    if let Some(token) = bearer_token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
+    let resp = client
+        .get(&url)
         .send()
         .await
         .map_err(|e| OpenApiError::Http(format!("GET {url}: {e}")))?;

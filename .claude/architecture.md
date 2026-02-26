@@ -183,7 +183,7 @@ Differences from the OpenAPI codegen path (`husako-dts/src/lib.rs`):
 - Strip `v` for semver parsing, filter stable
 - Returns original tag string (preserving `v` prefix)
 
-**`file`/`cluster`** — skipped (no version concept).
+**`file`** — skipped (no version concept).
 
 ### Version comparison (`versions_match`)
 
@@ -260,7 +260,7 @@ djb2: `hash = hash.wrapping_mul(33).wrapping_add(byte)` from seed 5381, formatte
 
 ### Invalidation model
 
-No explicit invalidation. Pinned sources (release+version, git+tag, chart+version) are deterministic by design. File and cluster sources are not cached (intentionally mutable).
+No explicit invalidation. Pinned sources (release+version, git+tag, chart+version) are deterministic by design. File sources are not cached (intentionally mutable).
 
 ## 8. Lock File (Incremental Type Generation)
 
@@ -286,7 +286,6 @@ types are already written; only a warning is printed.
 | `release` resource | `version` | `types/k8s/` exists |
 | `git` resource | `repo + tag + path` | `types/k8s/` exists |
 | `file` resource | `path + content_hash` | `types/k8s/` exists |
-| `cluster` resource | **never** | — |
 | chart (any) | source-specific version/tag | `types/helm/{name}.d.ts` exists |
 | `git` plugin | `url + path` | installed dir + plugin_version match |
 | `path` plugin | `path + content_hash` | installed dir + plugin_version match |

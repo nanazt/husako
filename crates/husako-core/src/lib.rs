@@ -362,13 +362,11 @@ pub async fn generate(
                 let task = progress.start_task("Fetching OpenAPI specs...");
                 let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
                     source: match &openapi_opts.source {
-                        husako_openapi::OpenApiSource::Url {
-                            base_url,
-                            bearer_token,
-                        } => husako_openapi::OpenApiSource::Url {
-                            base_url: base_url.clone(),
-                            bearer_token: bearer_token.clone(),
-                        },
+                        husako_openapi::OpenApiSource::Url { base_url } => {
+                            husako_openapi::OpenApiSource::Url {
+                                base_url: base_url.clone(),
+                            }
+                        }
                         husako_openapi::OpenApiSource::Directory(p) => {
                             husako_openapi::OpenApiSource::Directory(p.clone())
                         }
@@ -967,15 +965,6 @@ fn resource_info(name: &str, source: &husako_config::SchemaSource) -> Dependency
             source_type: "release",
             version: Some(version.clone()),
             details: String::new(),
-        },
-        husako_config::SchemaSource::Cluster { cluster } => DependencyInfo {
-            name: name.to_string(),
-            source_type: "cluster",
-            version: None,
-            details: cluster
-                .as_deref()
-                .map(|c| format!("cluster: {c}"))
-                .unwrap_or_default(),
         },
         husako_config::SchemaSource::Git { repo, tag, path } => DependencyInfo {
             name: name.to_string(),

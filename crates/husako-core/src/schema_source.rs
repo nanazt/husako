@@ -28,9 +28,6 @@ pub async fn resolve_all(
         let task = std::sync::Arc::new(progress.start_task(&format!("Resolving {name}...")));
         let specs = match source {
             SchemaSource::File { path } => resolve_file(path, project_root)?,
-            SchemaSource::Cluster { cluster } => {
-                resolve_cluster(config, cluster.as_deref(), cache_dir).await?
-            }
             SchemaSource::Release { version } => {
                 let task_cb = std::sync::Arc::clone(&task);
                 let on_progress_cb = move |bytes: u64, total: Option<u64>, pct: Option<u8>| {
@@ -193,42 +190,6 @@ fn derive_discovery_key(name: &str) -> String {
     } else {
         format!("apis/unknown/{name}")
     }
-}
-
-/// Resolve a cluster-based schema source.
-async fn resolve_cluster(
-    config: &HusakoConfig,
-    cluster_name: Option<&str>,
-    cache_dir: &Path,
-) -> Result<HashMap<String, Value>, HusakoError> {
-    let server =
-        if let Some(name) = cluster_name {
-            config
-                .clusters
-                .get(name)
-                .map(|c| &c.server)
-                .ok_or_else(|| {
-                    HusakoError::GenerateIo(format!("cluster '{name}' not found in config"))
-                })?
-        } else {
-            config.cluster.as_ref().map(|c| &c.server).ok_or_else(|| {
-                HusakoError::GenerateIo("no [cluster] section in config".to_string())
-            })?
-        };
-
-    let creds = husako_openapi::kubeconfig::resolve_credentials(server)?;
-
-    let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
-        source: husako_openapi::OpenApiSource::Url {
-            base_url: creds.server,
-            bearer_token: Some(creds.bearer_token),
-        },
-        cache_dir: cache_dir.to_path_buf(),
-        offline: false,
-    })?;
-
-    let specs = client.fetch_all_specs().await?;
-    Ok(specs)
 }
 
 /// Resolve a GitHub release schema source.

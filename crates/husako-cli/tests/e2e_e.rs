@@ -107,7 +107,7 @@ build([repo, release]);
     husako_at(dir.path()).args(["gen"]).assert().success();
 
     husako_at(dir.path())
-        .args(["-y", "clean", "--all"])
+        .args(["clean", "--all"])
         .assert()
         .success();
     assert_no_dir(&dir.path().join(".husako"));

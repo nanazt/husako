@@ -48,13 +48,3 @@ pub fn prompt_clean() -> Result<(bool, bool), String> {
         _ => unreachable!(),
     })
 }
-
-/// Ask for user confirmation. Returns true if user confirms.
-pub fn confirm(prompt: &str) -> Result<bool, String> {
-    let theme = crate::theme::husako_theme();
-    dialoguer::Confirm::with_theme(&theme)
-        .with_prompt(prompt)
-        .default(true)
-        .interact()
-        .map_err(|e| e.to_string())
-}

@@ -19,7 +19,6 @@ fn scenario_b_chart_sources() {
     // ── B1: artifacthub source (bitnami/postgresql) ───────────────────────────
     husako_at(dir.path())
         .args([
-            "-y",
             "add",
             "bitnami/postgresql",
             "-n",
@@ -62,7 +61,6 @@ fn scenario_b_chart_sources() {
     // ── B2: registry source (bitnami HTTP → OCI archive delegation) ──────────
     husako_at(dir.path())
         .args([
-            "-y",
             "add",
             "https://charts.bitnami.com/bitnami",
             "redis",
@@ -114,7 +112,6 @@ fn scenario_b_chart_sources() {
     // ── B3: git chart source (prometheus-community/helm-charts) ──────────────
     husako_at(dir.path())
         .args([
-            "-y",
             "add",
             "https://github.com/prometheus-community/helm-charts",
             "-n",
@@ -166,7 +163,7 @@ fn scenario_b_chart_sources() {
     assert_toml_key_absent(dir.path(), "pg");
 
     husako_at(dir.path())
-        .args(["-y", "clean", "--types"])
+        .args(["clean", "--types"])
         .assert()
         .success();
     husako_at(dir.path()).args(["gen"]).assert().success();

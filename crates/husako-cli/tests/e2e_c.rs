@@ -61,7 +61,6 @@ build([ex]);
     // ── C2: resource git source (cert-manager CRDs) ───────────────────────────
     husako_at(dir.path())
         .args([
-            "-y",
             "add",
             "https://github.com/cert-manager/cert-manager",
             "-n",
@@ -133,7 +132,7 @@ build([cert]);
     assert_toml_key_absent(dir.path(), "cert-manager");
 
     husako_at(dir.path())
-        .args(["-y", "clean", "--types"])
+        .args(["clean", "--types"])
         .assert()
         .success();
     husako_at(dir.path()).args(["gen"]).assert().success();
