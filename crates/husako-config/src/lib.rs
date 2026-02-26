@@ -1,4 +1,9 @@
 pub mod edit;
+pub mod lock;
+
+pub use lock::{
+    ChartLockEntry, HusakoLock, PluginLockEntry, ResourceLockEntry, load_lock, save_lock,
+};
 
 use std::collections::HashMap;
 use std::path::Path;

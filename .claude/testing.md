@@ -22,7 +22,7 @@ Every state-changing command must have its side effects explicitly verified:
 | Command | What to verify |
 |---------|----------------|
 | `husako add` | husako.toml has correct `source`, `package`/`repo`/`path`, `version` fields |
-| `husako gen` | `.d.ts` file exists AND contains expected `export` declarations |
+| `husako gen` | `.d.ts` file exists AND contains expected `export` declarations; `husako.lock` exists at project root with correct `format_version = 1` |
 | `husako remove` | Key is completely absent from husako.toml; re-gen and verify type file also absent |
 | `husako update` | Version string actually changed in husako.toml; type file mtime changed (regeneration happened) |
 | `husako clean` | `.husako/` directory completely removed (not just emptied) |
@@ -120,6 +120,7 @@ let combined = output_combined(&output);
 - `husako remove <name>` requires `-y` to skip the confirmation dialog when name is a CLI arg.
 - `husako plugin add` uses `--path <dir>` or `--url <url>`. There is no `--source` flag.
 - `husako plugin remove` and `husako plugin add` do not ask for confirmation; `-y` is not needed.
+- `husako gen --no-incremental` regenerates all types regardless of `husako.lock`. Use in tests that need a clean generation state without relying on lock skip behavior.
 - `husako add --chart --source oci` requires `--reference <oci://...>` and `--version <tag>`.
   The chart name for type generation is derived from the last path component of the reference
   (e.g. `oci://registry-1.docker.io/bitnamicharts/postgresql` → chart name `postgresql`).

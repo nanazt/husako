@@ -62,7 +62,7 @@ pub async fn install_plugins(
     Ok(installed)
 }
 
-async fn install_plugin(
+pub(crate) async fn install_plugin(
     name: &str,
     source: &PluginSource,
     project_root: &Path,

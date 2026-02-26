@@ -1,4 +1,5 @@
 pub mod emit;
+pub mod lock_check;
 pub mod plugin;
 pub mod progress;
 pub mod quantity;
@@ -175,6 +176,12 @@ pub struct GenerateOptions {
     pub skip_k8s: bool,
     /// Config from `husako.toml` (config-driven mode).
     pub config: Option<husako_config::HusakoConfig>,
+    /// Current husako binary version (from `env!("CARGO_PKG_VERSION")`).
+    /// Written to `husako.lock` and used to detect binary upgrades.
+    pub husako_version: String,
+    /// When true, skip all lock-file checks and regenerate everything.
+    /// The lock is still written at the end so the next run is incremental.
+    pub no_incremental: bool,
 }
 
 pub async fn generate(
@@ -183,11 +190,89 @@ pub async fn generate(
 ) -> Result<(), HusakoError> {
     let types_dir = options.project_root.join(".husako/types");
 
-    // 1. Process plugins: install and collect presets
+    // Load existing lock (None if --no-incremental or file absent / unreadable)
+    let old_lock: Option<husako_config::HusakoLock> = if options.no_incremental {
+        None
+    } else {
+        husako_config::load_lock(&options.project_root)
+            .ok()
+            .flatten()
+    };
+
+    let mut new_lock = husako_config::HusakoLock {
+        format_version: 1,
+        husako_version: options.husako_version.clone(),
+        resources: std::collections::BTreeMap::new(),
+        charts: std::collections::BTreeMap::new(),
+        plugins: std::collections::BTreeMap::new(),
+    };
+
+    // 1. Process plugins: install or reuse from existing cache
     let installed_plugins = if let Some(config) = &options.config
         && !config.plugins.is_empty()
     {
-        plugin::install_plugins(config, &options.project_root, progress).await?
+        let plugins_dir = options.project_root.join(".husako/plugins");
+        let mut installed = Vec::new();
+
+        for (name, source) in &config.plugins {
+            let plugin_dir = plugins_dir.join(name);
+
+            let can_skip = !options.no_incremental
+                && lock_check::should_skip_plugin(
+                    name,
+                    source,
+                    old_lock.as_ref(),
+                    &plugins_dir,
+                    &options.project_root,
+                );
+
+            if can_skip && let Ok(manifest) = husako_config::load_plugin_manifest(&plugin_dir) {
+                if let Some(entry) = old_lock.as_ref().and_then(|l| l.plugins.get(name.as_str())) {
+                    new_lock.plugins.insert(name.clone(), entry.clone());
+                }
+                installed.push(plugin::InstalledPlugin {
+                    name: name.clone(),
+                    manifest,
+                    dir: plugin_dir,
+                });
+                continue;
+                // If manifest load fails, fall through to reinstall
+            }
+
+            let task = progress.start_task(&format!("Installing plugin {name}..."));
+            match plugin::install_plugin(name, source, &options.project_root, &plugin_dir).await {
+                Ok(()) => match husako_config::load_plugin_manifest(&plugin_dir) {
+                    Ok(manifest) => {
+                        task.finish_ok(&format!(
+                            "{name}: installed (v{})",
+                            manifest.plugin.version
+                        ));
+                        let lock_entry = lock_check::build_plugin_entry(
+                            source,
+                            &plugin_dir,
+                            &manifest,
+                            &options.project_root,
+                        );
+                        new_lock.plugins.insert(name.clone(), lock_entry);
+                        installed.push(plugin::InstalledPlugin {
+                            name: name.clone(),
+                            manifest,
+                            dir: plugin_dir,
+                        });
+                    }
+                    Err(e) => {
+                        task.finish_err(&format!("{name}: invalid manifest: {e}"));
+                        return Err(HusakoError::Config(e));
+                    }
+                },
+                Err(e) => {
+                    task.finish_err(&format!("{name}: {e}"));
+                    return Err(e);
+                }
+            }
+        }
+
+        installed
     } else {
         Vec::new()
     };
@@ -216,54 +301,84 @@ pub async fn generate(
     )?;
 
     // 4. Generate k8s types
-    // Priority: --skip-k8s → CLI flags → husako.toml [schemas] → skip
-    if !options.skip_k8s {
-        let specs = if let Some(openapi_opts) = &options.openapi {
-            // Legacy CLI mode
-            let task = progress.start_task("Fetching OpenAPI specs...");
-            let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
-                source: match &openapi_opts.source {
-                    husako_openapi::OpenApiSource::Url {
-                        base_url,
-                        bearer_token,
-                    } => husako_openapi::OpenApiSource::Url {
-                        base_url: base_url.clone(),
-                        bearer_token: bearer_token.clone(),
-                    },
-                    husako_openapi::OpenApiSource::Directory(p) => {
-                        husako_openapi::OpenApiSource::Directory(p.clone())
-                    }
-                },
-                cache_dir: options.project_root.join(".husako/cache"),
-                offline: openapi_opts.offline,
-            })?;
-            let result = client.fetch_all_specs().await?;
-            task.finish_ok("Fetched OpenAPI specs");
-            Some(result)
-        } else if let Some(config) = &merged_config
-            && !config.resources.is_empty()
-        {
-            // Config-driven mode (includes merged plugin presets)
-            let cache_dir = options.project_root.join(".husako/cache");
-            Some(
-                schema_source::resolve_all(config, &options.project_root, &cache_dir, progress)
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-        if let Some(specs) = specs {
-            let task = progress.start_task("Generating types...");
-            let gen_options = husako_dts::GenerateOptions { specs };
-            let result = husako_dts::generate(&gen_options)?;
-
-            for (rel_path, content) in &result.files {
-                write_file(&types_dir.join(rel_path), content)?;
+    // Priority: --skip-k8s → --no-incremental / lock check → CLI flags → husako.toml [schemas]
+    if options.skip_k8s {
+        // Preserve existing resource lock entries verbatim so the next run
+        // without --skip-k8s still benefits from incremental skip.
+        if let Some(ref old) = old_lock {
+            for (name, entry) in &old.resources {
+                new_lock.resources.insert(name.clone(), entry.clone());
             }
-            task.finish_ok("Generated k8s types");
-            // Drop the large generated-file map off the async executor.
-            drop_in_background(result);
+        }
+    } else {
+        let k8s_skipped = lock_check::should_skip_k8s(
+            options.config.as_ref(),
+            old_lock.as_ref(),
+            &options.husako_version,
+            &types_dir,
+            &options.project_root,
+        );
+
+        if k8s_skipped {
+            if let Some(ref old) = old_lock {
+                for (name, entry) in &old.resources {
+                    new_lock.resources.insert(name.clone(), entry.clone());
+                }
+            }
+        } else {
+            let specs = if let Some(openapi_opts) = &options.openapi {
+                // Legacy CLI mode
+                let task = progress.start_task("Fetching OpenAPI specs...");
+                let client = husako_openapi::OpenApiClient::new(husako_openapi::FetchOptions {
+                    source: match &openapi_opts.source {
+                        husako_openapi::OpenApiSource::Url {
+                            base_url,
+                            bearer_token,
+                        } => husako_openapi::OpenApiSource::Url {
+                            base_url: base_url.clone(),
+                            bearer_token: bearer_token.clone(),
+                        },
+                        husako_openapi::OpenApiSource::Directory(p) => {
+                            husako_openapi::OpenApiSource::Directory(p.clone())
+                        }
+                    },
+                    cache_dir: options.project_root.join(".husako/cache"),
+                    offline: openapi_opts.offline,
+                })?;
+                let result = client.fetch_all_specs().await?;
+                task.finish_ok("Fetched OpenAPI specs");
+                Some(result)
+            } else if let Some(config) = &merged_config
+                && !config.resources.is_empty()
+            {
+                // Config-driven mode (includes merged plugin presets)
+                let cache_dir = options.project_root.join(".husako/cache");
+                Some(
+                    schema_source::resolve_all(config, &options.project_root, &cache_dir, progress)
+                        .await?,
+                )
+            } else {
+                None
+            };
+
+            if let Some(specs) = specs {
+                let task = progress.start_task("Generating types...");
+                let gen_options = husako_dts::GenerateOptions { specs };
+                let result = husako_dts::generate(&gen_options)?;
+
+                for (rel_path, content) in &result.files {
+                    write_file(&types_dir.join(rel_path), content)?;
+                }
+                task.finish_ok("Generated k8s types");
+                // Drop the large generated-file map off the async executor.
+                drop_in_background(result);
+            }
+
+            // Build lock entries for all configured resources
+            if let Some(config) = &options.config {
+                new_lock.resources =
+                    lock_check::build_resource_entries(config, &options.project_root);
+            }
         }
     }
 
@@ -272,23 +387,56 @@ pub async fn generate(
         && !config.charts.is_empty()
     {
         let cache_dir = options.project_root.join(".husako/cache");
-        let chart_schemas =
-            husako_helm::resolve_all(&config.charts, &options.project_root, &cache_dir).await?;
 
-        for (chart_name, schema) in &chart_schemas {
-            let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
-            let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
-            write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
-            write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
-            task.finish_ok(&format!("{chart_name}: chart types generated"));
+        // Split into charts to generate vs charts whose lock entry is preserved
+        let mut charts_to_generate = std::collections::HashMap::new();
+        for (name, source) in &config.charts {
+            if lock_check::should_skip_chart(
+                name,
+                source,
+                old_lock.as_ref(),
+                &options.husako_version,
+                &types_dir,
+                &options.project_root,
+            ) {
+                if let Some(entry) = old_lock.as_ref().and_then(|l| l.charts.get(name.as_str())) {
+                    new_lock.charts.insert(name.clone(), entry.clone());
+                }
+            } else {
+                charts_to_generate.insert(name.clone(), source.clone());
+            }
         }
-        // Drop the large schema map off the async executor.
-        drop_in_background(chart_schemas);
+
+        if !charts_to_generate.is_empty() {
+            let chart_schemas =
+                husako_helm::resolve_all(&charts_to_generate, &options.project_root, &cache_dir)
+                    .await?;
+
+            for (chart_name, schema) in &chart_schemas {
+                let task = progress.start_task(&format!("Generating {chart_name} chart types..."));
+                let (dts, js) = husako_dts::json_schema::generate_chart_types(chart_name, schema)?;
+                write_file(&types_dir.join(format!("helm/{chart_name}.d.ts")), &dts)?;
+                write_file(&types_dir.join(format!("helm/{chart_name}.js")), &js)?;
+                task.finish_ok(&format!("{chart_name}: chart types generated"));
+
+                if let Some(source) = charts_to_generate.get(chart_name) {
+                    let entry = lock_check::build_chart_entry(source, &options.project_root);
+                    new_lock.charts.insert(chart_name.clone(), entry);
+                }
+            }
+            // Drop the large schema map off the async executor.
+            drop_in_background(chart_schemas);
+        }
     }
 
     // 6. Write/update tsconfig.json (includes plugin module paths)
     let plugin_paths = plugin::plugin_tsconfig_paths(&installed_plugins);
     write_tsconfig(&options.project_root, merged_config.as_ref(), &plugin_paths)?;
+
+    // 7. Save lock (non-fatal on failure — types are already written)
+    if let Err(e) = husako_config::save_lock(&options.project_root, &new_lock) {
+        eprintln!("warning: failed to write husako.lock: {e}");
+    }
 
     Ok(())
 }
@@ -1131,6 +1279,9 @@ pub struct UpdateOptions {
     pub resources_only: bool,
     pub charts_only: bool,
     pub dry_run: bool,
+    /// Current husako binary version — forwarded to the auto-gen call so the
+    /// lock file records the correct version after an update.
+    pub husako_version: String,
 }
 
 #[derive(Debug)]
@@ -1240,6 +1391,8 @@ pub async fn update_dependencies(
             openapi: None,
             skip_k8s: false,
             config,
+            husako_version: options.husako_version.clone(),
+            no_incremental: false,
         };
         match generate(&gen_options, progress).await {
             Ok(()) => task.finish_ok("Types regenerated"),
@@ -1937,6 +2090,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -1984,6 +2139,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2192,6 +2349,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: Some(config),
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2230,6 +2389,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2332,6 +2493,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2715,6 +2878,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2871,6 +3036,8 @@ mod tests {
             openapi: None,
             skip_k8s: true,
             config: None,
+            husako_version: String::new(),
+            no_incremental: true,
         };
         tokio::runtime::Runtime::new()
             .unwrap()

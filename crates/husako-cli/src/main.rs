@@ -73,6 +73,11 @@ enum Commands {
         /// Skip Kubernetes type generation (only write husako.d.ts + tsconfig)
         #[arg(long)]
         skip_k8s: bool,
+
+        /// Regenerate all types, ignoring husako.lock.
+        /// Use when a git plugin's remote changed or a tag was moved upstream.
+        #[arg(long)]
+        no_incremental: bool,
     },
 
     /// Create a new project from a template
@@ -359,6 +364,7 @@ async fn main() -> ExitCode {
             api_server,
             spec_dir,
             skip_k8s,
+            no_incremental,
         } => {
             let project_root = cwd();
             let progress = IndicatifReporter::new();
@@ -395,6 +401,8 @@ async fn main() -> ExitCode {
                 openapi,
                 skip_k8s,
                 config,
+                husako_version: env!("CARGO_PKG_VERSION").to_string(),
+                no_incremental,
             };
 
             match husako_core::generate(&options, &progress).await {
@@ -820,6 +828,7 @@ async fn main() -> ExitCode {
                 resources_only,
                 charts_only,
                 dry_run,
+                husako_version: env!("CARGO_PKG_VERSION").to_string(),
             };
 
             match husako_core::update_dependencies(&options, &progress).await {
@@ -1391,6 +1400,8 @@ async fn run_auto_generate(project_root: &std::path::Path) -> Result<(), HusakoE
         openapi: None,
         skip_k8s: false,
         config,
+        husako_version: env!("CARGO_PKG_VERSION").to_string(),
+        no_incremental: false,
     };
     husako_core::generate(&options, &progress).await
 }
