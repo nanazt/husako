@@ -18,7 +18,7 @@ use crate::progress::IndicatifReporter;
 const DEFAULT_K8S_VERSION: &str = "1.35";
 
 #[derive(Parser)]
-#[command(name = "husako", version)]
+#[command(name = "husako")]
 struct Cli {
     /// Skip confirmation prompts
     #[arg(long, short = 'y', global = true)]
@@ -204,6 +204,12 @@ enum Commands {
     Check {
         /// TypeScript entry file or alias
         file: String,
+
+        /// Also run TypeScript type checking via tsc --noEmit.
+        /// Requires tsc on PATH (npm install -g typescript) and generated types
+        /// (husako gen). Exits with code 3 if type errors are found.
+        #[arg(long, short = 't')]
+        type_check: bool,
     },
 
     /// Manage plugins
@@ -211,6 +217,9 @@ enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+
+    /// Print version, commit hash, and build date
+    Version,
 
     /// Run test files
     Test {
@@ -1202,7 +1211,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Check { file } => {
+        Commands::Check { file, type_check } => {
             let project_root = cwd();
 
             let resolved = match resolve_entry(&file, &project_root) {
@@ -1241,7 +1250,7 @@ async fn main() -> ExitCode {
 
             let filename = abs_file.to_string_lossy();
             let options = RenderOptions {
-                project_root,
+                project_root: project_root.clone(),
                 allow_outside_root: false,
                 schema_store,
                 timeout_ms: None,
@@ -1261,6 +1270,30 @@ async fn main() -> ExitCode {
                         "{} All resources pass schema validation",
                         style::check_mark()
                     );
+
+                    if type_check {
+                        match std::process::Command::new("tsc")
+                            .arg("--noEmit")
+                            .current_dir(&project_root)
+                            .output()
+                        {
+                            Ok(out) if out.status.success() => {
+                                eprintln!("{} TypeScript types OK", style::check_mark());
+                            }
+                            Ok(out) => {
+                                eprintln!("{} TypeScript type errors:", style::cross_mark());
+                                eprintln!("{}", String::from_utf8_lossy(&out.stdout));
+                                return ExitCode::from(3);
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "{} tsc not found — install TypeScript to enable type checking",
+                                    style::warning_prefix()
+                                );
+                            }
+                        }
+                    }
+
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1268,6 +1301,16 @@ async fn main() -> ExitCode {
                     ExitCode::from(exit_code(&e))
                 }
             }
+        }
+
+        Commands::Version => {
+            eprintln!(
+                "husako {} ({} {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("HUSAKO_GIT_HASH"),
+                env!("HUSAKO_BUILD_DATE"),
+            );
+            ExitCode::SUCCESS
         }
 
         Commands::Test {

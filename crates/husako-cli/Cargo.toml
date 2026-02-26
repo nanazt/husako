@@ -23,6 +23,7 @@ tempfile.workspace = true
 [dev-dependencies]
 assert_cmd.workspace = true
 husako-dts = { path = "../husako-dts", version = "0" }
+husako-sdk = { path = "../husako-sdk", version = "0" }
 mockito.workspace = true
 predicates = "3"
 insta.workspace = true
