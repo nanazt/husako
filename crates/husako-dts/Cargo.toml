@@ -12,5 +12,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 husako-core = { path = "../husako-core", version = "0" }
+husako-sdk = { path = "../husako-sdk", version = "0" }
 insta.workspace = true
 serde_json = { workspace = true }
+tempfile.workspace = true

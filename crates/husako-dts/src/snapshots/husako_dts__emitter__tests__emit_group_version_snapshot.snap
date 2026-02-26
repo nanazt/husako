@@ -6,13 +6,6 @@ expression: output
 
 import { _ResourceBuilder } from "husako/_base";
 
-import { ObjectMeta } from "k8s/_common";
-
-export interface Deployment {
-  metadata?: ObjectMeta;
-  spec?: DeploymentSpec;
-}
-
 export interface DeploymentSpec {
   replicas?: number;
 }
