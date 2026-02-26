@@ -1,6 +1,5 @@
 mod interactive;
 mod progress;
-mod search_select;
 mod style;
 mod theme;
 mod url_detect;
@@ -401,19 +400,12 @@ async fn main() -> ExitCode {
             directory,
             template,
         } => {
-            let k8s_version = match select_k8s_version() {
-                Ok(v) => v,
-                Err(None) => return ExitCode::SUCCESS, // Escape pressed
-                Err(Some(msg)) => {
-                    eprintln!("{} {msg}", style::error_prefix());
-                    return ExitCode::from(1);
-                }
-            };
+            let k8s_version = latest_k8s_version();
 
             let options = ScaffoldOptions {
                 directory: directory.clone(),
                 template,
-                k8s_version,
+                k8s_version: k8s_version.clone(),
             };
 
             match husako_core::scaffold(&options) {
@@ -423,6 +415,11 @@ async fn main() -> ExitCode {
                         style::check_mark(),
                         template,
                         directory.display()
+                    );
+                    eprintln!(
+                        "  kubernetes {}  {}",
+                        style::bold(&k8s_version),
+                        style::dim("· edit husako.toml to use a different version")
                     );
                     eprintln!();
                     eprintln!("Next steps:");
@@ -440,20 +437,12 @@ async fn main() -> ExitCode {
         // --- M16 ---
         Commands::Init { template } => {
             let project_root = cwd();
-
-            let k8s_version = match select_k8s_version() {
-                Ok(v) => v,
-                Err(None) => return ExitCode::SUCCESS, // Escape pressed
-                Err(Some(msg)) => {
-                    eprintln!("{} {msg}", style::error_prefix());
-                    return ExitCode::from(1);
-                }
-            };
+            let k8s_version = latest_k8s_version();
 
             let options = husako_core::InitOptions {
                 directory: project_root,
                 template,
-                k8s_version,
+                k8s_version: k8s_version.clone(),
             };
 
             match husako_core::init(&options) {
@@ -461,6 +450,11 @@ async fn main() -> ExitCode {
                     eprintln!(
                         "{} Created '{template}' project in current directory",
                         style::check_mark()
+                    );
+                    eprintln!(
+                        "  kubernetes {}  {}",
+                        style::bold(&k8s_version),
+                        style::dim("· edit husako.toml to use a different version")
                     );
                     eprintln!();
                     eprintln!("Next steps:");
@@ -1347,74 +1341,16 @@ fn derive_out_name(file_arg: &str, project_root: &std::path::Path) -> String {
 /// Interactively select a Kubernetes version.
 ///
 /// Returns `Ok(version)` on success, `Err(None)` on Escape (abort),
-/// `Err(Some(msg))` on fatal error.
-///
-/// Falls back to `DEFAULT_K8S_VERSION` when not running in a terminal
-/// (e.g. piped or in CI) or when the network request fails.
-fn select_k8s_version() -> Result<String, Option<String>> {
-    // Non-interactive: use default without prompting
-    if !console::Term::stderr().is_term() {
-        return Ok(DEFAULT_K8S_VERSION.to_string());
-    }
-
-    // Fetch initial page of versions (show feedback while loading)
-    eprintln!("{}", style::dim("Fetching Kubernetes versions..."));
-    let initial = tokio::task::block_in_place(|| {
+/// Fetches the latest Kubernetes version from GitHub.
+/// Falls back to `DEFAULT_K8S_VERSION` silently on any network failure.
+fn latest_k8s_version() -> String {
+    let result = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(husako_core::version_check::discover_recent_releases(10, 0))
+            .block_on(husako_core::version_check::discover_recent_releases(1, 0))
     });
-    // Clear the loading message
-    let _ = console::Term::stderr().clear_last_lines(1);
-
-    match initial {
-        Ok(versions) if !versions.is_empty() => {
-            let mut items: Vec<String> = versions
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    if i == 0 {
-                        format!("{v} (latest)")
-                    } else {
-                        v.clone()
-                    }
-                })
-                .collect();
-            let mut has_more = versions.len() == 10;
-            let mut next_offset: usize = 10;
-
-            let result =
-                search_select::run("Kubernetes version:", &mut items, &mut has_more, || {
-                    let new_versions = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(
-                            husako_core::version_check::discover_recent_releases(10, next_offset),
-                        )
-                    })
-                    .map_err(|e| e.to_string())?;
-                    let more = new_versions.len() == 10;
-                    next_offset += 10;
-                    Ok((new_versions, more))
-                });
-
-            match result {
-                Ok(Some(idx)) => {
-                    let selected = &items[idx];
-                    let version = selected
-                        .strip_suffix(" (latest)")
-                        .unwrap_or(selected)
-                        .to_string();
-                    Ok(version)
-                }
-                Ok(None) => Err(None), // Escape
-                Err(e) => Err(Some(e)),
-            }
-        }
-        _ => {
-            eprintln!(
-                "{} could not fetch Kubernetes versions, using default ({DEFAULT_K8S_VERSION})",
-                style::warning_prefix()
-            );
-            Ok(DEFAULT_K8S_VERSION.to_string())
-        }
+    match result {
+        Ok(versions) if !versions.is_empty() => versions.into_iter().next().unwrap(),
+        _ => DEFAULT_K8S_VERSION.to_string(),
     }
 }
 

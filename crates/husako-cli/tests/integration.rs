@@ -1174,6 +1174,7 @@ fn new_simple_creates_project() {
         .assert()
         .success()
         .stderr(predicates::str::contains("Created 'simple' project"))
+        .stderr(predicates::str::contains("kubernetes"))
         .stderr(predicates::str::contains("husako generate"));
 
     assert!(target.join(".gitignore").exists());
@@ -1190,7 +1191,8 @@ fn new_project_template() {
         .args(["new", "--template", "project", target.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Created 'project' project"));
+        .stderr(predicates::str::contains("Created 'project' project"))
+        .stderr(predicates::str::contains("kubernetes"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1209,7 +1211,8 @@ fn new_multi_env_template() {
         .args(["new", "--template", "multi-env", target.to_str().unwrap()])
         .assert()
         .success()
-        .stderr(predicates::str::contains("Created 'multi-env' project"));
+        .stderr(predicates::str::contains("Created 'multi-env' project"))
+        .stderr(predicates::str::contains("kubernetes"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
