@@ -196,3 +196,46 @@ token = "prod-bearer-token"
 ```
 
 If no token is provided, husako reads the bearer token from the active kubeconfig context (`~/.kube/config`).
+
+---
+
+## husako.lock
+
+`husako gen` creates a `husako.lock` file at the project root each time it runs. It records which type definitions were generated and from which source versions, so subsequent runs can skip regenerating types for unchanged dependencies.
+
+**Commit `husako.lock` to version control.** This ensures all team members and CI environments generate types from the same resolved versions, the same way `Cargo.lock` pins exact crate versions across machines.
+
+### What it tracks
+
+For each entry in `[resources]`, `[charts]`, and `[plugins]`, the lock records the identity fields that determine the generated output — the version for a `release` source, the repo URL and tag for a `git` source, and so on. On subsequent runs, husako compares these against the current `husako.toml`; if they match and the type files exist on disk, the entry is skipped.
+
+| Entry type | Skip condition |
+|---|---|
+| `release` resource | version unchanged AND `.husako/types/k8s/` exists |
+| `git` resource | repo, tag, path unchanged AND `.husako/types/k8s/` exists |
+| `file` resource | path unchanged AND file content unchanged AND `.husako/types/k8s/` exists |
+| `cluster` resource | **never skipped** — live cluster state is always re-fetched |
+| `registry` chart | repo, chart, version unchanged AND `.husako/types/helm/{name}.d.ts` exists |
+| `artifacthub` chart | package, version unchanged AND type file exists |
+| `git` chart | repo, tag, path unchanged AND type file exists |
+| `oci` chart | reference, version unchanged AND type file exists |
+| `file` chart | path unchanged AND file content unchanged AND type file exists |
+| `git` plugin | URL (and path) unchanged AND `plugin.toml` version unchanged AND `.husako/plugins/{name}/` exists |
+| `path` plugin | path unchanged AND directory content unchanged AND `plugin.toml` version unchanged |
+
+> **Note on k8s resources**: All resources (`[resources]`) are regenerated as a single unit. If any resource changes, all k8s types are regenerated. Individual resources cannot be regenerated in isolation.
+
+### Bypassing the lock
+
+To regenerate all types regardless of the lock:
+
+```
+husako gen --no-incremental
+```
+
+This is useful when:
+- A git plugin's remote HEAD changed (there is no version pin for git plugins without a tag)
+- A git tag was moved upstream
+- You suspect the lock is stale after manual edits
+
+The lock is still written after `--no-incremental` so the next run will be incremental again.

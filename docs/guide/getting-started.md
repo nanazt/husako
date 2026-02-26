@@ -76,6 +76,10 @@ You rarely need to run `husako gen` manually. `husako add` and `husako remove` r
 :::
 
 ::: tip
+After the first `husako gen`, a `husako.lock` file is created at the project root. Commit it to version control. It enables incremental generation — subsequent runs skip types that have not changed.
+:::
+
+::: tip
 `.husako/` is auto-managed by husako and should never be committed to version control. It is added to `.gitignore` by `husako new`.
 :::
 

@@ -32,8 +32,9 @@ husako gen [options]
 | `--api-server <url>` | Kubernetes API server URL |
 | `--spec-dir <path>` | Local directory with pre-fetched OpenAPI spec files |
 | `--skip-k8s` | Only write `husako.d.ts` and `tsconfig.json`, skip Kubernetes types |
+| `--no-incremental` | Regenerate all types, ignoring `husako.lock`. Use when a git plugin's remote changed or a tag was moved upstream. |
 
-Priority chain for k8s schema source: `--skip-k8s` → CLI flags → `husako.toml [resources]` → skip.
+Priority chain for k8s schema source: `--skip-k8s` → `--no-incremental` (bypass lock) → lock-file skip check → CLI flags → `husako.toml [resources]` → skip.
 
 Chart types from `[charts]` are always generated when configured.
 
