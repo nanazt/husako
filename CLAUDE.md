@@ -90,11 +90,13 @@ crates/
 ├── husako-config/         # husako.toml parser (entry aliases, resource/chart/plugin deps, cluster config)
 │   └── src/
 │       ├── lib.rs              # Config structs, plugin manifest parser
+│       ├── lock.rs             # HusakoLock structs + load/save (husako.lock)
 │       └── edit.rs             # Format-preserving TOML editing
 ├── husako-core/           # Pipeline orchestration + validation + schema source resolution + plugins
 │   └── src/
 │       ├── lib.rs              # generate(), render(), scaffold(), JSONC tsconfig handling
 │       ├── emit.rs             # JSON → YAML emitter (emit_yaml, re-exported at crate root)
+│       ├── lock_check.rs       # Skip decision logic for husako.lock incremental generation
 │       ├── plugin.rs           # Plugin install/remove/list, preset merging, tsconfig paths
 │       ├── quantity.rs         # Kubernetes quantity grammar validation
 │       ├── schema_source.rs    # Schema source dispatch (file, cluster, release, git)
