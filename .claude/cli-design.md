@@ -20,7 +20,6 @@ All interactive prompts, status messages, and command output must follow these r
 | Success prefix | Green+bold `✔` (`\u{2714}`) | After selection confirmed |
 | Failure prefix | Red+bold `✘` (`\u{2718}`) | After failure |
 | Latest tag | Appended to first version item | `1.16.3 (latest)` |
-| Scroll indicator | Dim `↑ more above` / `↓ more below` | Replaced by `loading…` during fetch |
 
 ### Prompt Flow
 
@@ -62,7 +61,6 @@ Cancelled:
 Success:    ✔ Operation succeeded        ← green+bold ✔
 Error:      error: something went wrong  ← red+bold "error:"
 Warning:    warning: something unusual   ← yellow+bold "warning:"
-Loading:    Fetching versions...         ← dim
 Suggestion: → try this instead           ← cyan →
 ```
 
@@ -154,6 +152,20 @@ No test files found
 ```
 
 No `check_mark`, no `error_prefix` — these are neutral informational states.
+
+### Silent Success
+
+Commands that only check without mutating state emit **no output on success** — exit 0
+is the signal:
+
+```
+$ husako check entry.ts   ← no output on success
+$ echo $?
+0
+```
+
+- Check/validate commands: silent on success, `error_prefix()` + non-zero on failure
+- Mutating commands (add, remove, gen): always emit a `check_mark()` success line
 
 ### Success With Detail
 
@@ -269,40 +281,6 @@ filename.test.ts
 - One blank line **before** instruction blocks ("Next steps:")
 - One blank line **after** a success message that is followed by a warning or suggestion
 - No blank line at the end of command output
-
-## Custom Widgets
-
-One custom widget built on `console::Term` with raw key input. Writes to stderr.
-
-### search_select (`search_select.rs`)
-
-Scrollable list with infinite scroll, used for Kubernetes version selection in `husako new` / `husako init`.
-
-```
-? Kubernetes version:
-  > 1.35 (latest)     ← cyan+bold
-    1.34
-    1.33
-    ↓ more below      ← dim, or "loading…" during fetch
-```
-
-- Up/Down navigate without wrapping
-- Auto-loads more items when cursor approaches bottom (`LOAD_THRESHOLD = 3`)
-- `↓ more below` swaps to `loading…` in-place during fetch (no layout shift)
-- `↑ more above` shown when scrolled past the top
-- Max 10 items visible at once
-- Enter confirms (`✔ prompt value`), Escape cancels
-
-### Echo Suppression
-
-The widget uses `with_echo_suppressed()` during blocking network calls:
-
-1. Enter crossterm raw mode to prevent arrow key escape sequences from echoing
-2. Execute the blocking fetch
-3. Restore normal mode
-4. Drain any buffered key events via `crossterm::event::poll()` + `read()`
-
-This prevents stray characters from appearing in the terminal while the user presses keys during loading.
 
 ## Color Helpers (style.rs)
 
