@@ -54,6 +54,11 @@ Cancelled:
 - **After-selection format** — `✔ {bold prompt}: {cyan value}` on one line
 - **Validation errors** — shown in red on the line below the prompt, then re-render
 - **Inline hints** — dim text placed on the same line as the prompt to avoid layout shift
+- **Minimize interactions** — interactive prompts (selections, confirmations, inputs)
+  are a last resort, used only when information truly cannot be inferred from arguments
+  or context. Prefer flags over prompts; prefer direct action over confirmation.
+  Example: `husako remove <name>` removes immediately — no confirm needed since the
+  operation is reversible and the intent is unambiguous from the argument.
 
 ## Status Messages
 
@@ -152,6 +157,37 @@ No test files found
 ```
 
 No `check_mark`, no `error_prefix` — these are neutral informational states.
+
+### Filter to Actionable
+
+Status/check commands show only items that need attention. If all items pass, show a
+single success line instead of a full table:
+
+```
+✔ All dependencies are up to date
+```
+
+Don't mix passing items into a table alongside actionable ones — showing every entry
+with a `✔` or `✘` adds noise. Show only items the user needs to act on.
+
+### Structured Checks
+
+Commands that run multiple named checks (e.g., `husako debug`) list each result then
+append a blank line and a summary:
+
+```
+✔ husako.toml found and valid
+✘ tsconfig.json is missing husako path mappings
+  → run husako gen
+
+✘ 1 issue found
+```
+
+- Individual pass: `check_mark()` + description
+- Individual fail: `cross_mark()` + description, then suggestions with `arrow_mark()`
+- Summary: blank line, then `check_mark()` "All checks passed" or `cross_mark()` "N issues found"
+- `cross_mark()` is correct for the summary even when the command exits 0 — the command
+  succeeded; the checks found issues
 
 ### Silent Success
 

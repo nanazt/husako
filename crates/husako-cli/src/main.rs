@@ -708,8 +708,8 @@ async fn main() -> ExitCode {
         Commands::Remove { name } => {
             let project_root = cwd();
 
-            let (dep_name, from_cli) = if let Some(n) = name {
-                (n, true)
+            let dep_name = if let Some(n) = name {
+                n
             } else {
                 // Interactive mode: list deps and let user choose
                 match husako_core::list_dependencies(&project_root) {
@@ -723,7 +723,7 @@ async fn main() -> ExitCode {
                         }
 
                         match interactive::prompt_remove(&items) {
-                            Ok(n) => (n, false),
+                            Ok(n) => n,
                             Err(e) => {
                                 eprintln!("{} {e}", style::error_prefix());
                                 return ExitCode::from(1);
@@ -736,18 +736,6 @@ async fn main() -> ExitCode {
                     }
                 }
             };
-
-            // Confirm removal only in CLI mode (not interactive, user already chose)
-            if from_cli && !cli.yes {
-                match interactive::confirm(&format!("Remove '{dep_name}'?")) {
-                    Ok(true) => {}
-                    Ok(false) => return ExitCode::SUCCESS,
-                    Err(e) => {
-                        eprintln!("{} {e}", style::error_prefix());
-                        return ExitCode::from(1);
-                    }
-                }
-            }
 
             match husako_core::remove_dependency(&project_root, &dep_name) {
                 Ok(result) => {
@@ -782,26 +770,30 @@ async fn main() -> ExitCode {
                         return ExitCode::SUCCESS;
                     }
 
-                    eprintln!(
-                        "{:<16} {:<10} {:<12} {:<10} {:<10}",
-                        "Name", "Kind", "Source", "Current", "Latest"
-                    );
-                    for entry in &entries {
-                        let latest = entry.latest.as_deref().unwrap_or("?");
-                        let mark = if entry.up_to_date {
-                            format!(" {}", style::check_mark())
-                        } else {
-                            String::new()
-                        };
+                    let outdated: Vec<_> = entries.iter().filter(|e| !e.up_to_date).collect();
+                    if outdated.is_empty() {
+                        eprintln!("{} All dependencies are up to date", style::check_mark());
+                    } else {
                         eprintln!(
-                            "{:<16} {:<10} {:<12} {:<10} {:<10}{}",
-                            style::dep_name(&entry.name),
-                            entry.kind,
-                            entry.source_type,
-                            entry.current,
-                            latest,
-                            mark,
+                            "{:<16} {:<10} {:<12} {:<10} {:<10}",
+                            style::bold("Name"),
+                            style::bold("Kind"),
+                            style::bold("Source"),
+                            style::bold("Current"),
+                            style::bold("Latest"),
                         );
+                        for entry in outdated {
+                            let latest = entry.latest.as_deref().unwrap_or("?");
+                            eprintln!(
+                                "{:<16} {:<10} {:<12} {:<10} {:<10} {}",
+                                style::dep_name(&entry.name),
+                                entry.kind,
+                                entry.source_type,
+                                entry.current,
+                                latest,
+                                style::arrow_mark(),
+                            );
+                        }
                     }
                     ExitCode::SUCCESS
                 }
@@ -1039,6 +1031,28 @@ async fn main() -> ExitCode {
                         eprintln!("  {} {suggestion}", style::arrow_mark());
                     }
 
+                    let issue_count = [
+                        !matches!(report.config_ok, Some(true)),
+                        !report.types_exist,
+                        !report.tsconfig_ok || !report.tsconfig_has_paths,
+                        report.stale,
+                    ]
+                    .iter()
+                    .filter(|&&b| b)
+                    .count();
+
+                    eprintln!();
+                    if issue_count == 0 {
+                        eprintln!("{} All checks passed", style::check_mark());
+                    } else {
+                        eprintln!(
+                            "{} {} issue{} found",
+                            style::cross_mark(),
+                            issue_count,
+                            if issue_count == 1 { "" } else { "s" }
+                        );
+                    }
+
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1080,10 +1094,15 @@ async fn main() -> ExitCode {
                         return ExitCode::from(1);
                     }
 
+                    let source_detail = match &source {
+                        husako_config::PluginSource::Git { url, .. } => url.clone(),
+                        husako_config::PluginSource::Path { path } => path.clone(),
+                    };
                     eprintln!(
-                        "{} Added plugin {} to [plugins]",
+                        "{} Added plugin {} to [plugins]\n  {}",
                         style::check_mark(),
-                        style::dep_name(&name)
+                        style::dep_name(&name),
+                        style::dim(&source_detail),
                     );
                     eprintln!();
                     if let Err(e) = run_auto_generate(&project_root).await {
@@ -1132,7 +1151,7 @@ async fn main() -> ExitCode {
                             eprintln!("{} Type generation failed: {e}", style::warning_prefix());
                         }
                     } else {
-                        eprintln!("{} Plugin '{}' not found", style::cross_mark(), name);
+                        eprintln!("{} Plugin '{}' not found", style::error_prefix(), name);
                         return ExitCode::from(1);
                     }
 

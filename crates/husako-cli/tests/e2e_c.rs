@@ -130,7 +130,7 @@ build([cert]);
 
     // ── C-remove: remove cert-manager, verify types gone, example still works ─
     husako_at(dir.path())
-        .args(["-y", "remove", "cert-manager"])
+        .args(["remove", "cert-manager"])
         .assert()
         .success();
     assert_toml_key_absent(dir.path(), "cert-manager");

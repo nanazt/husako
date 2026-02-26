@@ -170,7 +170,7 @@ fn scenario_b_chart_sources() {
 
     // ── B-remove: remove pg, verify TOML key gone, types cleaned up ──────────
     husako_at(dir.path())
-        .args(["-y", "remove", "pg"])
+        .args(["remove", "pg"])
         .assert()
         .success();
     assert_toml_key_absent(dir.path(), "pg");

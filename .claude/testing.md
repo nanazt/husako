@@ -117,7 +117,7 @@ let combined = output_combined(&output);
 
 - `husako clean` requires `--all` (or `--cache`/`--types`) for non-interactive operation.
   Without these flags it opens an interactive prompt even with `-y`.
-- `husako remove <name>` requires `-y` to skip the confirmation dialog when name is a CLI arg.
+- `husako remove <name>` does not prompt for confirmation — name on CLI removes directly.
 - `husako plugin add` uses `--path <dir>` or `--url <url>`. There is no `--source` flag.
 - `husako plugin remove` and `husako plugin add` do not ask for confirmation; `-y` is not needed.
 - `husako gen --no-incremental` regenerates all types regardless of `husako.lock`. Use in tests that need a clean generation state without relying on lock skip behavior.
