@@ -60,7 +60,7 @@ enum Commands {
     },
 
     /// Generate type definitions and tsconfig.json
-    #[command(alias = "gen")]
+    #[command(name = "gen", alias = "generate")]
     Generate {
         /// Kubernetes API server URL (e.g. https://localhost:6443)
         #[arg(long)]
@@ -424,7 +424,7 @@ async fn main() -> ExitCode {
                     eprintln!();
                     eprintln!("Next steps:");
                     eprintln!("  cd {}", directory.display());
-                    eprintln!("  husako generate");
+                    eprintln!("  husako gen");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -458,7 +458,7 @@ async fn main() -> ExitCode {
                     );
                     eprintln!();
                     eprintln!("Next steps:");
-                    eprintln!("  husako generate");
+                    eprintln!("  husako gen");
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
@@ -1057,7 +1057,7 @@ async fn main() -> ExitCode {
                         style::dep_name(&name)
                     );
                     eprintln!();
-                    eprintln!("Run 'husako generate' to install the plugin and generate types.");
+                    eprintln!("Run 'husako gen' to install the plugin and generate types.");
                     ExitCode::SUCCESS
                 }
                 PluginAction::Remove { name } => {

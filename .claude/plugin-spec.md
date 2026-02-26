@@ -155,7 +155,7 @@ Plugin `.d.ts` files are exposed via `tsconfig.json` path mappings:
 
 ## Lifecycle
 
-### `husako generate` (updated flow)
+### `husako gen` (updated flow)
 
 1. Process `[plugins]` — fetch/update each plugin to `.husako/plugins/<name>/`
 2. Parse each plugin's `plugin.toml` manifest
@@ -169,13 +169,13 @@ Plugin `.d.ts` files are exposed via `tsconfig.json` path mappings:
 
 1. Parse plugin manifest from source
 2. Add `[plugins]` entry to `husako.toml`
-3. Suggest running `husako generate`
+3. Suggest running `husako gen`
 
 ### `husako plugin remove <name>`
 
 1. Remove entry from `husako.toml [plugins]`
 2. Remove `.husako/plugins/<name>/` directory
-3. Remove plugin presets from generated types (next `husako generate` handles this)
+3. Remove plugin presets from generated types (next `husako gen` handles this)
 
 ### `husako plugin list`
 

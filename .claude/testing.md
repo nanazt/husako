@@ -169,8 +169,8 @@ Available matchers: `toBe`, `toEqual`, `toBeDefined`, `toBeUndefined`, `toBeNull
 `toBeFalsy`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`,
 `toContain`, `toHaveProperty`, `toHaveLength`, `toMatch`, `toThrow`. All support `.not` negation.
 
-`husako generate --skip-k8s` must be run before `husako test` so `husako/test.d.ts` and
-`tsconfig.json` path mappings are written. For plugin tests, run `husako generate` first to
+`husako gen --skip-k8s` must be run before `husako test` so `husako/test.d.ts` and
+`tsconfig.json` path mappings are written. For plugin tests, run `husako gen` first to
 install plugins.
 
 Exit code: 0 if all tests pass, 1 if any test fails or cannot compile/run.

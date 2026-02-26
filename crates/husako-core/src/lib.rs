@@ -1522,7 +1522,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
         count_files_and_size(&types_dir)
     } else {
         issues.push(".husako/types/ directory not found".to_string());
-        suggestions.push("Run 'husako generate' to create type definitions".to_string());
+        suggestions.push("Run 'husako gen' to create type definitions".to_string());
         (0, 0)
     };
 
@@ -1536,7 +1536,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
                 let has_k8s = parsed.pointer("/compilerOptions/paths/k8s~1*").is_some();
                 if !has_husako && !has_k8s {
                     issues.push("tsconfig.json is missing husako path mappings".to_string());
-                    suggestions.push("Run 'husako generate' to update tsconfig.json".to_string());
+                    suggestions.push("Run 'husako gen' to update tsconfig.json".to_string());
                 }
                 (true, has_husako || has_k8s)
             }
@@ -1547,7 +1547,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
         }
     } else {
         issues.push("tsconfig.json not found".to_string());
-        suggestions.push("Run 'husako generate' to create tsconfig.json".to_string());
+        suggestions.push("Run 'husako gen' to create tsconfig.json".to_string());
         (false, false)
     };
 
@@ -1559,7 +1559,7 @@ pub fn debug_project(project_root: &Path) -> Result<DebugReport, HusakoError> {
             (Some(c), Some(t)) if c > t => {
                 issues
                     .push("Types may be stale (husako.toml newer than .husako/types/)".to_string());
-                suggestions.push("Run 'husako generate' to update".to_string());
+                suggestions.push("Run 'husako gen' to update".to_string());
                 true
             }
             _ => false,

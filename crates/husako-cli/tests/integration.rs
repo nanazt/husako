@@ -687,7 +687,7 @@ fn generate_skip_k8s() {
     let root = dir.path();
 
     husako_at(root)
-        .args(["generate", "--skip-k8s"])
+        .args(["gen", "--skip-k8s"])
         .assert()
         .success();
 
@@ -826,7 +826,7 @@ fn generate_spec_dir() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -876,7 +876,7 @@ fn generate_updates_existing_tsconfig() {
     .unwrap();
 
     husako_at(root)
-        .args(["generate", "--skip-k8s"])
+        .args(["gen", "--skip-k8s"])
         .assert()
         .success();
 
@@ -1147,7 +1147,7 @@ fn generate_creates_schema_json() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1175,7 +1175,7 @@ fn new_simple_creates_project() {
         .success()
         .stderr(predicates::str::contains("Created 'simple' project"))
         .stderr(predicates::str::contains("kubernetes"))
-        .stderr(predicates::str::contains("husako generate"));
+        .stderr(predicates::str::contains("husako gen"));
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
@@ -1344,7 +1344,7 @@ build([Deployment()]);
         .args(["render", entry.to_str().unwrap()])
         .assert()
         .code(4)
-        .stderr(predicates::str::contains("husako generate"));
+        .stderr(predicates::str::contains("husako gen"));
 }
 
 #[test]
@@ -1357,7 +1357,7 @@ fn generate_creates_js_modules() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1380,7 +1380,7 @@ fn render_with_generated_modules() {
     write_mock_spec(&spec_dir, "apis/apps/v1");
 
     husako_at(root)
-        .args(["generate", "--spec-dir", spec_dir.to_str().unwrap()])
+        .args(["gen", "--spec-dir", spec_dir.to_str().unwrap()])
         .assert()
         .success();
 
