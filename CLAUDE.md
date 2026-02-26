@@ -162,7 +162,7 @@ Boundary rules:
 | 0    | Success                                    |
 | 1    | Unexpected failure                         |
 | 2    | Invalid args/config                        |
-| 3    | Compile failure (oxc)                      |
+| 3    | Compile failure (oxc) or TypeScript type error (`husako check --type-check`) |
 | 4    | Runtime failure (QuickJS / module loading) |
 | 5    | Type generation failure                    |
 | 6    | OpenAPI fetch/cache failure                |
@@ -199,6 +199,7 @@ cargo test -p husako-core test_name
 ## Gotchas
 
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
+- **`husako.toml`** at the repo root may accumulate local dev test entries (charts, resources). Run `git diff husako.toml` before staging to avoid committing unrelated test config.
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
 - `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
 - **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
