@@ -152,8 +152,6 @@ husako rm <name>
 
 Removes the named entry from `[resources]`, `[charts]`, or `[plugins]`.
 
-Prompts for confirmation. Use `-y` / `--yes` to skip.
-
 ---
 
 ## husako outdated

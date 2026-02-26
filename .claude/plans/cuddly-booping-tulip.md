@@ -1,321 +1,286 @@
-# Plan: Commit pending changes (plan files)
+# Plan: Enforce cli-design rules + design improvements
 
 ## Context
 
-The existing `cli-design.md` documents interactive prompts and style helpers thoroughly,
-but the **Command Output** section is sparse (3 subsections, no concrete rules). An audit
-of `main.rs` shows ~85% compliance with unwritten conventions, plus a few real inconsistencies.
+Four rule-compliance fixes and three design improvements, agreed in discussion:
 
-Adding explicit output standards to the doc will:
-1. Give future Claude sessions a concrete reference when writing new commands
-2. Resolve the genuine inconsistencies (table headers, marker usage)
-3. Prevent new inconsistencies from being introduced
-
-**File to modify:** `/Users/syr/Developments/husako/.claude/cli-design.md`
-
-No code changes. No tests. Documentation only.
+- **Compliance**: bold headers in `outdated`, `cross_mark`→`error_prefix` for plugin not found,
+  `plugin add` source detail, `debug` summary line
+- **Design**: `outdated` filters to only outdated items, `husako remove` drops confirmation
+- All changes reflected in `cli-design.md`
 
 ---
 
-## What the Audit Found
+## Code changes — `crates/husako-cli/src/main.rs`
 
-### Already Consistent (just undocumented)
-- All output goes to `stderr` (`eprintln!`) except `husako render` → stdout
-- Empty state messages are always plain text ("No dependencies configured")
-- Dependency names are always `dep_name()` (cyan)
-- Blank lines appear before instruction blocks and between major sections
+### 1. `husako outdated` — bold headers + filter to only outdated items
 
-### Real Inconsistency: Table headers
-- `list` / `debug`: section headers bold (`style::bold("Resources:")`)
-- `outdated`: column headers plain text (no bold)
-→ Rule needed: section headers and column headers both bold
-
-### Real Inconsistency: `cross_mark` vs `error_prefix`
-- Currently used interchangeably in some places
-- Clear semantic split exists in practice:
-  - `error_prefix()` = command/operation failed (exit non-zero)
-  - `cross_mark()` = check failed or item not present (informational)
-
-### Missing Rules
-- When to use each marker (full decision table, including dual role of `arrow_mark`)
-- Key-value pair format (info command)
-- Instruction block format (new/init "Next steps:")
-- Blank line conventions
-- stdout vs stderr
-- Progress spinner format (active vs finished)
-- Success + inline detail (two-line success pattern in add/remove)
-- Test output structure (file header → cases → summary)
-- Action preview format (pre-confirmation display for destructive operations)
-
----
-
-## Changes to `cli-design.md`
-
-Expand the `## Command Output` section with five new subsections.
-Add a new `## Stdout vs Stderr` section after `## Status Messages`.
-
-### 1. Expand "Status Messages" with a marker decision table
-
-After the existing code block, add:
-
-```markdown
-### Choosing the Right Marker
-
-| Situation | Marker |
-|-----------|--------|
-| Command completed successfully | `check_mark()` |
-| Health check passed, test passed | `check_mark()` |
-| Dependency added / removed / updated | `check_mark()` |
-| Command failed, unrecoverable error | `error_prefix()` |
-| Invalid input, bad config | `error_prefix()` |
-| Non-fatal issue (operation still succeeded) | `warning_prefix()` |
-| Health check failed, test failed | `cross_mark()` |
-| Item not found (informational, not a failure) | `cross_mark()` |
-| Suggestion or action preview (line prefix) | `arrow_mark()` |
-| Inline transition between two values (e.g. old version → new version) | `arrow_mark()` |
-
-**Key distinction:** `error_prefix` = the command itself failed.
-`cross_mark` = a check or lookup found a negative result (but the command completed).
-
-**`arrow_mark()` has two distinct roles:**
-- **Line prefix**: `  → suggestion text` or `  → will add [section] to husako.toml`
-- **Inline separator**: `old_version → new_version` in update output
-```
-
-### 2. New `## Stdout vs Stderr` section
-
-```markdown
-## Stdout vs Stderr
-
-All output goes to **stderr** (`eprintln!`). Only `husako render` writes YAML to **stdout**
-(`println!`). This keeps the YAML pipe-safe and separates user-visible diagnostics from
-machine-readable output.
-```
-
-### 3. Expand `## Command Output` — Section Headers rule
-
-Replace the current brief mention with a concrete rule:
-
-```markdown
-### Section Headers
-
-Bold, followed by rows or a blank line:
-
-```
-Resources:
-  kubernetes    release  v1.35
-  cert-manager  git      github.com/...
-```
-
-- Section headers: `style::bold("Resources:")` (no blank line after)
-- Column headers in tables (outdated, list): also `style::bold(...)` for the header row
-- Blank line **between** sections, not within
-```
-
-### 4. New `### Key-Value Pairs` subsection
-
-```markdown
-### Key-Value Pairs
-
-For info-style output (the `info` command), use fixed-width labels and plain values.
-Ancillary details (file sizes, counts) are dim:
-
-```
-cert-manager  (git)
-  Version:    v1.17.2
-  Repo:       https://github.com/cert-manager/cert-manager
-  Cache:      .husako/cache/... (dim: 1.2 MB)
-```
-
-- Dependency name line: `dep_name()` + `dim("(type)")` in parens
-- Label column: plain text, fixed width (e.g. `{:<12}`)
-- Value: plain text
-- Ancillary detail in parens: `dim()`
-```
-
-### 5. New `### Instruction Blocks` subsection
-
-```markdown
-### Instruction Blocks
-
-Post-operation "next steps" guidance:
-
-```
-✔ Created 'simple' project in my-project
-  kubernetes 1.35  (dim: · edit husako.toml to configure dependencies)
-
-Next steps:
-  cd my-project
-  husako gen
-```
-
-- Blank line before "Next steps:"
-- `Next steps:` is plain text (not bold) — it's a run-on from the success output
-- Commands are plain, indented two spaces
-- Suggestion detail on the success line: `dim()`
-```
-
-### 6. New `### Empty State` subsection
-
-```markdown
-### Empty State
-
-When a command has nothing to show, use plain text with no marker:
-
-```
-No dependencies configured
-No versioned dependencies found
-No test files found
-```
-
-No `check_mark`, no `error_prefix` — these are neutral informational states.
-```
-
-### 7. New `### Progress Spinners` subsection
-
-```markdown
-### Progress Spinners
-
-Long-running operations (gen, update) use an `indicatif` spinner:
-
-```
-⠹ Fetching kubernetes release schema...    ← cyan spinner + dim message (while running)
-✔ Generated k8s types for v1.35.0          ← check_mark when done OK
-✘ Failed to fetch schema: ...              ← cross_mark when done with error
-```
-
-- Active: cyan spinner (via `ProgressStyle`) + plain message
-- `finish_ok(msg)` → `check_mark()` + message (spinner replaced)
-- `finish_err(msg)` → `cross_mark()` + message (spinner replaced)
-```
-
-### 8. New `### Success With Detail` subsection
-
-```markdown
-### Success With Detail
-
-When a success message has a relevant source detail (URL, path, version), append it as a
-dim second line in the same `eprintln!` call:
+Replace lines 785–805 entirely:
 
 ```rust
+// Collect only outdated entries
+let outdated: Vec<_> = entries.iter().filter(|e| !e.up_to_date).collect();
+
+if outdated.is_empty() {
+    eprintln!("{} All dependencies are up to date", style::check_mark());
+} else {
+    eprintln!(
+        "{:<16} {:<10} {:<12} {:<10} {:<10}",
+        style::bold("Name"),
+        style::bold("Kind"),
+        style::bold("Source"),
+        style::bold("Current"),
+        style::bold("Latest"),
+    );
+    for entry in outdated {
+        let latest = entry.latest.as_deref().unwrap_or("?");
+        eprintln!(
+            "{:<16} {:<10} {:<12} {:<10} {:<10} {}",
+            style::dep_name(&entry.name),
+            entry.kind,
+            entry.source_type,
+            entry.current,
+            latest,
+            style::arrow_mark(),
+        );
+    }
+}
+```
+
+Result:
+```
+Name            Kind      Source      Current   Latest
+cert-manager    resource  git         v1.16.0   v1.17.2  →
+postgresql      chart     registry    16.3.0    16.4.0   →
+```
+or, when everything is current:
+```
+✔ All dependencies are up to date
+```
+
+### 2. `husako remove` — remove confirmation block (lines 740–750)
+
+Delete:
+```rust
+// Confirm removal only in CLI mode (not interactive, user already chose)
+if from_cli && !cli.yes {
+    match interactive::confirm(&format!("Remove '{dep_name}'?")) {
+        Ok(true) => {}
+        Ok(false) => return ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{} {e}", style::error_prefix());
+            return ExitCode::from(1);
+        }
+    }
+}
+```
+
+The interactive branch (no name arg) already uses `prompt_remove()` which is a selection,
+not a confirmation — that stays. Only the confirm-after-CLI-name block is removed.
+
+Also simplify the binding at line 711 — `from_cli` is only used in the now-deleted block:
+
+```rust
+// Before:
+let (dep_name, from_cli) = if let Some(n) = name {
+    (n, true)
+} else { ... Ok(n) => (n, false), ... };
+
+// After:
+let dep_name = if let Some(n) = name {
+    n
+} else { ... Ok(n) => n, ... };
+```
+
+### 3. `husako debug` — add summary line (after line 1040)
+
+After the `for suggestion in &report.suggestions` block, add:
+
+```rust
+let issue_count = [
+    !matches!(report.config_ok, Some(true)),
+    !report.types_exist,
+    !report.tsconfig_ok || !report.tsconfig_has_paths,
+    report.stale,
+]
+.iter()
+.filter(|&&b| b)
+.count();
+
+eprintln!();
+if issue_count == 0 {
+    eprintln!("{} All checks passed", style::check_mark());
+} else {
+    eprintln!(
+        "{} {} issue{} found",
+        style::cross_mark(),
+        issue_count,
+        if issue_count == 1 { "" } else { "s" }
+    );
+}
+```
+
+Result:
+```
+✔ husako.toml found and valid
+✔ .husako/types/ exists (42 type files)
+✘ tsconfig.json is missing husako path mappings
+  → run husako gen to regenerate
+
+✘ 1 issue found
+```
+
+### 4. `cross_mark` → `error_prefix` for plugin not found (line 1135)
+
+```rust
+// Before:
+eprintln!("{} Plugin '{}' not found", style::cross_mark(), name);
+// After:
+eprintln!("{} Plugin '{}' not found", style::error_prefix(), name);
+```
+
+### 5. `plugin add` success with dim source detail (lines 1083–1087)
+
+`source` is already in scope as `PluginSource::Git { url }` or `PluginSource::Path { path }`.
+
+```rust
+let source_detail = match &source {
+    husako_config::PluginSource::Git { url, .. } => url.clone(),
+    husako_config::PluginSource::Path { path } => path.clone(),
+};
 eprintln!(
-    "{} Added {} to [{}]\n  {}",
+    "{} Added plugin {} to [plugins]\n  {}",
     style::check_mark(),
-    style::dep_name(name),
-    section,
-    style::dim(&detail),
+    style::dep_name(&name),
+    style::dim(&source_detail),
 );
 ```
 
-Renders as:
-```
-✔ Added postgresql to [charts]
-  https://charts.bitnami.com/bitnami  bitnami/postgresql  16.4.0
-```
+---
 
-- Single `eprintln!` with embedded `\n  ` (not two separate calls)
-- Detail line indented 2 spaces, wrapped in `dim()`
-- No trailing blank line from this call — add a separate `eprintln!()` if needed
-```
+## Test changes
 
-### 9. New `### Test Output` subsection
-
-```markdown
-### Test Output
-
-The `test` command uses a structured report format:
-
-```
-filename.test.ts                        ← bold file header
-  ✔ test name passes                    ← indented 2, check_mark
-  ✘ test name fails                     ← indented 2, cross_mark
-    expected 1 to equal 2               ← indented 4, dim error detail
-
-✔ 5 passed, 0 failed                    ← summary line (blank line before)
-```
-
-- File header: `style::bold(filename)`
-- Passed case: 2-space indent + `check_mark()` + plain test name
-- Failed case: 2-space indent + `cross_mark()` + plain test name
-- Error detail: 4-space indent + `dim(error)`
-- Summary: blank line, then `check_mark()` or `cross_mark()` + count string
-```
-
-### 10. New `### Blank Lines` subsection
-
-```markdown
-### Blank Lines
-
-- One blank line **between** major sections in multi-section output (list, debug)
-- One blank line **before** instruction blocks ("Next steps:")
-- One blank line **after** a success message that is followed by a warning or suggestion
-- No blank line at the end of command output
-```
-
-### 11. New `### Action Preview` subsection
-
-```markdown
-### Action Preview
-
-Before a destructive-or-irreversible confirmation prompt, show the user what the command
-**will** do, then ask for confirmation. The preview is always shown, even with `--yes`.
+### `crates/husako-cli/tests/e2e_b.rs` — line 173
 
 ```rust
-eprintln!(
-    "  Cluster: {}  {}",
-    style::dep_name(display_name),
-    style::dim(&server_url),
-);
-eprintln!(
-    "  {} will add {} to husako.toml",
-    style::arrow_mark(),
-    style::bold(&section),
-);
+// Before:
+.args(["-y", "remove", "pg"])
+// After:
+.args(["remove", "pg"])
 ```
 
-Renders as:
-```
-  Cluster: my-cluster  https://kubernetes.example.com
-  → will add [clusters.my-cluster] to husako.toml
-```
+### `crates/husako-cli/tests/e2e_c.rs` — line 133
 
-- Preview block is **always shown**, even when `--yes` skips the prompt
-- Lines are indented 2 spaces — no top-level marker
-- Entity name: `dep_name()`, secondary detail (URL, path): `dim()`
-- Action line: `arrow_mark()` prefix + `bold()` for the key target (section name, path)
-- Warning (if applicable) appears **before** the preview block using `warning_prefix()`
+```rust
+// Before:
+.args(["-y", "remove", "cert-manager"])
+// After:
+.args(["remove", "cert-manager"])
 ```
 
 ---
 
-## Summary of Insertions
+## Doc changes — `crates/husako-cli/src/main.rs` → `.claude/cli-design.md`
 
-| Location in current doc | Insertion |
-|--------------------------|-----------|
-| After Status Messages code block | Marker decision table (incl. dual role of `arrow_mark`) |
-| After Status Messages section | New `## Stdout vs Stderr` section |
-| Command Output → Section Headers | Expand with column header rule |
-| Command Output (new subsection) | Key-Value Pairs |
-| Command Output (new subsection) | Instruction Blocks |
-| Command Output (new subsection) | Empty State |
-| Command Output (new subsection) | Progress Spinners |
-| Command Output (new subsection) | Success With Detail |
-| Command Output (new subsection) | Test Output |
-| Command Output (new subsection) | Blank Lines |
-| Command Output (new subsection) | Action Preview |
+### 1. Add interaction rule to `Interactive Prompts → Rules`
+
+```markdown
+- **Minimize interactions** — interactive prompts (selections, confirmations, inputs)
+  are a last resort, used only when the information truly cannot be inferred from
+  arguments or context. Prefer flags over prompts; prefer direct action over confirmation.
+  Example: `husako remove <name>` removes immediately — no confirm needed since the
+  operation is reversible and the intent is unambiguous from the argument.
+```
+
+### 2. Add "Filter to actionable" rule to `Command Output`
+
+New subsection after `### Empty State`:
+
+```markdown
+### Filter to Actionable
+
+Status/check commands show only items that need attention. If all items pass, show a
+single plain success line instead of a full table:
+
+```
+✔ All dependencies are up to date    ← when nothing is outdated
+```
+
+Don't mix passing items into a table alongside failing ones — showing every entry with
+a ✔ or ✘ adds noise. Show only the actionable items.
+```
+
+### 3. Add "Structured Checks" pattern to `Command Output`
+
+New subsection (after `### Filter to Actionable`):
+
+```markdown
+### Structured Checks
+
+Commands that run multiple named checks (e.g., `husako debug`) list each result then
+append a blank line and a summary:
+
+```
+✔ husako.toml found and valid
+✘ tsconfig.json is missing husako path mappings
+  → run husako gen
+
+✘ 1 issue found
+```
+
+- Individual pass: `check_mark()` + description
+- Individual fail: `cross_mark()` + description, then suggestions with `arrow_mark()`
+- Summary: blank line, then `check_mark()` "All checks passed" or `cross_mark()` "N issues found"
+- `cross_mark()` is correct for the summary even when the command exits 0 — the command
+  succeeded; the checks found issues
+```
 
 ---
 
-## Tests and Docs
+## Doc changes — user-facing
 
-- **Tests**: No changes needed — this is internal dev documentation only.
-- **Docs**: This edit IS the docs change. No user-facing docs in `.worktrees/docs-site/` need updating (cli-design.md is in `.claude/`, not user-facing).
+### `docs/reference/cli.md` — `husako remove` section
+
+Remove the sentence: `Prompts for confirmation. Use -y / --yes to skip.`
+
+### `.claude/testing.md` — update CLI flag notes
+
+Change:
+```
+- `husako remove <name>` requires `-y` to skip the confirmation dialog when name is a CLI arg.
+```
+To:
+```
+- `husako remove <name>` does not prompt for confirmation — name on CLI removes directly.
+```
+
+---
+
+## Critical Files
+
+- `crates/husako-cli/src/main.rs` — 5 code changes
+- `crates/husako-cli/tests/e2e_b.rs` — remove `-y`
+- `crates/husako-cli/tests/e2e_c.rs` — remove `-y`
+- `.claude/cli-design.md` — 3 new rules
+- `.worktrees/docs-site/docs/reference/cli.md` — remove confirmation note
+- `.claude/testing.md` — update remove flag note
 
 ---
 
 ## Verification
 
-Read the updated `cli-design.md` and verify:
-1. Each new rule is consistent with the observed patterns in `main.rs`
-2. The marker decision table covers all current usages
-3. No contradictions with existing prompt rules
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo test -p husako --test e2e_g   # local E2E
+```
+
+Manual spot-check:
+```bash
+husako outdated          # only shows outdated; ✔ message when all current
+husako remove pg         # no confirmation prompt, removes directly
+husako debug             # shows "✔ All checks passed" or "✘ N issues found"
+husako plugin remove x   # "error:" not "✘" when not found
+husako plugin add ...    # success line has dim source URL/path
+```
