@@ -21,7 +21,7 @@ Add the plugin to `husako.toml`:
 fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 ```
 
-Then run `husako generate`. This installs the plugin, generates FluxCD CRD types, and updates
+Then run `husako gen`. This installs the plugin, generates FluxCD CRD types, and updates
 `tsconfig.json` with path mappings for `"fluxcd"` and `"fluxcd/source"`.
 
 ---
@@ -183,4 +183,4 @@ build([helmRepo, release]);
 ```
 
 For typed values, add `ingress-nginx` to `[charts]` in `husako.toml` and run
-`husako generate`. See [Helm Chart Values](../helm) for details.
+`husako gen`. See [Helm Chart Values](../helm) for details.

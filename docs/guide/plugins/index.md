@@ -23,7 +23,7 @@ Add an entry to `[plugins]` in `husako.toml`:
 fluxcd = { source = "git", url = "https://github.com/nanazt/husako", path = "plugins/fluxcd" }
 ```
 
-Then run `husako generate`. husako fetches the plugin, merges its dependency presets, generates
+Then run `husako gen`. husako fetches the plugin, merges its dependency presets, generates
 all types (including CRDs declared by the plugin), and updates `tsconfig.json`.
 
 **Interactive install:**

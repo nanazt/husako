@@ -1,11 +1,11 @@
 # Helm Chart Values
 
-husako generates TypeScript types from Helm chart `values.schema.json` files.
+husako gens TypeScript types from Helm chart `values.schema.json` files.
 
 This gives you autocomplete and type checking when composing Helm chart values in TypeScript.
 
 ::: info Putting values to use
-husako generates the `Values` builder, but you need a resource builder that accepts a `values`
+husako gens the `Values` builder, but you need a resource builder that accepts a `values`
 field to actually deploy the chart. The [Flux CD plugin's `HelmRelease`](./plugins/flux) is
 currently the primary consumer. See the [Flux CD guide](./plugins/flux) for a complete
 end-to-end example combining `helm/*` imports with `HelmRelease`.
@@ -13,7 +13,7 @@ end-to-end example combining `helm/*` imports with `HelmRelease`.
 
 ## Overview
 
-When you add a chart dependency to `husako.toml` and run `husako generate`, husako:
+When you add a chart dependency to `husako.toml` and run `husako gen`, husako:
 
 1. Fetches the chart's `values.schema.json`
 2. Converts the JSON Schema to TypeScript interfaces and builder classes
@@ -57,7 +57,7 @@ ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingr
 After adding a chart dependency, run:
 
 ```
-husako generate
+husako gen
 ```
 
 This fetches `values.schema.json` for each chart in `[charts]` and writes typed builders to

@@ -15,11 +15,11 @@ husako tests are useful for:
 
 ## Setup
 
-Before running tests, you need the `husako/test` module on the TypeScript path. Run `husako generate`
-once (or `husako generate --skip-k8s` if you do not need k8s types):
+Before running tests, you need the `husako/test` module on the TypeScript path. Run `husako gen`
+once (or `husako gen --skip-k8s` if you do not need k8s types):
 
 ```bash
-husako generate --skip-k8s
+husako gen --skip-k8s
 ```
 
 This writes `.husako/types/husako/test.d.ts` and adds `"husako/test"` to `tsconfig.json`.
@@ -146,11 +146,11 @@ test("Deployment has correct metadata", () => {
 });
 ```
 
-Note: k8s builders require `husako generate` (not just `--skip-k8s`) to be available.
+Note: k8s builders require `husako gen` (not just `--skip-k8s`) to be available.
 
 ## Plugin testing
 
-If your project uses plugins, run `husako generate` first to install them, then import from
+If your project uses plugins, run `husako gen` first to install them, then import from
 the plugin specifier as usual:
 
 ```typescript
@@ -166,7 +166,7 @@ test("greet returns expected string", () => {
 Run:
 
 ```bash
-husako generate --skip-k8s   # installs plugins, writes types
+husako gen --skip-k8s   # installs plugins, writes types
 husako test plugin.test.ts
 ```
 

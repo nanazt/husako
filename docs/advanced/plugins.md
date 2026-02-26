@@ -33,7 +33,7 @@ fluxcd = { source = "path", path = "plugins/fluxcd" }
 my-local = { source = "path", path = "./plugins/my-plugin" }
 ```
 
-After adding a plugin, run `husako generate` to install it and regenerate types.
+After adding a plugin, run `husako gen` to install it and regenerate types.
 
 ---
 
@@ -48,7 +48,7 @@ import { GitRepository, HelmRepository } from "fluxcd/source";
 
 The specifiers are declared in the plugin's `plugin.toml`.
 
-Your editor gets autocomplete from the plugin's `.d.ts` files, which are wired into `tsconfig.json` path mappings by `husako generate`.
+Your editor gets autocomplete from the plugin's `.d.ts` files, which are wired into `tsconfig.json` path mappings by `husako gen`.
 
 ---
 
@@ -186,7 +186,7 @@ export function HelmRelease(name?: string): HelmRelease;
 
 ## Plugin lifecycle
 
-1. `husako generate` reads `[plugins]` from `husako.toml`
+1. `husako gen` reads `[plugins]` from `husako.toml`
 2. For `git` sources: shallow-clones to `.husako/plugins/<name>/`
 3. For `path` sources: copies the directory to `.husako/plugins/<name>/`
 4. Parses `plugin.toml` from each installed plugin
@@ -200,4 +200,4 @@ export function HelmRelease(name?: string): HelmRelease;
 
 `husako clean --types` removes `.husako/plugins/` alongside `.husako/types/`.
 
-Re-running `husako generate` reinstalls everything from scratch.
+Re-running `husako gen` reinstalls everything from scratch.

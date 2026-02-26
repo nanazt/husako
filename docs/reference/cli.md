@@ -16,14 +16,14 @@ Creates `husako.toml`, `entry.ts` (or template files), and `.gitignore` in the s
 
 ---
 
-## husako generate
+## husako gen
 
 Generate type definitions and `tsconfig.json` from Kubernetes schemas and Helm charts.
 
 Alias: `gen`.
 
 ```
-husako generate [options]
+husako gen [options]
 husako gen [options]
 ```
 
@@ -136,7 +136,7 @@ The dep name, source type, resource/chart kind, and version are all detected aut
 
 For registry URLs, the chart name must be given as a second positional argument or via `--name`.
 
-After adding, run `husako generate` to fetch types.
+After adding, run `husako gen` to fetch types.
 
 ---
 
@@ -246,7 +246,7 @@ husako plugin add <name> [options]
 | `--url <git-url>` | Add a plugin from a git repository |
 | `--path <dir>` | Add a plugin from a local directory |
 
-Adds the plugin to `husako.toml [plugins]` and suggests running `husako generate`.
+Adds the plugin to `husako.toml [plugins]` and suggests running `husako gen`.
 
 ### husako plugin remove
 
@@ -290,7 +290,7 @@ import { test, describe, expect } from "husako/test";
 
 Exit code is 0 if all tests pass, 1 if any test fails.
 
-Run `husako generate` (or `husako generate --skip-k8s`) before `husako test` to ensure
+Run `husako gen` (or `husako gen --skip-k8s`) before `husako test` to ensure
 `husako/test.d.ts` and `tsconfig.json` path mappings are written.
 
 See [Writing Tests](/guide/testing) for full examples and the assertion API reference.

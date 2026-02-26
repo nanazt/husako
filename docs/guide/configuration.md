@@ -49,7 +49,7 @@ core = { source = "release", version = "1.32.0" }
 
 Resource dependencies declare Kubernetes schema sources for type generation.
 
-`husako generate` reads these and produces typed builders under `.husako/types/k8s/`.
+`husako gen` reads these and produces typed builders under `.husako/types/k8s/`.
 
 Four source types are supported:
 
@@ -107,7 +107,7 @@ ingress-nginx = { source = "registry", repo = "https://kubernetes.github.io/ingr
 
 Chart dependencies declare Helm chart sources for `values.schema.json` type generation.
 
-`husako generate` fetches the schema and produces typed value builders under `.husako/types/helm/`.
+`husako gen` fetches the schema and produces typed value builders under `.husako/types/helm/`.
 
 Four source types are supported:
 
@@ -166,7 +166,7 @@ Two source types:
 | `git` | `url` | Clone from a git repository (HEAD of default branch) |
 | `path` | `path` | Use a local directory (relative path) |
 
-Plugins are installed to `.husako/plugins/<name>/` during `husako generate`.
+Plugins are installed to `.husako/plugins/<name>/` during `husako gen`.
 
 See [Plugins](/advanced/plugins) for authoring details.
 

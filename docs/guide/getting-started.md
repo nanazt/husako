@@ -20,7 +20,7 @@ Or download prebuilt binaries from [GitHub Releases](https://github.com/nanazt/h
 
 ## Requirements
 
-- **git** — used by `husako generate` and `husako add` for git-based schema and chart sources
+- **git** — used by `husako gen` and `husako add` for git-based schema and chart sources
 
 To build from source:
 
@@ -52,7 +52,7 @@ They give you typed builder classes for every resource kind your cluster support
 Connect to a running cluster:
 
 ```
-husako generate --api-server https://localhost:6443
+husako gen --api-server https://localhost:6443
 ```
 
 Use the short alias:
@@ -64,13 +64,13 @@ husako gen --api-server https://localhost:6443
 Or use a locally downloaded spec directory:
 
 ```
-husako generate --spec-dir ./openapi-specs
+husako gen --spec-dir ./openapi-specs
 ```
 
 Skip Kubernetes type generation (only writes `husako.d.ts` and `tsconfig.json`):
 
 ```
-husako generate --skip-k8s
+husako gen --skip-k8s
 ```
 
 This writes a `.husako/` directory with `.d.ts` type definitions and a `tsconfig.json`.
