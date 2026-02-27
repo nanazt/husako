@@ -4,15 +4,17 @@ expression: output
 ---
 /** Deployment enables declarative updates for Pods and ReplicaSets. */
 export interface Deployment extends _ResourceBuilder {
+  /** Set metadata using a chain starter (name(), namespace(), label() from "k8s/meta/v1"). */
+  metadata(chain: import("k8s/_chains").MetadataChain): this;
   /** Set the resource specification. */
   spec(value: DeploymentSpec): this;
   /** Number of desired pods. */
   replicas(value: number): this;
   selector(value: LabelSelector): this;
   template(value: PodTemplateSpec): this;
-  /** Set pod containers (shortcut for template.spec.containers). */
-  containers(value: any[]): this;
-  /** Set pod init containers (shortcut for template.spec.initContainers). */
-  initContainers(value: any[]): this;
+  /** Set pod containers. Accepts ContainerChain items (use name(), image() from "k8s/core/v1"). */
+  containers(items: import("k8s/_chains").ContainerChain[]): this;
+  /** Set pod init containers. Accepts ContainerChain items. */
+  initContainers(items: import("k8s/_chains").ContainerChain[]): this;
 }
 export function Deployment(): Deployment;

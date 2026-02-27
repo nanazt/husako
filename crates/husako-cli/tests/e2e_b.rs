@@ -41,7 +41,7 @@ fn scenario_b_chart_sources() {
 
     std::fs::write(
         dir.path().join("pg-values.ts"),
-        "import { Pg } from \"helm/pg\";\nimport { build } from \"husako\";\nbuild([Pg()]);\n",
+        "import { Pg } from \"helm/pg\";\nimport husako from \"husako\";\nhusako.build([Pg()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
@@ -92,7 +92,7 @@ fn scenario_b_chart_sources() {
 
     std::fs::write(
         dir.path().join("redis-reg-values.ts"),
-        "import { RedisReg } from \"helm/redis-reg\";\nimport { build } from \"husako\";\nbuild([RedisReg()]);\n",
+        "import { RedisReg } from \"helm/redis-reg\";\nimport husako from \"husako\";\nhusako.build([RedisReg()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
@@ -138,7 +138,7 @@ fn scenario_b_chart_sources() {
 
     std::fs::write(
         dir.path().join("prom-git-values.ts"),
-        "import { PromGit } from \"helm/prom-git\";\nimport { build } from \"husako\";\nbuild([PromGit()]);\n",
+        "import { PromGit } from \"helm/prom-git\";\nimport husako from \"husako\";\nhusako.build([PromGit()]);\n",
     )
     .unwrap();
     husako_at(dir.path())

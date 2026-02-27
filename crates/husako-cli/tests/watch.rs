@@ -21,16 +21,16 @@ impl Drop for KillOnDrop {
 
 // ── Entry file fixtures ───────────────────────────────────────────────────────
 
-const ENTRY_V1: &str = r#"import { build } from "husako";
-build([{
+const ENTRY_V1: &str = r#"import husako from "husako";
+husako.build([{
   _render() {
     return { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "initial" } };
   }
 }]);
 "#;
 
-const ENTRY_V2: &str = r#"import { build } from "husako";
-build([{
+const ENTRY_V2: &str = r#"import husako from "husako";
+husako.build([{
   _render() {
     return { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "watch-test" } };
   }

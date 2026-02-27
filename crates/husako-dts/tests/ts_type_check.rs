@@ -171,37 +171,36 @@ fn generated_types_pass_tsc() {
 }"#,
     );
 
-    // Write entry.ts with all four previously-broken patterns.
+    // Write entry.ts with all four previously-broken patterns using the new chain API.
     // Note: `.containers()` shortcut is not used here because the mock DeploymentSpec
     // lacks a `template: PodTemplateSpec` property (the shortcut is generated only when
     // that property is present). All four type errors are covered by the patterns below.
     write_file(
         root,
         "entry.ts",
-        r#"import { Deployment } from "k8s/apps/v1";
-import { Container } from "k8s/core/v1";
+        r#"import husako from "husako";
+import { Deployment } from "k8s/apps/v1";
+import { Container, cpu, memory, requests } from "k8s/core/v1";
 import { LabelSelector } from "k8s/_common";
-import { metadata, cpu, memory, requests, limits, build } from "husako";
+import { name, namespace, label } from "k8s/meta/v1";
 
-// Pattern 1: Deployment().metadata() — was "Cannot invoke an object which is possibly 'undefined'"
-// Pattern 2: LabelSelector().matchLabels() — was "Cannot invoke an object which is possibly 'undefined'"
+// Pattern 1: Deployment().metadata() — accepts MetadataChain from chain starters
+// Pattern 2: LabelSelector().matchLabels() — builder method
 const nginx = Deployment()
-  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
+  .metadata(name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
   .selector(LabelSelector().matchLabels({ app: "nginx" }));
 
-// Pattern 3: Container().name() — was "Type 'String' has no call signatures"
-// Pattern 4: Container().resources(requests(...).limits(...)) — was type mismatch
+// Pattern 3: Container().name() — builder property method
+// Pattern 4: Container().resources(requests(cpu().memory())) — ResourceRequirementsChain
 const c = Container()
   .name("nginx")
   .image("nginx:1.25")
   .resources(
-    requests(cpu("250m").memory("128Mi")).limits(
-      cpu("500m").memory("256Mi"),
-    ),
+    requests(cpu("250m").memory("128Mi")),
   );
 
-build([nginx]);
+husako.build([nginx]);
 "#,
     );
 

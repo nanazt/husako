@@ -105,13 +105,12 @@ fn emit_property_methods_dts(out: &mut String, props: &[PropertyInfo], skip: &[&
         if let Some(desc) = &prop.description {
             let _ = writeln!(out, "  /** {desc} */");
         }
-        // resources: ResourceRequirements — also accept the husako DSL builder fragment,
-        // which is structurally incompatible with the raw OpenAPI plain-object type.
+        // resources: ResourceRequirements — also accept the ResourceRequirementsChain from k8s/_chains.
         let ts_type = if prop.name == "resources"
             && matches!(&prop.ts_type, TsType::Ref(name) if name == "ResourceRequirements")
         {
             format!(
-                "{} | import(\"husako\").ResourceRequirementsFragment",
+                "{} | import(\"k8s/_chains\").ResourceRequirementsChain",
                 format_ts_type(&prop.ts_type)
             )
         } else {
@@ -181,6 +180,16 @@ pub fn emit_builder_class(
         schema.ts_name
     );
 
+    // Typed metadata() override — accepts MetadataChain or SpecFragment from k8s/meta/v1.
+    let _ = writeln!(
+        out,
+        "  /** Set metadata using a chain starter (name(), namespace(), label() from \"k8s/meta/v1\"). */"
+    );
+    let _ = writeln!(
+        out,
+        "  metadata(chain: import(\"k8s/_chains\").MetadataChain): this;"
+    );
+
     // Emit typed .spec() override if there is a spec property with a Ref type
     if let Some(spec_type) = find_spec_type(schema) {
         let _ = writeln!(out, "  /** Set the resource specification. */");
@@ -194,14 +203,20 @@ pub fn emit_builder_class(
             if has_pod_template(spec_schema) {
                 let _ = writeln!(
                     out,
-                    "  /** Set pod containers (shortcut for template.spec.containers). */"
+                    "  /** Set pod containers. Accepts ContainerChain items (use name(), image() from \"k8s/core/v1\"). */"
                 );
-                let _ = writeln!(out, "  containers(value: any[]): this;");
                 let _ = writeln!(
                     out,
-                    "  /** Set pod init containers (shortcut for template.spec.initContainers). */"
+                    "  containers(items: import(\"k8s/_chains\").ContainerChain[]): this;"
                 );
-                let _ = writeln!(out, "  initContainers(value: any[]): this;");
+                let _ = writeln!(
+                    out,
+                    "  /** Set pod init containers. Accepts ContainerChain items. */"
+                );
+                let _ = writeln!(
+                    out,
+                    "  initContainers(items: import(\"k8s/_chains\").ContainerChain[]): this;"
+                );
             }
         }
     }
@@ -504,14 +519,38 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
 
                 // Convenience shortcuts for workload resources
                 if has_pod_template(spec_schema) {
+                    let _ = writeln!(out, "  containers(items) {{");
+                    let _ = writeln!(out, "    const resolved = items.map(function(item) {{");
                     let _ = writeln!(
                         out,
-                        "  containers(v) {{ return this._setDeep(\"template.spec.containers\", v); }}"
+                        "      if (item && item._husakoTag === \"SpecFragment\") return item._toContainer();"
                     );
                     let _ = writeln!(
                         out,
-                        "  initContainers(v) {{ return this._setDeep(\"template.spec.initContainers\", v); }}"
+                        "      throw new Error(\"containers() items must be ContainerChain — use name(), image() from \\\"k8s/core/v1\\\".\");"
                     );
+                    let _ = writeln!(out, "    }});");
+                    let _ = writeln!(
+                        out,
+                        "    return this._setDeep(\"template.spec.containers\", resolved);"
+                    );
+                    let _ = writeln!(out, "  }}");
+                    let _ = writeln!(out, "  initContainers(items) {{");
+                    let _ = writeln!(out, "    const resolved = items.map(function(item) {{");
+                    let _ = writeln!(
+                        out,
+                        "      if (item && item._husakoTag === \"SpecFragment\") return item._toContainer();"
+                    );
+                    let _ = writeln!(
+                        out,
+                        "      throw new Error(\"initContainers() items must be ContainerChain — use name(), image() from \\\"k8s/core/v1\\\".\");"
+                    );
+                    let _ = writeln!(out, "    }});");
+                    let _ = writeln!(
+                        out,
+                        "    return this._setDeep(\"template.spec.initContainers\", resolved);"
+                    );
+                    let _ = writeln!(out, "  }}");
                 }
             }
 
@@ -537,6 +576,234 @@ pub fn emit_group_version_js(schemas: &[&SchemaInfo]) -> String {
         }
     }
 
+    out
+}
+
+/// Emit `k8s/_chains.d.ts` — chain interface definitions for the starter API.
+///
+/// Defines: MetadataChain, ContainerChain, ResourceRequirementsChain, SpecFragment.
+/// Generated by `husako gen` and referenced by per-group-version .d.ts files.
+pub fn emit_chains_dts() -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "// Auto-generated by husako. Do not edit.\n");
+    let _ = writeln!(
+        out,
+        "/** Chain interface for metadata configuration. Returned by namespace(), label(), annotation(). */"
+    );
+    let _ = writeln!(out, "export interface MetadataChain {{");
+    let _ = writeln!(out, "  name(v: string): MetadataChain;");
+    let _ = writeln!(out, "  namespace(v: string): MetadataChain;");
+    let _ = writeln!(out, "  label(k: string, v: string): MetadataChain;");
+    let _ = writeln!(out, "  annotation(k: string, v: string): MetadataChain;");
+    let _ = writeln!(out, "}}\n");
+
+    let _ = writeln!(
+        out,
+        "/** Chain interface for container configuration. Returned by image(), imagePullPolicy(). */"
+    );
+    let _ = writeln!(out, "export interface ContainerChain {{");
+    let _ = writeln!(out, "  name(v: string): ContainerChain;");
+    let _ = writeln!(out, "  image(v: string): ContainerChain;");
+    let _ = writeln!(
+        out,
+        "  imagePullPolicy(v: \"Always\" | \"IfNotPresent\" | \"Never\"): ContainerChain;"
+    );
+    let _ = writeln!(
+        out,
+        "  resources(r: ResourceRequirementsChain): ContainerChain;"
+    );
+    let _ = writeln!(out, "  command(v: string[]): ContainerChain;");
+    let _ = writeln!(out, "  args(v: string[]): ContainerChain;");
+    let _ = writeln!(out, "}}\n");
+
+    let _ = writeln!(
+        out,
+        "/** Bare resource list chain (cpu, memory). Returned by cpu() and memory(). Pass to requests(). */"
+    );
+    let _ = writeln!(out, "export interface ResourceListChain {{");
+    let _ = writeln!(out, "  cpu(v: string | number): ResourceListChain;");
+    let _ = writeln!(out, "  memory(v: string | number): ResourceListChain;");
+    let _ = writeln!(out, "}}\n");
+
+    let _ = writeln!(
+        out,
+        "/** Full resource requirements chain. Returned by requests(). Accepted by .resources(). */"
+    );
+    let _ = writeln!(out, "export interface ResourceRequirementsChain {{");
+    let _ = writeln!(
+        out,
+        "  limits(chain: ResourceListChain): ResourceRequirementsChain;"
+    );
+    let _ = writeln!(out, "}}\n");
+
+    let _ = writeln!(
+        out,
+        "/** SpecFragment: returned by name() — compatible with both MetadataChain and ContainerChain. */"
+    );
+    let _ = writeln!(
+        out,
+        "export interface SpecFragment extends MetadataChain, ContainerChain {{"
+    );
+    let _ = writeln!(out, "  name(v: string): SpecFragment;");
+    let _ = writeln!(out, "  namespace(v: string): SpecFragment;");
+    let _ = writeln!(out, "  label(k: string, v: string): SpecFragment;");
+    let _ = writeln!(out, "  annotation(k: string, v: string): SpecFragment;");
+    let _ = writeln!(out, "  image(v: string): SpecFragment;");
+    let _ = writeln!(
+        out,
+        "  imagePullPolicy(v: \"Always\" | \"IfNotPresent\" | \"Never\"): SpecFragment;"
+    );
+    let _ = writeln!(
+        out,
+        "  resources(r: ResourceRequirementsChain): SpecFragment;"
+    );
+    let _ = writeln!(out, "  command(v: string[]): SpecFragment;");
+    let _ = writeln!(out, "  args(v: string[]): SpecFragment;");
+    let _ = writeln!(out, "}}");
+    out
+}
+
+/// Emit `k8s/meta/v1.d.ts` chain starter declarations for ObjectMeta fields.
+pub fn emit_meta_v1_starters_dts() -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "// Auto-generated by husako. Do not edit.\n");
+    let _ = writeln!(
+        out,
+        "import type {{ MetadataChain, SpecFragment }} from \"k8s/_chains\";\n"
+    );
+    let _ = writeln!(
+        out,
+        "/** Create a SpecFragment with the given name. Compatible with both .metadata() and .containers(). */"
+    );
+    let _ = writeln!(out, "export function name(v: string): SpecFragment;");
+    let _ = writeln!(
+        out,
+        "/** Create a MetadataChain with the given namespace. */"
+    );
+    let _ = writeln!(out, "export function namespace(v: string): MetadataChain;");
+    let _ = writeln!(out, "/** Create a MetadataChain with a single label. */");
+    let _ = writeln!(
+        out,
+        "export function label(k: string, v: string): MetadataChain;"
+    );
+    let _ = writeln!(
+        out,
+        "/** Create a MetadataChain with a single annotation. */"
+    );
+    let _ = writeln!(
+        out,
+        "export function annotation(k: string, v: string): MetadataChain;"
+    );
+    out
+}
+
+/// Emit `k8s/meta/v1.js` chain starter implementations for ObjectMeta fields.
+pub fn emit_meta_v1_starters_js() -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "// Auto-generated by husako. Do not edit.\n");
+    let _ = writeln!(
+        out,
+        "import {{ _createSpecFragment }} from \"husako/_base\";\n"
+    );
+    let _ = writeln!(
+        out,
+        "export function name(v) {{ return _createSpecFragment({{ _name: v }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function namespace(v) {{ return _createSpecFragment({{ _namespace: v }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function label(k, v) {{ const l = {{}}; l[k] = v; return _createSpecFragment({{ _labels: l }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function annotation(k, v) {{ const a = {{}}; a[k] = v; return _createSpecFragment({{ _annotations: a }}); }}"
+    );
+    out
+}
+
+/// Emit chain starter declarations to prepend to `k8s/core/v1.d.ts`.
+pub fn emit_core_v1_starters_dts() -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "import type {{ ContainerChain, SpecFragment, ResourceListChain, ResourceRequirementsChain }} from \"k8s/_chains\";"
+    );
+    let _ = writeln!(
+        out,
+        "/** Create a SpecFragment with the given name. Compatible with both .metadata() and .containers(). */"
+    );
+    let _ = writeln!(out, "export function name(v: string): SpecFragment;");
+    let _ = writeln!(out, "/** Create a ContainerChain with the given image. */");
+    let _ = writeln!(out, "export function image(v: string): ContainerChain;");
+    let _ = writeln!(
+        out,
+        "/** Create a ContainerChain with the given imagePullPolicy. */"
+    );
+    let _ = writeln!(
+        out,
+        "export function imagePullPolicy(v: \"Always\" | \"IfNotPresent\" | \"Never\"): ContainerChain;"
+    );
+    let _ = writeln!(
+        out,
+        "/** Create a bare ResourceListChain with the given cpu quantity. Pass to requests(). */"
+    );
+    let _ = writeln!(
+        out,
+        "export function cpu(v: string | number): ResourceListChain;"
+    );
+    let _ = writeln!(
+        out,
+        "/** Create a bare ResourceListChain with the given memory quantity. Pass to requests(). */"
+    );
+    let _ = writeln!(
+        out,
+        "export function memory(v: string | number): ResourceListChain;"
+    );
+    let _ = writeln!(
+        out,
+        "/** Wrap a ResourceListChain into a ResourceRequirementsChain for use with .resources(). */"
+    );
+    let _ = writeln!(
+        out,
+        "export function requests(chain: ResourceListChain): ResourceRequirementsChain;"
+    );
+    out
+}
+
+/// Emit chain starter implementations to prepend to `k8s/core/v1.js`.
+pub fn emit_core_v1_starters_js() -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "import {{ _createSpecFragment, _createResourceChain, _createResourceRequirementsChain }} from \"husako/_base\";"
+    );
+    let _ = writeln!(
+        out,
+        "export function name(v) {{ return _createSpecFragment({{ _name: v }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function image(v) {{ return _createSpecFragment({{ _image: v }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function imagePullPolicy(v) {{ return _createSpecFragment({{ _imagePullPolicy: v }}); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function cpu(v) {{ return _createResourceChain({{}}).cpu(v); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function memory(v) {{ return _createResourceChain({{}}).memory(v); }}"
+    );
+    let _ = writeln!(
+        out,
+        "export function requests(chain) {{ const list = chain && typeof chain._toJSON === \"function\" ? chain._toJSON() : chain; return _createResourceRequirementsChain(list); }}"
+    );
     out
 }
 
@@ -1061,7 +1328,7 @@ mod tests {
     }
 
     /// Schemas with `resources: ResourceRequirements` must emit a union type that also
-    /// accepts `ResourceRequirementsFragment` from the husako DSL.
+    /// accepts `ResourceRequirementsChain` from k8s/_chains.
     #[test]
     fn emit_schema_builder_resources_type() {
         let container = SchemaInfo {
@@ -1092,7 +1359,7 @@ mod tests {
         let dts = emit_schema_builder_class(&container);
         assert!(
             dts.contains(
-                "resources(value: ResourceRequirements | import(\"husako\").ResourceRequirementsFragment): this;"
+                "resources(value: ResourceRequirements | import(\"k8s/_chains\").ResourceRequirementsChain): this;"
             ),
             "expected union type for resources:\n{dts}"
         );

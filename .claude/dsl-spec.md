@@ -12,10 +12,12 @@ Users write Kubernetes resources using **builder chains**. No `new` keyword, no 
 import { Deployment } from "k8s/apps/v1";
 import { Container } from "k8s/core/v1";
 import { Selector } from "k8s/_common";
-import { metadata, cpu, memory, requests, limits, build } from "husako";
+import { name, label } from "k8s/meta/v1";
+import { cpu, memory, requests } from "k8s/core/v1";
+import husako from "husako";
 
 const nginx = Deployment()
-  .metadata(metadata().name("nginx").label("app", "nginx"))
+  .metadata(name("nginx").label("app", "nginx"))
   .replicas(3)
   .selector(Selector().matchLabels({ app: "nginx" }))
   .containers([
@@ -28,7 +30,7 @@ const nginx = Deployment()
       )
   ]);
 
-build([nginx]);
+husako.build([nginx]);
 ```
 
 **Rules:**
@@ -82,13 +84,13 @@ Generated per-property methods (e.g., `.name()`, `.image()`, `.ports()`) call `_
 
 ### Fragment Builders
 
-Hand-crafted builders in the `"husako"` module for common cross-cutting concerns.
+Hand-crafted builders for common cross-cutting concerns.
 
-| Fragment | Factory | Chainable methods |
-|----------|---------|-------------------|
-| MetadataFragment | `metadata()` | `.name(v)`, `.namespace(v)`, `.label(k, v)`, `.annotation(k, v)` |
-| ResourceListFragment | `cpu(v)`, `memory(v)` | `.cpu(v)`, `.memory(v)` |
-| ResourceRequirementsFragment | `requests(rl)`, `limits(rl)` | `.requests(rl)`, `.limits(rl)` |
+| Fragment | Factory | Module | Chainable methods |
+|----------|---------|--------|-------------------|
+| `_SpecFragment` | `name(v)`, `label(k,v)`, etc. | `k8s/meta/v1` | `.name(v)`, `.namespace(v)`, `.label(k, v)`, `.annotation(k, v)`, `.image(v)`, `.resources(r)` |
+| `_ResourceChain` | `cpu(v)`, `memory(v)` | `k8s/core/v1` | `.cpu(v)`, `.memory(v)` — bare list, pass to `requests()` |
+| `_ResourceRequirementsChain` | `requests(chain)` | `k8s/core/v1` | `.limits(chain)` — wraps `_ResourceChain` into full requirements |
 
 ---
 
@@ -98,8 +100,9 @@ Hand-crafted builders in the `"husako"` module for common cross-cutting concerns
 |--------|---------|
 | `k8s/<group>/<version>` | Resource builder factories (`Deployment`, `StatefulSet`) + schema builder factories (`Container`, `PodSpec`) |
 | `k8s/_common` | Common type builder factories (`LabelSelector`, `ObjectMeta`) for `io.k8s.apimachinery.*` schemas |
-| `"husako"` | `metadata`, `cpu`, `memory`, `requests`, `limits`, `merge`, `build` |
-| `"husako"` (aliases) | `name`, `label`, `namespace`, `annotation` — shorthand for `metadata().name()` etc. |
+| `k8s/meta/v1` | Metadata chain starters: `name`, `namespace`, `label`, `annotation` |
+| `k8s/core/v1` | Container chain starters: `name`, `image`, `imagePullPolicy`; resource chain starters: `cpu`, `memory`, `requests` |
+| `"husako"` (default export) | `build` |
 
 ---
 

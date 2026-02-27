@@ -43,7 +43,7 @@ fn scenario_f_oci_chart_source() {
 
     std::fs::write(
         dir.path().join("pg-oci-values.ts"),
-        "import { Postgresql } from \"helm/postgresql\";\nimport { build } from \"husako\";\nbuild([Postgresql()]);\n",
+        "import { Postgresql } from \"helm/postgresql\";\nimport husako from \"husako\";\nhusako.build([Postgresql()]);\n",
     )
     .unwrap();
     husako_at(dir.path())

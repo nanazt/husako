@@ -3,6 +3,8 @@ source: crates/husako-dts/src/emitter.rs
 expression: output
 ---
 export interface ConfigMap extends _ResourceBuilder {
+  /** Set metadata using a chain starter (name(), namespace(), label() from "k8s/meta/v1"). */
+  metadata(chain: import("k8s/_chains").MetadataChain): this;
   /** Data contains the configuration data. */
   data(value: Record<string, string>): this;
   immutable(value: boolean): this;

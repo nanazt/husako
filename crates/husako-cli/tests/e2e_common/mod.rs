@@ -224,12 +224,13 @@ pub fn init_project(dir: &Path, toml_content: &str) {
 pub fn write_configmap(path: &Path) {
     std::fs::write(
         path,
-        r#"import { ConfigMap } from "k8s/core/v1";
-import { metadata, build } from "husako";
+        r#"import husako from "husako";
+import { ConfigMap } from "k8s/core/v1";
+import { name, namespace } from "k8s/meta/v1";
 const cm = ConfigMap()
-  .metadata(metadata().name("test-cm").namespace("default"))
+  .metadata(name("test-cm").namespace("default"))
   .set("data", { key: "value" });
-build([cm]);
+husako.build([cm]);
 "#,
     )
     .unwrap();

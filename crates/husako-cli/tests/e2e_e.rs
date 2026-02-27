@@ -48,22 +48,23 @@ fn scenario_e_plugin_system_and_clean() {
 
     std::fs::write(
         dir.path().join("helmrelease.ts"),
-        r#"import { HelmRelease } from "fluxcd";
+        r#"import husako from "husako";
+import { HelmRelease } from "fluxcd";
 import { HelmRepository } from "fluxcd/source";
-import { metadata, build } from "husako";
+import { name, namespace } from "k8s/meta/v1";
 
 const repo = HelmRepository()
-  .metadata(metadata().name("bitnami").namespace("flux-system"))
+  .metadata(name("bitnami").namespace("flux-system"))
   .spec({ url: "https://charts.bitnami.com/bitnami", interval: "1h" });
 
 const release = HelmRelease()
-  .metadata(metadata().name("redis").namespace("default"))
+  .metadata(name("redis").namespace("default"))
   .spec({
     chart: { spec: { chart: "redis", version: "25.3.0", sourceRef: repo._sourceRef() } },
     interval: "10m",
   });
 
-build([repo, release]);
+husako.build([repo, release]);
 "#,
     )
     .unwrap();

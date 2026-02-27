@@ -32,12 +32,13 @@ fn scenario_c_resource_sources() {
 
     std::fs::write(
         dir.path().join("example.ts"),
-        r#"import { Example } from "k8s/e2e.husako.io/v1";
-import { metadata, build } from "husako";
+        r#"import husako from "husako";
+import { Example } from "k8s/e2e.husako.io/v1";
+import { name, namespace } from "k8s/meta/v1";
 const ex = Example()
-  .metadata(metadata().name("test-example").namespace("default"))
+  .metadata(name("test-example").namespace("default"))
   .spec({ message: "hello", replicas: 1 });
-build([ex]);
+husako.build([ex]);
 "#,
     )
     .unwrap();
@@ -91,16 +92,17 @@ build([ex]);
 
     std::fs::write(
         dir.path().join("certificate.ts"),
-        r#"import { Certificate } from "k8s/cert-manager.io/v1";
-import { metadata, build } from "husako";
+        r#"import husako from "husako";
+import { Certificate } from "k8s/cert-manager.io/v1";
+import { name, namespace } from "k8s/meta/v1";
 const cert = Certificate()
-  .metadata(metadata().name("my-cert").namespace("default"))
+  .metadata(name("my-cert").namespace("default"))
   .spec({
     secretName: "my-tls",
     issuerRef: { name: "letsencrypt", kind: "ClusterIssuer" },
     dnsNames: ["example.com"],
   });
-build([cert]);
+husako.build([cert]);
 "#,
     )
     .unwrap();

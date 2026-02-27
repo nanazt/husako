@@ -64,11 +64,12 @@ fn e2e_render_deployment_from_real_specs() {
     std::fs::write(
         &entry,
         r#"
-import { build, name, label } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Deployment } from "k8s/apps/v1";
 
 const d = Deployment()
-    .metadata(name("nginx"), label("app", "nginx"))
+    .metadata(name("nginx").label("app", "nginx"))
     .spec({
         replicas: 3,
         selector: { matchLabels: { app: "nginx" } },
@@ -79,7 +80,7 @@ const d = Deployment()
         }
     });
 
-build([d]);
+husako.build([d]);
 "#,
     )
     .unwrap();
@@ -125,14 +126,15 @@ fn e2e_render_cnpg_cluster() {
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Cluster } from "k8s/postgresql.cnpg.io/v1";
 
 const c = Cluster()
     .metadata(name("my-pg"))
     .spec({ instances: 3, storage: { size: "10Gi" } });
 
-build([c]);
+husako.build([c]);
 "#,
     )
     .unwrap();
@@ -172,7 +174,8 @@ fn e2e_render_cert_manager_certificate() {
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Certificate } from "k8s/cert-manager.io/v1";
 
 const cert = Certificate()
@@ -183,7 +186,7 @@ const cert = Certificate()
         dnsNames: ["example.com"]
     });
 
-build([cert]);
+husako.build([cert]);
 "#,
     )
     .unwrap();

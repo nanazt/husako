@@ -2110,8 +2110,8 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_render() {
         let ts = r#"
-            import { build } from "husako";
-            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+            import husako from "husako";
+            husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let yaml = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
             .await
@@ -2132,7 +2132,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_build_propagates() {
-        let ts = r#"import { build } from "husako"; const x = 1;"#;
+        let ts = r#"import husako from "husako"; const x = husako;"#;
         let err = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
             .await
             .unwrap_err();
@@ -3037,8 +3037,8 @@ mod tests {
     #[tokio::test]
     async fn validate_valid_ts() {
         let ts = r#"
-            import { build } from "husako";
-            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+            import husako from "husako";
+            husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let options = test_options();
         let result = validate_file(ts, "test.ts", &options).await.unwrap();
@@ -3056,7 +3056,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_runtime_error() {
-        let ts = r#"import { build } from "husako"; const x = 1;"#;
+        let ts = r#"import husako from "husako"; const x = husako;"#;
         let err = validate_file(ts, "test.ts", &test_options())
             .await
             .unwrap_err();
