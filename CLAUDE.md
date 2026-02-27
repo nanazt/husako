@@ -261,12 +261,14 @@ Key files: `release-plz.toml`, `gaji.config.ts`, `npm/` (package structure), `sc
 Read `.claude/*.md` before making changes to related areas:
 
 - `.claude/dsl-spec.md` — Builder DSL rules
+- `.claude/lsp-spec.md` — husako LSP server behavior (context detection, completions, 7 diagnostic rules, editor integration)
 - `.claude/cli-design.md` — CLI visual design system
 - `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching, plugins)
 - `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 - `.claude/testing.md` — Testing standards: unit/integration/E2E patterns, assertion helpers, source kind coverage table, CLI flag notes for tests
 - `.claude/release-guide.md` — Release checklist including bench results and performance summary in release notes
 - `.claude/coding-guidelines.md` — Common clippy failures and fixes, async optimization patterns (`drop_in_background`, `spawn_blocking`)
+- `.claude/docs-guidelines.md` — Documentation writing style and conventions
 - `.claude/lock-file.md` — `husako.lock` struct, entry variants, skip decision logic, djb2 hashing, load/save behavior
 - `.claude/quantity-grammar.md` — Kubernetes quantity grammar, valid/invalid examples, fallback heuristic
 - `.claude/validation-engine.md` — Two validation paths, what IS/IS NOT validated, error format, strict JSON contract
