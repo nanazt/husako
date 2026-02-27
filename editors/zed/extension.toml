@@ -10,8 +10,7 @@ repository = "https://github.com/nanazt/husako"
 name = "husako Language Server"
 language = "husako"
 
-[[languages]]
-name = "husako"
-grammar = "TypeScript"
-path_suffixes = ["husako"]
-line_comments = ["// "]
+[grammars.typescript]
+repository = "https://github.com/tree-sitter/tree-sitter-typescript"
+rev = "v0.23.2"
+path = "typescript"

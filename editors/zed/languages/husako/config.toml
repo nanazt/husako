@@ -1,0 +1,4 @@
+name = "husako"
+grammar = "typescript"
+path_suffixes = ["husako"]
+line_comments = ["// "]
