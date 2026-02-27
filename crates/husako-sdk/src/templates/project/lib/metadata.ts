@@ -1,5 +1,5 @@
-import { metadata } from "husako";
+import { name } from "k8s/meta/v1";
 
 export function appMetadata(appName: string) {
-  return metadata().name(appName).label("app", appName);
+  return name(appName).label("app", appName);
 }

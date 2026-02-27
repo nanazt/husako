@@ -459,4 +459,42 @@ mod tests {
             matches!(c, tower_lsp::lsp_types::NumberOrString::String(s) if s == "husako/image-format")
         })));
     }
+
+    // ── Duplicate import suppression ──────────────────────────────────────────
+
+    /// husako LSP must not report any diagnostic for duplicate imports from `k8s/*` modules.
+    /// The TypeScript LSP may report a duplicate identifier error; husako LSP must stay silent.
+    #[test]
+    fn duplicate_k8s_imports_no_diagnostic() {
+        let source = r#"
+import { name, namespace, label } from "k8s/meta/v1";
+import { name, image } from "k8s/core/v1";
+husako.build([]);
+"#;
+        let diags = check(source, &empty_ws());
+        // husako LSP produces exactly one diagnostic here: build-contract (empty array)
+        // It must NOT produce any diagnostic mentioning duplicate imports or identifiers.
+        assert!(!diags.iter().any(|d| {
+            let msg = d.message.to_lowercase();
+            msg.contains("duplicate") && (msg.contains("import") || msg.contains("identifier"))
+        }));
+    }
+
+    /// Duplicate imports of `name` from two different `k8s/*` modules — with a valid build call.
+    /// husako LSP should produce zero diagnostics (no husako rules apply to this pattern).
+    #[test]
+    fn duplicate_k8s_imports_with_valid_build() {
+        let source = r#"
+import { name, namespace } from "k8s/meta/v1";
+import { name, image, cpu, memory, requests } from "k8s/core/v1";
+husako.build([nginx]);
+"#;
+        let diags = check(source, &empty_ws());
+        // Only expect build-contract — and only if nginx is not defined (which is fine).
+        // No diagnostic should have a message about import duplication.
+        assert!(!diags.iter().any(|d| {
+            let msg = d.message.to_lowercase();
+            msg.contains("import") && msg.contains("duplicate")
+        }));
+    }
 }

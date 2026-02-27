@@ -1,4 +1,4 @@
-import { build } from "husako";
+import husako from "husako";
 import { nginx } from "../deployments/nginx";
 
-build([nginx]);
+husako.build([nginx]);
