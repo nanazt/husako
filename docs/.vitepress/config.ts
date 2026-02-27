@@ -83,6 +83,7 @@ export default defineConfig({
           { text: 'CLI Reference', link: '/reference/cli' },
           { text: 'Import System', link: '/reference/import-system' },
           { text: 'Builder API',   link: '/reference/builder-api' },
+          { text: 'LSP Setup',     link: '/reference/lsp' },
         ],
       },
       {
