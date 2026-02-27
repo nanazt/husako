@@ -232,6 +232,7 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → `--no-incr
 - Create a feature branch, push it, then open a PR targeting `master`
 - PRs require 1 approving review and all CI checks to pass
 - Branches must be up to date with `master` before merging
+- **`bench-results`** is a CI-managed branch — do not delete it. The `bench.yml` workflow automatically commits benchmark reports (`latest/bench-summary.md`, `latest/bench-report.md`) to this branch on every push to `master` and on `v*` tags (also saves under `releases/<version>/`).
 
 ## CI/CD
 
@@ -265,6 +266,7 @@ Read `.claude/*.md` before making changes to related areas:
 - `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 - `.claude/testing.md` — Testing standards: unit/integration/E2E patterns, assertion helpers, source kind coverage table, CLI flag notes for tests
 - `.claude/release-guide.md` — Release checklist including bench results and performance summary in release notes
+- `.claude/coding-guidelines.md` — Common clippy failures and fixes, async optimization patterns (`drop_in_background`, `spawn_blocking`)
 
 ## Plans
 
