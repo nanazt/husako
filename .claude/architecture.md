@@ -394,3 +394,163 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
 9. **Dependency list sorting** — `list_dependencies()` and `check_outdated()` iterate in sorted order by name for deterministic output.
 
 10. **Plugin preset namespace** — Plugin resources/charts are merged with `<plugin>:<name>` keys to avoid collisions with user-defined dependencies.
+
+## 11. Chain API Codegen (`husako-dts`)
+
+The chain API introduces five emit functions in `husako-dts/src/emitter.rs` that produce
+TypeScript modules outside the normal OpenAPI → `.d.ts` pipeline.
+
+### `_chains.d.ts` — shared interface definitions
+
+`emit_chains_dts()` always emits `k8s/_chains.d.ts`. This file declares:
+
+- **`MetadataChain`** — interface for ObjectMeta field setters (`.name()`, `.namespace()`, `.label()`, etc.)
+- **`ContainerChain`** — interface for Container field setters (`.image()`, `.resources()`, etc.)
+- **`ResourceListChain`** — interface for resource map setters (`.cpu()`, `.memory()`)
+- **`ResourceRequirementsChain`** — interface for `.requests()` / `.limits()` pair
+- **`SpecFragment`** — extends all four; returned by all starter functions; compatible with both `.metadata()` and `.containers()` call sites
+
+Per-group-version `.d.ts` files import from `k8s/_chains` to use these types.
+
+### `k8s/meta/v1` — synthetic ObjectMeta starters
+
+`emit_meta_v1_starters_dts()` and `emit_meta_v1_starters_js()` emit `k8s/meta/v1.d.ts`
+and `k8s/meta/v1.js` unconditionally. This module is **entirely synthetic** — it has no
+corresponding OpenAPI schema and is never generated from spec data.
+
+It exports four starter functions: `name()`, `namespace()`, `label()`, `annotation()`.
+Each returns a `SpecFragment` via `_createSpecFragment()` from `husako/_base`.
+
+`k8s/meta/v1` must be synthetic because `name()` returns `SpecFragment` (compatible with
+both `MetadataChain` and `ContainerChain`). Kubernetes OpenAPI defines `name` as a plain
+`string` field — the chain-compatible return type cannot be derived from the spec.
+
+### `k8s/core/v1` — container starters prepended
+
+`emit_core_v1_starters_dts()` and `emit_core_v1_starters_js()` return content to be
+**prepended** to the generated `k8s/core/v1.d.ts` and `.js` files. They export seven
+starter functions: `name()`, `image()`, `imagePullPolicy()`, `cpu()`, `memory()`, `requests()`.
+
+These use three runtime helpers from `husako/_base`:
+- `_createSpecFragment()` — for starters that return a `SpecFragment`
+- `_createResourceChain()` — for `cpu()` / `memory()`
+- `_createResourceRequirementsChain()` — for `requests()`
+
+Injection in `husako-dts/src/lib.rs`:
+
+```rust
+let dts_content = if group == "core" && version == "v1" {
+    format!("{}\n{}", emitter::emit_core_v1_starters_dts(), dts_content)
+} else {
+    dts_content
+};
+```
+
+### Emission order in `generate()`
+
+1. `_chains.d.ts` — unconditional
+2. `k8s/meta/v1.d.ts` + `.js` — unconditional (synthetic, no OpenAPI source)
+3. For each group-version: generate normally; prepend starters to `core/v1` only
+
+### `_chains.meta.json`
+
+Generated alongside `_chains.d.ts` by `husako-dts/src/schema_store.rs`. Contains
+machine-readable constraint metadata (field types, required flags, enum values, patterns,
+numeric ranges) consumed by `husako-lsp`.
+
+Structure: `{ "MetadataChain": { "name": { "field_type": "string", "required": true, … }, … }, … }`
+
+---
+
+## 12. husako-lsp
+
+The LSP server provides IDE intelligence for `.husako` files. It runs as a subprocess
+started by editor extensions and communicates over JSON-RPC on stdin/stdout.
+
+### Entry point
+
+`run_lsp_server()` in `crates/husako-lsp/src/lib.rs` spawns `tower_lsp::Server` on
+stdin/stdout. Only files whose URI ends in `.husako` are processed.
+
+### Server state
+
+```rust
+pub struct HusakoLsp {
+    client: Client,                      // tower-lsp client (diagnostics, log messages)
+    workspace: Arc<RwLock<Workspace>>,   // project state + document cache
+}
+```
+
+### LSP method dispatch
+
+| Method | Behaviour |
+|--------|-----------|
+| `initialize` | Load workspace from root URI; advertise FULL sync + completions on `.` / `"` triggers |
+| `initialized` | Log success |
+| `shutdown` | No-op |
+| `did_open` | Cache document text; publish diagnostics |
+| `did_change` | Accept FULL content update; republish diagnostics |
+| `did_save` | Reload `_chains.meta.json` (picks up post-`husako gen` schema updates) |
+| `completion` | Return context-filtered completions |
+
+### Context detection (`analysis.rs`)
+
+`context_at(source, position) -> ChainContext` scans backwards from the cursor to find
+the nearest enclosing builder method call:
+
+- `MetadataChain` — inside `.metadata(...)`
+- `ContainerChain` — inside `.containers([...])` or `.initContainers([...])`
+- `TolerationChain`, `VolumeMountChain`, `EnvVarChain`, `ContainerPortChain` — respective builder arrays
+- `SpecFragment` — top-level assignment (no enclosing chain method)
+- `Unknown` — fallback
+
+Best-effort text heuristics — no AST / oxc dependency. Design intent: zero false
+positives, accept false negatives.
+
+`scan_chain_variables(source)` maps variable names to `ChainFragment.fields_set`, used
+by the `RequiredFieldCheck` diagnostic.
+
+### Completions (`completion.rs`)
+
+`completions(source, position, workspace)`:
+
+1. Cursor inside `cpu("…")` or `memory("…")` → return hardcoded quantity suggestions
+2. Otherwise: call `context_at()`, look up chain fields from workspace, return snippet
+   completions (`fieldName($1)`) with type / required / enum documentation
+
+Hardcoded CPU values: `100m`, `250m`, `500m`, `1000m`, `1`, `2`, `4`
+Hardcoded memory values: `64Mi`, `128Mi`, `256Mi`, `512Mi`, `1Gi`, `2Gi`, `4Gi`, `8Gi`
+
+### Diagnostics (`diagnostics.rs`)
+
+`check(source, workspace) -> Vec<Diagnostic>` runs all 7 rules:
+
+| Rule | Code | Severity | Description |
+|------|------|----------|-------------|
+| Build contract | `husako/build-contract` | Error | `husako.build()` called exactly once |
+| Quantity literal | `husako/quantity-literal` | Error | `cpu()` / `memory()` args must be valid k8s quantities |
+| Image format | `husako/image-format` | Warning | OCI image reference must be well-formed |
+| Required field | `husako/required-field` | Error | Variables in `.metadata()` / `.containers()` must include all required fields |
+| Pattern check | `husako/pattern-check` | Warning | String args must match OpenAPI `pattern` (placeholder — always passes) |
+| Enum value | `husako/enum-value` | Warning | String args must be an allowed enum value |
+| Range check | `husako/range-check` | Warning | Numeric args must satisfy `minimum` / `maximum` |
+
+Schema-derived rules degrade gracefully to no-ops when `_chains.meta.json` is absent.
+
+Duplicate identifier warnings from TypeScript for overlapping `k8s/*` imports (e.g.,
+`name` from both `k8s/meta/v1` and `k8s/core/v1`) are **not reported** by husako-lsp.
+
+### Workspace state (`workspace.rs`)
+
+`Workspace` holds: project root, document cache (URI → full text), and parsed
+`_chains.meta.json` as `ChainsMetaJson = HashMap<String, ChainMeta>`.
+
+`reload_chains_meta()` reads `.husako/types/_chains.meta.json`. Silently returns empty
+map on missing file or parse error — schema-derived features produce no output.
+Called on `initialize` and `did_save`.
+
+### Design constraint: no runtime dependency on `husako gen`
+
+The LSP server never invokes `husako gen`. All schema information comes from the
+pre-generated `_chains.meta.json`. Users must run `husako gen` (or `husako gen --skip-k8s`)
+before opening `.husako` files for full feature coverage.
