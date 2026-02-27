@@ -18,13 +18,20 @@ Language support and IDE intelligence for `.husako` files in Zed.
 The extension is not published to the Zed extension registry. Install from source:
 
 1. Clone the repository
-2. Build the extension:
-   ```
-   cd editors/zed
-   cargo build --release
-   ```
-3. In Zed, open **Extensions** (`Cmd+Shift+X`), click **Install Dev Extension**, and
+2. In Zed, open **Extensions** (`Cmd+Shift+X`), click **Install Dev Extension**, and
    select the `editors/zed/` directory.
+
+Zed compiles the extension to WASM automatically on load.
+
+### Manual build
+
+To build the WASM binary yourself:
+
+```
+rustup target add wasm32-wasip1
+cd editors/zed
+cargo build --release --target wasm32-wasip1
+```
 
 ## How it works
 
