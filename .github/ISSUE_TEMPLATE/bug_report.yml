@@ -1,0 +1,54 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: husako version
+      description: Run `husako version` and paste the full output
+      placeholder: "husako 0.1.0 (abc1234 2026-02-27)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect? What did husako do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: entry
+    attributes:
+      label: Entry file (entry.ts)
+      description: The TypeScript entry that triggers the bug, if applicable
+      render: typescript
+
+  - type: textarea
+    id: toml
+    attributes:
+      label: husako.toml
+      description: Your project config, if applicable
+      render: toml
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error output
+      description: Full terminal output, including any exit code
+      render: shell
+    validations:
+      required: true

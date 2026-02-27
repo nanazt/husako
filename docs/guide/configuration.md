@@ -51,7 +51,7 @@ Resource dependencies declare Kubernetes schema sources for type generation.
 
 `husako gen` reads these and produces typed builders under `.husako/types/k8s/`.
 
-Four source types are supported:
+Three source types are supported:
 
 ### release
 
@@ -60,17 +60,6 @@ Downloads the official Kubernetes OpenAPI spec for the given version from GitHub
 ```toml
 [resources]
 core = { source = "release", version = "1.32.0" }
-```
-
-### cluster
-
-Fetches the OpenAPI spec from a live cluster.
-
-Uses the kubeconfig bearer token for authentication:
-
-```toml
-[resources]
-my-cluster = { source = "cluster", url = "https://localhost:6443" }
 ```
 
 ### git
@@ -172,33 +161,6 @@ See [Plugins](/advanced/plugins) for authoring details.
 
 ---
 
-## Cluster config
-
-For commands that connect to a cluster directly, specify credentials in `husako.toml`.
-
-Single cluster:
-
-```toml
-[cluster]
-url = "https://localhost:6443"
-token = "my-bearer-token"
-```
-
-Multiple named clusters:
-
-```toml
-[clusters.local]
-url = "https://localhost:6443"
-
-[clusters.production]
-url = "https://k8s.example.com"
-token = "prod-bearer-token"
-```
-
-If no token is provided, husako reads the bearer token from the active kubeconfig context (`~/.kube/config`).
-
----
-
 ## husako.lock
 
 `husako gen` creates a `husako.lock` file at the project root each time it runs. It records which type definitions were generated and from which source versions, so subsequent runs can skip regenerating types for unchanged dependencies.
@@ -214,7 +176,6 @@ For each entry in `[resources]`, `[charts]`, and `[plugins]`, the lock records t
 | `release` resource | version unchanged AND `.husako/types/k8s/` exists |
 | `git` resource | repo, tag, path unchanged AND `.husako/types/k8s/` exists |
 | `file` resource | path unchanged AND file content unchanged AND `.husako/types/k8s/` exists |
-| `cluster` resource | **never skipped** — live cluster state is always re-fetched |
 | `registry` chart | repo, chart, version unchanged AND `.husako/types/helm/{name}.d.ts` exists |
 | `artifacthub` chart | package, version unchanged AND type file exists |
 | `git` chart | repo, tag, path unchanged AND type file exists |

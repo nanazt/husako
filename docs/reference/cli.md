@@ -24,7 +24,6 @@ Alias: `gen`.
 
 ```
 husako gen [options]
-husako gen [options]
 ```
 
 | Flag | Description |
