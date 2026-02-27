@@ -1,6 +1,7 @@
 id = "husako"
 name = "husako"
 version = "0.1.0"
+schema_version = 1
 description = "Type-safe Kubernetes resource authoring in TypeScript"
 authors = ["nanazt"]
 repository = "https://github.com/nanazt/husako"
