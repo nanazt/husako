@@ -146,3 +146,19 @@ husako render dev
 ```
 
 See [Configuration](/guide/configuration) for entry aliases and project setup.
+
+---
+
+## Watch mode
+
+Pass `--watch` (or `-w`) to re-render automatically whenever a file in the project changes:
+
+```
+husako render entry.ts --watch -o manifests/
+```
+
+husako renders on startup, then watches the project directory for changes and re-renders on each save. Rapid saves are coalesced — a burst of writes triggers exactly one re-render.
+
+Press Ctrl+C to stop.
+
+Files in `.husako/`, `target/`, and `node_modules/` are ignored by the watcher.
