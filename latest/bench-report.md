@@ -1,7 +1,7 @@
 # Benchmark Report
 
-> Generated: 2026-02-26 20:35:27
-> Commit: b3a3b1f-dirty
+> Generated: 2026-02-27 04:56:20
+> Commit: 0416e85-dirty
 > Version: husako v0.1.0
 > Platform: x86_64-linux
 > CPU: AMD EPYC 7763 64-Core Processor (4 cores)
@@ -11,82 +11,82 @@
 ## compile
 
 ### large
-- **Mean**: 30.514 µs (30.445 µs – 30.605 µs, 95% CI)
-- **Std Dev**: 414.10 ns
-- **Slope**: 30.467 µs
+- **Mean**: 29.564 µs (29.293 µs – 29.869 µs, 95% CI)
+- **Std Dev**: 1.490 µs
+- **Slope**: 29.857 µs
 
 ### medium
-- **Mean**: 16.906 µs (16.878 µs – 16.948 µs, 95% CI)
-- **Std Dev**: 183.82 ns
-- **Slope**: 16.897 µs
+- **Mean**: 16.274 µs (16.181 µs – 16.364 µs, 95% CI)
+- **Std Dev**: 470.83 ns
+- **Slope**: 16.504 µs
 
 ### small
-- **Mean**: 10.791 µs (10.737 µs – 10.854 µs, 95% CI)
-- **Std Dev**: 303.55 ns
-- **Slope**: 10.762 µs
+- **Mean**: 10.338 µs (10.284 µs – 10.397 µs, 95% CI)
+- **Std Dev**: 285.47 ns
+- **Slope**: 10.276 µs
 
 ## emit_yaml
 
 ### 1
-- **Mean**: 23.166 µs (23.137 µs – 23.206 µs, 95% CI)
-- **Std Dev**: 179.68 ns
-- **Slope**: 23.135 µs
+- **Mean**: 22.150 µs (22.029 µs – 22.269 µs, 95% CI)
+- **Std Dev**: 614.18 ns
+- **Slope**: 22.219 µs
 
 ### 10
-- **Mean**: 233.551 µs (233.090 µs – 234.252 µs, 95% CI)
-- **Std Dev**: 3.073 µs
-- **Slope**: 233.205 µs
+- **Mean**: 223.760 µs (222.150 µs – 225.637 µs, 95% CI)
+- **Std Dev**: 8.908 µs
+- **Slope**: 225.361 µs
 
 ### 50
-- **Mean**: 1.173 ms (1.169 ms – 1.179 ms, 95% CI)
-- **Std Dev**: 25.751 µs
-- **Slope**: 1.174 ms
+- **Mean**: 1.107 ms (1.099 ms – 1.115 ms, 95% CI)
+- **Std Dev**: 40.558 µs
+- **Slope**: 1.103 ms
 
 ## execute
 
 ### builtin_medium
-- **Mean**: 1.194 ms (1.189 ms – 1.198 ms, 95% CI)
-- **Std Dev**: 23.505 µs
-- **Slope**: 1.206 ms
+- **Mean**: 1.191 ms (1.183 ms – 1.199 ms, 95% CI)
+- **Std Dev**: 40.847 µs
+- **Slope**: 1.177 ms
 
 ### builtin_small
-- **Mean**: 1.065 ms (1.061 ms – 1.072 ms, 95% CI)
-- **Std Dev**: 28.402 µs
-- **Slope**: 1.058 ms
+- **Mean**: 1.044 ms (1.038 ms – 1.049 ms, 95% CI)
+- **Std Dev**: 28.964 µs
+- **Slope**: 1.056 ms
 
 ### k8s_medium
-- **Mean**: 2.273 ms (2.259 ms – 2.286 ms, 95% CI)
-- **Std Dev**: 69.775 µs
+- **Mean**: 2.229 ms (2.212 ms – 2.245 ms, 95% CI)
+- **Std Dev**: 84.056 µs
 
 ### k8s_small
-- **Mean**: 2.171 ms (2.165 ms – 2.176 ms, 95% CI)
-- **Std Dev**: 29.748 µs
+- **Mean**: 2.025 ms (2.011 ms – 2.039 ms, 95% CI)
+- **Std Dev**: 71.157 µs
 
 ## generate
 
 ### core_v1
-- **Mean**: 5.298 ms (5.281 ms – 5.317 ms, 95% CI)
-- **Std Dev**: 90.988 µs
+- **Mean**: 4.946 ms (4.920 ms – 4.971 ms, 95% CI)
+- **Std Dev**: 131.692 µs
 
 ### full_k8s
-- **Mean**: 11.593 ms (11.457 ms – 11.730 ms, 95% CI)
-- **Std Dev**: 698.466 µs
+- **Mean**: 10.940 ms (10.854 ms – 11.023 ms, 95% CI)
+- **Std Dev**: 436.079 µs
 
 ### full_k8s_crds
-- **Mean**: 14.553 ms (14.416 ms – 14.693 ms, 95% CI)
-- **Std Dev**: 708.067 µs
+- **Mean**: 12.503 ms (12.400 ms – 12.604 ms, 95% CI)
+- **Std Dev**: 519.332 µs
 
 ## render
 
 ### builtin_small
-- **Mean**: 1.144 ms (1.141 ms – 1.148 ms, 95% CI)
-- **Std Dev**: 17.925 µs
-- **Slope**: 1.147 ms
+- **Mean**: 1.086 ms (1.079 ms – 1.093 ms, 95% CI)
+- **Std Dev**: 34.371 µs
+- **Slope**: 1.082 ms
 
 ### k8s_medium
-- **Mean**: 2.422 ms (2.405 ms – 2.438 ms, 95% CI)
-- **Std Dev**: 84.328 µs
+- **Mean**: 2.234 ms (2.222 ms – 2.246 ms, 95% CI)
+- **Std Dev**: 63.045 µs
 
 ### k8s_small
-- **Mean**: 2.102 ms (2.101 ms – 2.103 ms, 95% CI)
-- **Std Dev**: 5.886 µs
+- **Mean**: 2.123 ms (2.105 ms – 2.140 ms, 95% CI)
+- **Std Dev**: 88.651 µs
