@@ -10,11 +10,7 @@ repository = "https://github.com/nanazt/husako"
 name = "husako Language Server"
 language = "husako"
 
-[[grammars]]
-name = "husako"
-
-[[languages]]
-name = "husako"
-grammar = "husako"
+[languages.husako]
+grammar = "TypeScript"
 path_suffixes = ["husako"]
 line_comments = ["// "]
