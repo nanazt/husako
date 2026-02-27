@@ -217,7 +217,7 @@ cargo test -p husako-core test_name
 
 - Always respond in English and write documents in English.
 - Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
-- User-facing docs live in `.worktrees/docs-site/docs/` (VitePress site). Update them when user-visible behavior changes.
+- User-facing docs live in `docs/` (VitePress site). Update them when user-visible behavior changes.
 
 ## Configuration (`husako.toml`)
 
@@ -240,6 +240,7 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → `--no-incr
 - PRs require 1 approving review and all CI checks to pass
 - Branches must be up to date with `master` before merging
 - **`bench-results`** is a CI-managed branch — do not delete it. The `bench.yml` workflow automatically commits benchmark reports (`latest/bench-summary.md`, `latest/bench-report.md`) to this branch on every push to `master` and on `v*` tags (also saves under `releases/<version>/`).
+- Do not use git worktrees for day-to-day development. Work directly in the project root.
 
 ## CI/CD
 
