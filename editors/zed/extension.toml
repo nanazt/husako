@@ -1,0 +1,20 @@
+[extension]
+id = "husako"
+name = "husako"
+version = "0.1.0"
+description = "Type-safe Kubernetes resource authoring in TypeScript"
+authors = ["nanazt"]
+repository = "https://github.com/nanazt/husako"
+
+[language_servers.husako-lsp]
+name = "husako Language Server"
+language = "husako"
+
+[[grammars]]
+name = "husako"
+
+[[languages]]
+name = "husako"
+grammar = "husako"
+path_suffixes = ["husako"]
+line_comments = ["// "]
