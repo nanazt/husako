@@ -28,7 +28,7 @@ pub enum ConfigError {
 /// Full `husako.toml` configuration.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct HusakoConfig {
-    /// Entry file aliases: `dev = "env/dev.ts"`.
+    /// Entry file aliases: `dev = "env/dev.husako"`.
     #[serde(default)]
     pub entries: HashMap<String, String>,
 
@@ -254,8 +254,8 @@ mod tests {
     fn parse_full_config() {
         let toml = r#"
 [entries]
-dev = "env/dev.ts"
-staging = "env/staging.ts"
+dev = "env/dev.husako"
+staging = "env/staging.husako"
 
 [schemas]
 kubernetes = { source = "release", version = "1.35" }
@@ -264,7 +264,7 @@ my-crd = { source = "file", path = "./crds/my-crd.yaml" }
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.entries.len(), 2);
-        assert_eq!(config.entries["dev"], "env/dev.ts");
+        assert_eq!(config.entries["dev"], "env/dev.husako");
         assert_eq!(config.resources.len(), 3);
 
         assert!(matches!(
@@ -292,7 +292,7 @@ my-crd = { source = "file", path = "./crds/my-crd.yaml" }
     fn parse_entries_only() {
         let toml = r#"
 [entries]
-dev = "env/dev.ts"
+dev = "env/dev.husako"
 "#;
         let config: HusakoConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.entries.len(), 1);
@@ -344,7 +344,7 @@ dev = "env/dev.ts"
             tmp.path().join("husako.toml"),
             r#"
 [entries]
-dev = "env/dev.ts"
+dev = "env/dev.husako"
 
 [schemas]
 kubernetes = { source = "release", version = "1.35" }
@@ -352,7 +352,7 @@ kubernetes = { source = "release", version = "1.35" }
         )
         .unwrap();
         let config = load(tmp.path()).unwrap().unwrap();
-        assert_eq!(config.entries["dev"], "env/dev.ts");
+        assert_eq!(config.entries["dev"], "env/dev.husako");
     }
 
     #[test]

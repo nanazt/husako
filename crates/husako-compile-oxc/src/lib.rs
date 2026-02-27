@@ -18,8 +18,14 @@ pub enum CompileError {
 pub fn compile(source: &str, filename: &str) -> Result<String, CompileError> {
     let allocator = Allocator::default();
 
-    let source_type = SourceType::from_path(Path::new(filename))
-        .map_err(|e| CompileError::Parse(e.to_string()))?;
+    let effective_path =
+        if Path::new(filename).extension().and_then(|e| e.to_str()) == Some("husako") {
+            Path::new("_.ts")
+        } else {
+            Path::new(filename)
+        };
+    let source_type =
+        SourceType::from_path(effective_path).map_err(|e| CompileError::Parse(e.to_string()))?;
 
     let ret = Parser::new(&allocator, source, source_type).parse();
     if ret.panicked {
@@ -87,5 +93,14 @@ mod tests {
         let js = compile(ts, "test.ts").unwrap();
         assert!(js.contains("import"));
         assert!(js.contains("husako"));
+    }
+
+    #[test]
+    fn husako_extension_compiles_as_typescript() {
+        let ts = r#"const x: number = 42; export { x };"#;
+        let js = compile(ts, "entry.husako").unwrap();
+        assert!(js.contains("const x = 42;"));
+        assert!(!js.contains("number"));
+        assert!(js.contains("//# sourceURL=entry.husako"));
     }
 }

@@ -405,7 +405,7 @@ fn js_deployment_per_property_methods_render() {
     );
 
     // Write TS using per-property builder methods
-    let entry = root.join("deploy.ts");
+    let entry = root.join("deploy.husako");
     std::fs::write(
         &entry,
         r#"
@@ -476,7 +476,7 @@ fn k8s_and_crd_generate_together() {
     );
 
     // Write TS importing from both k8s and CRD, then render
-    let entry = root.join("combined.ts");
+    let entry = root.join("combined.husako");
     std::fs::write(
         &entry,
         r#"
@@ -689,7 +689,7 @@ fn js_service_per_property_methods_render() {
     );
 
     // Write TS using Service builder methods
-    let entry = root.join("svc.ts");
+    let entry = root.join("svc.husako");
     std::fs::write(
         &entry,
         r#"
@@ -960,7 +960,7 @@ fn js_common_schema_builders_render() {
     );
 
     // Write TS that uses a _SchemaBuilder from _common
-    let entry = root.join("common_builder.ts");
+    let entry = root.join("common_builder.husako");
     std::fs::write(
         &entry,
         r#"

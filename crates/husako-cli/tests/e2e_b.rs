@@ -11,7 +11,7 @@ fn scenario_b_chart_sources() {
         dir.path(),
         "[resources]\nk8s = { source = \"release\", version = \"1.35\" }",
     );
-    write_configmap(&dir.path().join("configmap.ts"));
+    write_configmap(&dir.path().join("configmap.husako"));
 
     // Pre-generate k8s types once
     husako_at(dir.path()).args(["gen"]).assert().success();
@@ -40,17 +40,17 @@ fn scenario_b_chart_sources() {
     assert_dts_exports(&dir.path().join(".husako/types/helm/pg.d.ts"), "Pg");
 
     std::fs::write(
-        dir.path().join("pg-values.ts"),
+        dir.path().join("pg-values.husako"),
         "import { Pg } from \"helm/pg\";\nimport husako from \"husako\";\nhusako.build([Pg()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "pg-values.ts"])
+        .args(["check", "pg-values.husako"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "pg-values.ts"])
+            .args(["render", "pg-values.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -91,17 +91,17 @@ fn scenario_b_chart_sources() {
     );
 
     std::fs::write(
-        dir.path().join("redis-reg-values.ts"),
+        dir.path().join("redis-reg-values.husako"),
         "import { RedisReg } from \"helm/redis-reg\";\nimport husako from \"husako\";\nhusako.build([RedisReg()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "redis-reg-values.ts"])
+        .args(["check", "redis-reg-values.husako"])
         .assert()
         .success();
     let redis_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "redis-reg-values.ts"])
+            .args(["render", "redis-reg-values.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -137,17 +137,17 @@ fn scenario_b_chart_sources() {
     );
 
     std::fs::write(
-        dir.path().join("prom-git-values.ts"),
+        dir.path().join("prom-git-values.husako"),
         "import { PromGit } from \"helm/prom-git\";\nimport husako from \"husako\";\nhusako.build([PromGit()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "prom-git-values.ts"])
+        .args(["check", "prom-git-values.husako"])
         .assert()
         .success();
     let prom_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "prom-git-values.ts"])
+            .args(["render", "prom-git-values.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -175,12 +175,12 @@ fn scenario_b_chart_sources() {
 
     // k8s types still work after chart removal
     husako_at(dir.path())
-        .args(["check", "configmap.ts"])
+        .args(["check", "configmap.husako"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "configmap.ts"])
+            .args(["render", "configmap.husako"])
             .output()
             .unwrap()
             .stdout,

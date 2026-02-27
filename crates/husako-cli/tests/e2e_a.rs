@@ -48,13 +48,13 @@ fn scenario_a_static_k8s_and_local_helm() {
 
     // validate entry.ts (k8s Deployment via file path)
     husako_at(&e2e_dir)
-        .args(["check", "entry.ts"])
+        .args(["check", "entry.husako"])
         .assert()
         .success();
 
     // render entry.ts
     let render = husako_at(&e2e_dir)
-        .args(["render", "entry.ts"])
+        .args(["render", "entry.husako"])
         .output()
         .unwrap();
     let yaml = String::from_utf8_lossy(&render.stdout).to_string();
@@ -62,7 +62,7 @@ fn scenario_a_static_k8s_and_local_helm() {
     assert_contains("render → metadata.name: nginx", "name: nginx", &yaml);
     assert_contains("render → image: nginx:1.25", "nginx:1.25", &yaml);
     assert_k8s_valid(&yaml, "entry.ts Deployment");
-    assert_valid_yaml(&yaml, "render entry.ts");
+    assert_valid_yaml(&yaml, "render entry.husako");
 
     // validate + render via entry alias 'deploy'
     husako_at(&e2e_dir)
@@ -82,12 +82,12 @@ fn scenario_a_static_k8s_and_local_helm() {
 
     // validate + render helm-values.ts (local Helm chart)
     husako_at(&e2e_dir)
-        .args(["check", "helm-values.ts"])
+        .args(["check", "helm-values.husako"])
         .assert()
         .success();
     let helm_yaml = String::from_utf8_lossy(
         &husako_at(&e2e_dir)
-            .args(["render", "helm-values.ts"])
+            .args(["render", "helm-values.husako"])
             .output()
             .unwrap()
             .stdout,

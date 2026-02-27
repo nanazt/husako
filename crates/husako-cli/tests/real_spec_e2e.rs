@@ -60,7 +60,7 @@ fn e2e_render_deployment_from_real_specs() {
 
     // Write a TypeScript entry that uses the generated modules.
     // Uses .spec() since per-property methods depend on allOf $ref handling.
-    let entry = root.join("deploy.ts");
+    let entry = root.join("deploy.husako");
     std::fs::write(
         &entry,
         r#"
@@ -122,7 +122,7 @@ fn e2e_render_cnpg_cluster() {
     );
 
     // Write TypeScript entry using cnpg cluster
-    let entry = root.join("cluster.ts");
+    let entry = root.join("cluster.husako");
     std::fs::write(
         &entry,
         r#"
@@ -170,7 +170,7 @@ fn e2e_render_cert_manager_certificate() {
             .exists()
     );
 
-    let entry = root.join("cert.ts");
+    let entry = root.join("cert.husako");
     std::fs::write(
         &entry,
         r#"

@@ -1,7 +1,7 @@
 [entries]
-dev = "dev/main.ts"
-staging = "staging/main.ts"
-release = "release/main.ts"
+dev = "dev/main.husako"
+staging = "staging/main.husako"
+release = "release/main.husako"
 
 [resources]
 kubernetes = { source = "release", version = "%K8S_VERSION%" }

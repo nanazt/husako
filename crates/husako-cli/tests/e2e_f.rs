@@ -42,17 +42,17 @@ fn scenario_f_oci_chart_source() {
     );
 
     std::fs::write(
-        dir.path().join("pg-oci-values.ts"),
+        dir.path().join("pg-oci-values.husako"),
         "import { Postgresql } from \"helm/postgresql\";\nimport husako from \"husako\";\nhusako.build([Postgresql()]);\n",
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "pg-oci-values.ts"])
+        .args(["check", "pg-oci-values.husako"])
         .assert()
         .success();
     let pg_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "pg-oci-values.ts"])
+            .args(["render", "pg-oci-values.husako"])
             .output()
             .unwrap()
             .stdout,

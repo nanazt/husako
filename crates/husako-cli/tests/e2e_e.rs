@@ -47,7 +47,7 @@ fn scenario_e_plugin_system_and_clean() {
     assert_file(&dir.path().join(".husako/plugins/fluxcd/modules/index.js"));
 
     std::fs::write(
-        dir.path().join("helmrelease.ts"),
+        dir.path().join("helmrelease.husako"),
         r#"import husako from "husako";
 import { HelmRelease } from "fluxcd";
 import { HelmRepository } from "fluxcd/source";
@@ -69,12 +69,12 @@ husako.build([repo, release]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "helmrelease.ts"])
+        .args(["check", "helmrelease.husako"])
         .assert()
         .success();
     let hr_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "helmrelease.ts"])
+            .args(["render", "helmrelease.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -123,14 +123,14 @@ husako.build([repo, release]);
     husako_at(dir.path()).args(["gen"]).assert().success();
     assert_file(&dir.path().join(".husako/types/k8s/core/v1.d.ts"));
 
-    write_configmap(&dir.path().join("configmap.ts"));
+    write_configmap(&dir.path().join("configmap.husako"));
     husako_at(dir.path())
-        .args(["check", "configmap.ts"])
+        .args(["check", "configmap.husako"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "configmap.ts"])
+            .args(["render", "configmap.husako"])
             .output()
             .unwrap()
             .stdout,

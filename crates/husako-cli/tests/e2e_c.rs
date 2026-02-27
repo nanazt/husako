@@ -31,7 +31,7 @@ fn scenario_c_resource_sources() {
     );
 
     std::fs::write(
-        dir.path().join("example.ts"),
+        dir.path().join("example.husako"),
         r#"import husako from "husako";
 import { Example } from "k8s/e2e.husako.io/v1";
 import { name, namespace } from "k8s/meta/v1";
@@ -43,12 +43,12 @@ husako.build([ex]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "example.ts"])
+        .args(["check", "example.husako"])
         .assert()
         .success();
     let ex_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "example.ts"])
+            .args(["render", "example.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -91,7 +91,7 @@ husako.build([ex]);
     );
 
     std::fs::write(
-        dir.path().join("certificate.ts"),
+        dir.path().join("certificate.husako"),
         r#"import husako from "husako";
 import { Certificate } from "k8s/cert-manager.io/v1";
 import { name, namespace } from "k8s/meta/v1";
@@ -107,12 +107,12 @@ husako.build([cert]);
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "certificate.ts"])
+        .args(["check", "certificate.husako"])
         .assert()
         .success();
     let cert_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "certificate.ts"])
+            .args(["render", "certificate.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -147,12 +147,12 @@ husako.build([cert]);
     );
 
     husako_at(dir.path())
-        .args(["check", "example.ts"])
+        .args(["check", "example.husako"])
         .assert()
         .success();
     let ex_after = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "example.ts"])
+            .args(["render", "example.husako"])
             .output()
             .unwrap()
             .stdout,
