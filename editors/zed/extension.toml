@@ -9,8 +9,3 @@ repository = "https://github.com/nanazt/husako"
 [language_servers.husako-lsp]
 name = "husako Language Server"
 language = "husako"
-
-[grammars.typescript]
-repository = "https://github.com/tree-sitter/tree-sitter-typescript"
-rev = "v0.23.2"
-path = "typescript"
