@@ -47,7 +47,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 thiserror = "2"
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "signal", "time"] }
+
+# File watching
+notify = "6"
 
 # HTTP
 reqwest = { version = "0.13", features = ["json"] }

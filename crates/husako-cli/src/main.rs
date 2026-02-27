@@ -53,6 +53,10 @@ enum Commands {
         /// Print diagnostic traces to stderr
         #[arg(short, long)]
         verbose: bool,
+
+        /// Watch for changes and re-render automatically
+        #[arg(short = 'w', long)]
+        watch: bool,
     },
 
     /// Generate type definitions and tsconfig.json
@@ -267,6 +271,7 @@ async fn main() -> ExitCode {
             timeout_ms,
             max_heap_mb,
             verbose,
+            watch,
         } => {
             let project_root = cwd();
 
@@ -275,18 +280,6 @@ async fn main() -> ExitCode {
                 Err(msg) => {
                     eprintln!("{} {msg}", style::error_prefix());
                     return ExitCode::from(2);
-                }
-            };
-
-            let source = match std::fs::read_to_string(&resolved) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!(
-                        "{} could not read {}: {e}",
-                        style::error_prefix(),
-                        resolved.display()
-                    );
-                    return ExitCode::from(1);
                 }
             };
 
@@ -313,9 +306,8 @@ async fn main() -> ExitCode {
 
             let schema_store = husako_core::load_schema_store(&project_root);
 
-            let filename = abs_file.to_string_lossy();
             let options = RenderOptions {
-                project_root,
+                project_root: project_root.clone(),
                 allow_outside_root,
                 schema_store,
                 timeout_ms,
@@ -323,26 +315,41 @@ async fn main() -> ExitCode {
                 verbose,
             };
 
+            // Pre-compute the output file path (shared by watch and non-watch paths).
+            let watch_output: Option<PathBuf> = output.map(|out_path| {
+                if out_path
+                    .extension()
+                    .is_some_and(|e| e == "yaml" || e == "yml")
+                {
+                    out_path
+                } else {
+                    let name = derive_out_name(&file, &project_root);
+                    out_path.join(format!("{name}.yaml"))
+                }
+            });
+
+            if watch {
+                return run_watch_loop(&abs_file, &project_root, &options, watch_output).await;
+            }
+
+            // Non-watch: single render.
+            let source = match std::fs::read_to_string(&abs_file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "{} could not read {}: {e}",
+                        style::error_prefix(),
+                        abs_file.display()
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+            let filename = abs_file.to_string_lossy();
             let render_progress = IndicatifReporter::new();
             match husako_core::render(&source, &filename, &options, &render_progress).await {
                 Ok(yaml) => {
-                    if let Some(out_path) = output {
-                        let file_path = if out_path
-                            .extension()
-                            .is_some_and(|e| e == "yaml" || e == "yml")
-                        {
-                            out_path
-                        } else {
-                            let name = derive_out_name(&file, &options.project_root);
-                            out_path.join(format!("{name}.yaml"))
-                        };
-                        if let Some(parent) = file_path.parent()
-                            && let Err(e) = std::fs::create_dir_all(parent)
-                        {
-                            eprintln!("{} {e}", style::error_prefix());
-                            return ExitCode::from(1);
-                        }
-                        if let Err(e) = std::fs::write(&file_path, &yaml) {
+                    if let Some(file_path) = watch_output {
+                        if let Err(e) = write_output_atomic(&yaml, &file_path) {
                             eprintln!("{} {e}", style::error_prefix());
                             return ExitCode::from(1);
                         }
@@ -1761,6 +1768,166 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+// ── Watch mode ──────────────────────────────────────────────────────────────
+
+/// Returns `true` if `path` is under `project_root` but not inside an excluded
+/// directory (`.husako/`, `target/`, `node_modules/`).
+fn is_relevant_path(path: &std::path::Path, project_root: &std::path::Path) -> bool {
+    for dir in &[".husako", "target", "node_modules"] {
+        if path.starts_with(project_root.join(dir)) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Write `content` to `dest` atomically: write to a temp file in the same
+/// directory, then rename.  Rename is atomic on POSIX; on Windows
+/// `tempfile::NamedTempFile::persist` uses `MoveFileExW` with REPLACE.
+fn write_output_atomic(content: &str, dest: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let parent = dest.parent().unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(content.as_bytes())?;
+    tmp.persist(dest)
+        .map_err(|e| std::io::Error::other(e.error))?;
+    Ok(())
+}
+
+/// Execute a single render cycle: re-read source, call `husako_core::render`,
+/// write output (atomically to file, or directly to stdout).
+/// Returns `true` on success, `false` on any error (error is printed to stderr).
+async fn render_once(
+    abs_file: &std::path::Path,
+    options: &RenderOptions,
+    watch_output: &Option<PathBuf>,
+) -> bool {
+    let source = match std::fs::read_to_string(abs_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!(
+                "{} could not read {}: {e}",
+                style::error_prefix(),
+                abs_file.display()
+            );
+            return false;
+        }
+    };
+    let filename = abs_file.to_string_lossy();
+    let progress = IndicatifReporter::new();
+    match husako_core::render(&source, &filename, options, &progress).await {
+        Ok(yaml) => {
+            if let Some(file_path) = watch_output {
+                if let Err(e) = write_output_atomic(&yaml, file_path) {
+                    eprintln!("{} {e}", style::error_prefix());
+                    return false;
+                }
+                eprintln!(
+                    "{} Written to {}",
+                    style::check_mark(),
+                    style::bold(&file_path.display().to_string())
+                );
+            } else {
+                print!("{yaml}");
+            }
+            true
+        }
+        Err(e) => {
+            eprintln!("{} {e}", style::error_prefix());
+            false
+        }
+    }
+}
+
+/// Watch loop: re-render on every file-system change inside `project_root`.
+///
+/// Uses `tokio::sync::Notify` to coalesce events: `notify_one()` is idempotent
+/// when a permit is already queued, so bursts of events collapse to one
+/// re-render.  A dedicated shutdown task registers the SIGINT listener exactly
+/// once (no repeated `ctrl_c()` calls inside the loop).  `biased;` ensures the
+/// shutdown arm is polled first — this is a correctness requirement: without it,
+/// if both arms are simultaneously ready `select!` may pick the change arm and
+/// permanently discard the shutdown notification.
+async fn run_watch_loop(
+    abs_file: &std::path::Path,
+    project_root: &std::path::Path,
+    options: &RenderOptions,
+    watch_output: Option<PathBuf>,
+) -> ExitCode {
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+
+    // --- Shutdown: register SIGINT listener exactly once ----
+    let shutdown = Arc::new(Notify::new());
+    let shutdown_clone = Arc::clone(&shutdown);
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        shutdown_clone.notify_one();
+    });
+
+    // --- File change signal ---------------------------------
+    let change_signal = Arc::new(Notify::new());
+    let signal_clone = Arc::clone(&change_signal);
+    let root_clone = project_root.to_path_buf();
+
+    use notify::{EventKind, RecursiveMode, Watcher, event::ModifyKind, recommended_watcher};
+
+    let mut watcher = match recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            let kind_relevant = matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Data(_))
+                    | EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(ModifyKind::Name(_))
+            );
+            if kind_relevant {
+                let path_relevant = event.paths.iter().any(|p| is_relevant_path(p, &root_clone));
+                if path_relevant {
+                    signal_clone.notify_one(); // idempotent: at most one pending
+                }
+            }
+        }
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!(
+                "{} could not start file watcher: {e}",
+                style::error_prefix()
+            );
+            return ExitCode::from(1);
+        }
+    };
+
+    if let Err(e) = watcher.watch(project_root, RecursiveMode::Recursive) {
+        eprintln!("{} {e}", style::error_prefix());
+        return ExitCode::from(1);
+    }
+
+    eprintln!("Watching for changes. Press Ctrl+C to stop.");
+    render_once(abs_file, options, &watch_output).await;
+
+    loop {
+        tokio::select! {
+            biased; // shutdown must always win — see docstring above
+            _ = shutdown.notified() => {
+                eprintln!("Stopping.");
+                break;
+            }
+            _ = change_signal.notified() => {
+                // Debounce: coalesce rapid saves (e.g. editor write + rename)
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                eprintln!("Change detected, re-rendering...");
+                render_once(abs_file, options, &watch_output).await;
+            }
+        }
+    }
+
+    // `watcher` is dropped here — OS file-watch descriptors are released.
+    ExitCode::SUCCESS
+}
+
 fn exit_code(err: &HusakoError) -> u8 {
     match err {
         HusakoError::Compile(_) => 3,
@@ -1782,5 +1949,104 @@ fn exit_code(err: &HusakoError) -> u8 {
         HusakoError::Chart(_) => 6,
         HusakoError::Config(_) => 2,
         HusakoError::GenerateIo(_) => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::is_relevant_path;
+
+    // ── is_relevant_path ────────────────────────────────────────────────────
+
+    #[test]
+    fn excluded_dirs_are_not_relevant() {
+        let root = PathBuf::from("/project");
+        assert!(!is_relevant_path(
+            &root.join(".husako/types/foo.d.ts"),
+            &root
+        ));
+        assert!(!is_relevant_path(&root.join("target/debug/husako"), &root));
+        assert!(!is_relevant_path(
+            &root.join("node_modules/pkg/index.js"),
+            &root
+        ));
+    }
+
+    #[test]
+    fn project_files_are_relevant() {
+        let root = PathBuf::from("/project");
+        assert!(is_relevant_path(&root.join("entry.ts"), &root));
+        assert!(is_relevant_path(&root.join("lib/utils.ts"), &root));
+        assert!(is_relevant_path(&root.join("husako.toml"), &root));
+    }
+
+    #[test]
+    fn path_outside_root_is_relevant() {
+        // The watcher only watches project_root, so paths outside it are
+        // normally impossible — but if they somehow arrive, we admit them
+        // (we can only exclude by prefix match, not by "outside root" check).
+        let root = PathBuf::from("/project");
+        assert!(is_relevant_path(&PathBuf::from("/tmp/something.ts"), &root));
+    }
+
+    // ── tokio::sync::Notify contract (race-condition design) ────────────────
+    //
+    // The watch loop relies on two invariants of Notify:
+    //   1. Multiple notify_one() calls while a permit is pending are no-ops.
+    //   2. notify_one() called while notified().await is not yet polled stores
+    //      a permit that the next notified() call will consume immediately.
+
+    #[tokio::test]
+    async fn notify_coalesces_burst_into_single_permit() {
+        use tokio::sync::Notify;
+
+        let n = Notify::new();
+        n.notify_one();
+        n.notify_one();
+        n.notify_one();
+
+        // First notified() must return immediately — one permit was stored.
+        tokio::time::timeout(Duration::from_millis(50), n.notified())
+            .await
+            .expect("first notified() must return immediately after burst");
+
+        // Second notified() must block — the burst stored only one permit.
+        let result = tokio::time::timeout(Duration::from_millis(50), n.notified()).await;
+        assert!(
+            result.is_err(),
+            "second notified() must block — burst must coalesce to one permit"
+        );
+    }
+
+    #[tokio::test]
+    async fn notify_during_render_queues_one_rerender() {
+        use tokio::sync::Notify;
+
+        let n = Arc::new(Notify::new());
+        let n2 = Arc::clone(&n);
+
+        // Simulate a render that takes 100 ms.
+        let render = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            // After "render", check that exactly one re-render was queued.
+            tokio::time::timeout(Duration::from_millis(20), n2.notified())
+                .await
+                .is_ok()
+        });
+
+        // Fire change signals during the render — they must collapse to one.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        n.notify_one();
+        n.notify_one(); // extra call — must not produce a second re-render
+
+        let should_rerender = render.await.unwrap();
+        assert!(
+            should_rerender,
+            "change during render must queue exactly one re-render"
+        );
     }
 }

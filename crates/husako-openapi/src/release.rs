@@ -305,6 +305,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn download_and_cache_specs_from_github_api() {
+        let mut server = mockito::Server::new_async().await;
+        let spec_json = serde_json::json!({"openapi": "3.0.0"});
+
+        // Mock 1: GitHub directory listing
+        let _dir_mock = server
+            .mock(
+                "GET",
+                "/repos/kubernetes/kubernetes/contents/api/openapi-spec/v3?ref=v1.35.0",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!([{
+                    "name": "apis__apps__v1_openapi.json",
+                    "download_url": format!("{}/apis__apps__v1_openapi.json", server.url()),
+                    "size": 42
+                }])
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        // Mock 2: spec file download
+        let _spec_mock = server
+            .mock("GET", "/apis__apps__v1_openapi.json")
+            .with_status(200)
+            .with_body(spec_json.to_string())
+            .create_async()
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let result = fetch_release_specs_from("1.35", tmp.path(), None, &server.url())
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key("apis/apps/v1"));
+
+        // Verify cache was written
+        let cache = tmp.path().join("release/v1.35.0");
+        assert!(cache.join("apis__apps__v1_openapi.json").exists());
+        assert!(cache.join("_manifest.json").exists());
+    }
+
+    #[tokio::test]
+    async fn github_api_403_returns_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock(
+                "GET",
+                "/repos/kubernetes/kubernetes/contents/api/openapi-spec/v3?ref=v1.35.0",
+            )
+            .with_status(403)
+            .create_async()
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let result = fetch_release_specs_from("1.35", tmp.path(), None, &server.url()).await;
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("403"), "error should mention 403: {msg}");
+    }
+
+    #[tokio::test]
     async fn cache_hit_skips_network() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_dir = tmp.path();

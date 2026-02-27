@@ -59,6 +59,7 @@ The file argument is resolved as: direct path → entry alias from `husako.toml`
 | `--allow-outside-root` | Allow imports outside the project root |
 | `--timeout-ms <ms>` | Execution timeout in milliseconds |
 | `--max-heap-mb <mb>` | Maximum heap memory in megabytes |
+| `-w, --watch` | Re-render automatically when source files change. Press Ctrl+C to stop. |
 | `-v, --verbose` | Print diagnostic traces to stderr |
 
 ---

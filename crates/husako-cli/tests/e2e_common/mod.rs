@@ -34,6 +34,162 @@ pub fn e2e_tmpdir() -> TempDir {
         .expect("failed to create tmpdir inside test/e2e/")
 }
 
+// ── Cache helpers ─────────────────────────────────────────────────────────────
+
+/// Seed `.husako/cache/release/v{tag}/` with a single mock OpenAPI spec so
+/// `fetch_release_specs()` is a cache hit — no GitHub API network call needed.
+///
+/// The spec contains both apps/v1 (Deployment) and core/v1 (ConfigMap, Container)
+/// schemas. husako-dts classifies schemas by name pattern, so a single spec file
+/// generates `k8s/apps/v1.js`, `k8s/core/v1.js`, and `k8s/_common.js`.
+pub fn write_release_cache(root: &Path, version: &str) {
+    let v = version.strip_prefix('v').unwrap_or(version);
+    let parts: Vec<&str> = v.split('.').collect();
+    let tag = if parts.len() == 2 {
+        format!("v{v}.0")
+    } else {
+        format!("v{v}")
+    };
+    let cache_dir = root.join(format!(".husako/cache/release/{tag}"));
+    std::fs::create_dir_all(&cache_dir).unwrap();
+
+    let spec = e2e_mock_spec();
+    std::fs::write(
+        cache_dir.join("apis__apps__v1_openapi.json"),
+        spec.to_string(),
+    )
+    .unwrap();
+
+    let manifest: Vec<(String, String)> = vec![(
+        "apis/apps/v1".to_string(),
+        "apis__apps__v1_openapi.json".to_string(),
+    )];
+    std::fs::write(
+        cache_dir.join("_manifest.json"),
+        serde_json::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Minimal mock OpenAPI spec used for e2e cache seeding.
+///
+/// Contains all schemas required by e2e entry files:
+///   - `io.k8s.api.apps.v1.Deployment` (GVK) → `k8s/apps/v1.js`
+///   - `io.k8s.api.core.v1.ConfigMap` (GVK) → `k8s/core/v1.js`
+///   - `io.k8s.api.core.v1.Container` (builder) → `k8s/core/v1.js`
+///   - `io.k8s.api.core.v1.ResourceRequirements` → `k8s/core/v1.js`
+///   - `io.k8s.apimachinery…LabelSelector` → `k8s/_common.js`
+fn e2e_mock_spec() -> serde_json::Value {
+    serde_json::json!({
+        "components": {
+            "schemas": {
+                "io.k8s.api.apps.v1.Deployment": {
+                    "description": "Deployment enables declarative updates for Pods.",
+                    "properties": {
+                        "apiVersion": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "metadata": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},
+                        "spec": {"$ref": "#/components/schemas/io.k8s.api.apps.v1.DeploymentSpec"}
+                    },
+                    "x-kubernetes-group-version-kind": [
+                        {"group": "apps", "version": "v1", "kind": "Deployment"}
+                    ]
+                },
+                "io.k8s.api.apps.v1.DeploymentSpec": {
+                    "properties": {
+                        "replicas": {"type": "integer"},
+                        "selector": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector"},
+                        "template": {"$ref": "#/components/schemas/io.k8s.api.core.v1.PodTemplateSpec"}
+                    },
+                    "required": ["selector"]
+                },
+                "io.k8s.api.core.v1.ConfigMap": {
+                    "description": "ConfigMap holds configuration data.",
+                    "properties": {
+                        "apiVersion": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "metadata": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},
+                        "data": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"}
+                        }
+                    },
+                    "x-kubernetes-group-version-kind": [
+                        {"group": "", "version": "v1", "kind": "ConfigMap"}
+                    ]
+                },
+                "io.k8s.api.core.v1.PodTemplateSpec": {
+                    "properties": {
+                        "spec": {"$ref": "#/components/schemas/io.k8s.api.core.v1.PodSpec"}
+                    }
+                },
+                "io.k8s.api.core.v1.PodSpec": {
+                    "properties": {
+                        "containers": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/io.k8s.api.core.v1.Container"}
+                        }
+                    }
+                },
+                "io.k8s.api.core.v1.Container": {
+                    "properties": {
+                        "name": {"type": "string"},
+                        "image": {"type": "string"},
+                        "imagePullPolicy": {
+                            "type": "string",
+                            "enum": ["Always", "IfNotPresent", "Never"]
+                        },
+                        "resources": {"$ref": "#/components/schemas/io.k8s.api.core.v1.ResourceRequirements"}
+                    }
+                },
+                "io.k8s.api.core.v1.ResourceRequirements": {
+                    "properties": {
+                        "limits": {
+                            "type": "object",
+                            "additionalProperties": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.api.resource.Quantity"}
+                        },
+                        "requests": {
+                            "type": "object",
+                            "additionalProperties": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.api.resource.Quantity"}
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.api.resource.Quantity": {
+                    "description": "Quantity is a representation of a decimal number.",
+                    "type": "string"
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
+                    "description": "Standard object metadata.",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "namespace": {"type": "string"}
+                    }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector": {
+                    "properties": {
+                        "matchLabels": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"}
+                        },
+                        "matchExpressions": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement"}
+                        }
+                    }
+                },
+                "io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelectorRequirement": {
+                    "properties": {
+                        "key": {"type": "string"},
+                        "operator": {"type": "string"},
+                        "values": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["key", "operator"]
+                }
+            }
+        }
+    })
+}
+
 // ── Filesystem utilities ──────────────────────────────────────────────────────
 
 /// Recursively copy a directory tree from `src` to `dst`.

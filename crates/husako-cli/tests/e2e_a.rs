@@ -3,15 +3,28 @@ use e2e_common::*;
 
 // ── Scenario A: Static k8s + local Helm chart ────────────────────────────────
 //
-// Uses the checked-in test/e2e/ fixture directory. Downloads k8s 1.35 types
-// from the GitHub release API (cached by CI).
+// Uses the checked-in test/e2e/ fixture directory. k8s types are generated from
+// a pre-seeded release cache — no GitHub API network call for husako gen.
+// husako outdated is verified against a local mockito server.
 
 #[test]
-#[ignore] // requires network; run with: cargo test -p husako -- --include-ignored
 fn scenario_a_static_k8s_and_local_helm() {
     let e2e_dir = e2e_fixtures_dir();
 
-    // Generate types (downloads k8s OpenAPI spec + resolves local Helm chart)
+    // Pre-seed release cache so husako gen is a cache hit (no GitHub API call).
+    write_release_cache(&e2e_dir, "1.35");
+
+    // Mock GitHub API for husako outdated (tags endpoint).
+    let mut mock_github = mockito::Server::new();
+    let _tags_mock = mock_github
+        .mock("GET", "/repos/kubernetes/kubernetes/tags")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!([{"name": "v1.35.0"}]).to_string())
+        .create();
+
+    // Generate types (cache hit → no network; resolves local Helm chart from file)
     husako_at(&e2e_dir).args(["gen"]).assert().success();
 
     // Side-effect: type files generated with correct exports
@@ -116,6 +129,10 @@ fn scenario_a_static_k8s_and_local_helm() {
         "husako debug should produce output"
     );
 
-    // outdated may exit non-zero if deps are outdated; just verify it runs
-    let _ = husako_at(&e2e_dir).args(["outdated"]).output().unwrap();
+    // outdated: mock GitHub tags → current version is latest → exits 0
+    husako_at(&e2e_dir)
+        .env("HUSAKO_GITHUB_API_URL", mock_github.url())
+        .args(["outdated"])
+        .assert()
+        .success();
 }

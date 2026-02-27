@@ -4,13 +4,15 @@ use e2e_common::*;
 // ── Scenario E: Plugin system + husako clean ─────────────────────────────────
 
 #[test]
-#[ignore] // requires network (k8s gen); run with: cargo test -p husako -- --include-ignored
 fn scenario_e_plugin_system_and_clean() {
     let dir = tempfile::TempDir::new().unwrap();
     init_project(
         dir.path(),
         "[resources]\nk8s = { source = \"release\", version = \"1.35\" }",
     );
+
+    // Pre-seed release cache so husako gen is a cache hit (no GitHub API call).
+    write_release_cache(dir.path(), "1.35");
 
     // ── E1: plugin add (path source — bundled FluxCD plugin) ─────────────────
     // Copy the FluxCD plugin from the repo into the tmpdir as a relative path
@@ -111,6 +113,10 @@ build([repo, release]);
         .assert()
         .success();
     assert_no_dir(&dir.path().join(".husako"));
+
+    // Re-seed cache: husako clean --all deleted .husako/ (including cache);
+    // husako.lock survived but types are gone → lock_check won't skip → needs cache hit.
+    write_release_cache(dir.path(), "1.35");
 
     // gen after clean re-downloads and rebuilds everything
     husako_at(dir.path()).args(["gen"]).assert().success();
