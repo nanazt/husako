@@ -10,5 +10,7 @@ repository = "https://github.com/nanazt/husako"
 crate-type = ["cdylib"]
 path = "src/husako.rs"
 
+[workspace]
+
 [dependencies]
-zed_extension_api = "0.1"
+zed_extension_api = "0.7"
