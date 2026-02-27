@@ -130,8 +130,15 @@ crates/
 ├── husako-bench/          # Criterion benchmarks (compile/execute/render/generate/emit) + report binary
 │   ├── benches/
 │   └── src/               # bench_fixtures_dir(), fixture constants, report binary
-└── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
-    └── src/lib.rs
+├── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
+│   └── src/lib.rs
+└── husako-lsp/            # LSP server (tower-lsp, JSON-RPC over stdio) for .husako files
+    └── src/
+        ├── lib.rs              # Server setup, tower-lsp handlers, run_lsp_server()
+        ├── analysis.rs         # Context detection, chain analysis, build-call scanning
+        ├── completion.rs       # Context-sensitive completions + quantity value completions
+        ├── diagnostics.rs      # 7 diagnostic rules (required fields, quantities, image formats, etc.)
+        └── workspace.rs        # Workspace state: husako.toml + _chains.meta.json loading
 ```
 
 Boundary rules:
