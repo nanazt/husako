@@ -1222,11 +1222,49 @@ async fn main() -> ExitCode {
                     );
 
                     if type_check {
-                        match std::process::Command::new("tsc")
+                        // Regenerate tsconfig.json from current config + installed plugins.
+                        // tsconfig.json is a husako-managed artifact, so we always overwrite.
+                        let hs_config = husako_config::load(&project_root).ok().flatten();
+                        let plugin_paths = husako_core::scan_installed_plugin_paths(&project_root);
+                        let tsconfig =
+                            husako_core::build_tsconfig_content(hs_config.as_ref(), &plugin_paths);
+                        let tsconfig_path = project_root.join("tsconfig.json");
+                        let _ = std::fs::write(
+                            &tsconfig_path,
+                            serde_json::to_string_pretty(&tsconfig).unwrap_or_default() + "\n",
+                        );
+
+                        // TypeScript only recognises .ts/.tsx extensions. For .husako
+                        // entry files, write a temporary .ts copy so tsc can process it,
+                        // then remove it once tsc finishes.
+                        let temp_ts = if abs_file.extension().and_then(|e| e.to_str())
+                            == Some("husako")
+                        {
+                            let temp = abs_file.with_extension("ts");
+                            match std::fs::write(&temp, source.as_bytes()) {
+                                Ok(()) => Some(temp),
+                                Err(e) => {
+                                    eprintln!(
+                                        "{} could not create temporary .ts file for type checking: {e}",
+                                        style::warning_prefix()
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        let tsc_result = std::process::Command::new("tsc")
                             .arg("--noEmit")
                             .current_dir(&project_root)
-                            .output()
-                        {
+                            .output();
+
+                        if let Some(ref temp) = temp_ts {
+                            let _ = std::fs::remove_file(temp);
+                        }
+
+                        match tsc_result {
                             Ok(out) if out.status.success() => {
                                 eprintln!("{} TypeScript types OK", style::check_mark());
                             }

@@ -45,6 +45,22 @@ impl Workspace {
     pub async fn load(&mut self, root: PathBuf) {
         self.root = Some(root.clone());
         self.reload_chains_meta(&root).await;
+        self.refresh_tsconfig(&root).await;
+    }
+
+    /// Write (or overwrite) `tsconfig.json` at the project root.
+    ///
+    /// tsconfig.json is a husako-managed artifact. Opening a `.husako` file in
+    /// the editor triggers this so the IDE always has up-to-date path mappings,
+    /// even without a prior `husako gen` run. Errors are non-fatal — the LSP
+    /// degrades gracefully.
+    async fn refresh_tsconfig(&self, root: &Path) {
+        let config = husako_config::load(root).ok().flatten();
+        let plugin_paths = husako_core::scan_installed_plugin_paths(root);
+        let content = husako_core::build_tsconfig_content(config.as_ref(), &plugin_paths);
+        if let Ok(json) = serde_json::to_string_pretty(&content) {
+            let _ = tokio::fs::write(root.join("tsconfig.json"), json + "\n").await;
+        }
     }
 
     /// Reload `_chains.meta.json` from `.husako/types/_chains.meta.json`.
@@ -94,5 +110,30 @@ impl Workspace {
 impl Default for Workspace {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lsp_writes_tsconfig_on_workspace_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        // No tsconfig.json before load
+        assert!(!root.join("tsconfig.json").exists());
+
+        let mut ws = Workspace::new();
+        ws.load(root.clone()).await;
+
+        // tsconfig.json must be created by load()
+        assert!(root.join("tsconfig.json").exists());
+
+        let content = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
+        assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
     }
 }

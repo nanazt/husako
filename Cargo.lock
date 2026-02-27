@@ -1300,9 +1300,12 @@ dependencies = [
 name = "husako-lsp"
 version = "0.1.0"
 dependencies = [
+ "husako-config",
+ "husako-core",
  "notify",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tower-lsp",

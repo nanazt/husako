@@ -351,9 +351,17 @@ my-plugin = { source = "path", path = "./plugins/my-plugin" }
 
 `PluginResolver` maps import specifiers (e.g., `"flux"`, `"flux/helm"`) to absolute `.js` paths under `.husako/plugins/<name>/`. Built from `PluginManifest.modules`.
 
-### tsconfig.json integration
+### tsconfig.json management
 
-`plugin_tsconfig_paths()` builds specifier → `.d.ts` path mappings (e.g., `"flux"` → `.husako/plugins/flux/modules/index.d.ts`). Paths are added alongside `k8s/*` and `helm/*` in the generated `tsconfig.json`.
+`tsconfig.json` is a husako-managed artifact at the project root — gitignored, always overwritten (never merged). Three code paths produce it:
+
+1. `husako gen` — via `write_tsconfig()` in `husako-core/src/lib.rs`
+2. `husako check --type-check` — generates fresh content in memory before invoking `tsc`
+3. husako-lsp on workspace open — `Workspace::refresh_tsconfig()` writes it when the LSP loads
+
+The pure builder `build_tsconfig_content(config, plugin_paths) -> serde_json::Value` in `husako-core/src/lib.rs` is the single source of truth for tsconfig content. `scan_installed_plugin_paths(root)` reads `.husako/plugins/<name>/plugin.toml` without re-running install.
+
+`plugin_tsconfig_paths()` builds specifier → `.d.ts` path mappings (e.g., `"flux"` → `.husako/plugins/flux/modules/index.d.ts`). Paths are included in `build_tsconfig_content()`.
 
 ### Runtime loading
 

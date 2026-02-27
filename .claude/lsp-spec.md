@@ -207,7 +207,20 @@ TypeScript LSP reports duplicate identifier errors when the same name is importe
 
 ---
 
-### 7. Schema Metadata Loading
+### 7. Workspace Initialization
+
+When the LSP receives `initialize` and the workspace root is set, `Workspace::load(root)` runs:
+
+1. `reload_chains_meta(&root)` — reads `.husako/types/_chains.meta.json`
+2. `refresh_tsconfig(&root)` — writes (or overwrites) `tsconfig.json` at the project root
+
+`refresh_tsconfig` calls `husako_core::build_tsconfig_content()` with the current `husako.toml` config and `scan_installed_plugin_paths()` output. This means opening any `.husako` file in the editor always refreshes path mappings, even without running `husako gen` first. Errors are non-fatal — the LSP degrades gracefully.
+
+**Implementation**: `crates/husako-lsp/src/workspace.rs` → `Workspace::refresh_tsconfig()`
+
+---
+
+### 8. Schema Metadata Loading
 
 The LSP reads `_chains.meta.json` (generated alongside `_chains.d.ts` by `husako gen`) for machine-readable constraint data:
 

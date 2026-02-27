@@ -207,7 +207,7 @@ cargo test -p husako-core test_name
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
 - **`husako.toml`** at the repo root may accumulate local dev test entries (charts, resources). Run `git diff husako.toml` before staging to avoid committing unrelated test config.
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
-- `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
+- `tsconfig.json` is a husako-managed artifact — gitignored, always overwritten by `husako gen` and by husako-lsp on workspace open. Never edit it manually. `strip_jsonc()` in `husako-core` remains for reading tsconfig in `husako debug`.
 - **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
 - **QuickJS (`husako-runtime-qjs`) is not async-native**: `rquickjs::AsyncRuntime` + `parallel` feature panics in `event-listener` under tokio's multi-thread runtime; `PromiseFuture` is `!Send`. Use `tokio::task::spawn_blocking` to wrap synchronous QuickJS execution — this is the correct tokio pattern for CPU-bound single-threaded work.
 - **CLI output to stderr**: All user-facing CLI output (`husako list`, `husako info`, `husako debug`, `husako outdated`, etc.) uses `eprintln!()` → stderr. Only YAML data output from `husako render` goes to stdout. Integration tests must use `.stderr()` assertions, not `.stdout()`.
@@ -223,7 +223,7 @@ cargo test -p husako-core test_name
 
 Project-level configuration file created by `husako new`. Supports:
 
-- **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
+- **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.husako"`)
 - **Resource dependencies**: `[resources]` declares k8s schema sources with 3 types: `release`, `git`, `file` (aliased from legacy `[schemas]`)
 - **Chart dependencies**: `[charts]` declares Helm chart sources with 5 types: `registry`, `artifacthub`, `git`, `file`, `oci`
 - **Plugins**: `[plugins]` declares plugin sources with 2 types: `git` (URL), `path` (local directory)

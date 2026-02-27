@@ -155,7 +155,7 @@ fn project_with_k8s(ts_content: &str) -> (tempfile::TempDir, std::path::PathBuf)
     let root = dir.path();
     write_k8s_modules(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(&entry, ts_content).unwrap();
     (dir, entry)
 }
@@ -264,7 +264,7 @@ export const nginx = Deployment()
     .unwrap();
 
     std::fs::create_dir_all(root.join("env")).unwrap();
-    let entry = root.join("env/dev.ts");
+    let entry = root.join("env/dev.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako";
@@ -323,7 +323,7 @@ export const nginx = Deployment()
     .unwrap();
 
     std::fs::create_dir_all(root.join("env")).unwrap();
-    let entry = root.join("env/dev.ts");
+    let entry = root.join("env/dev.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako";
@@ -353,7 +353,7 @@ fn reject_outside_root() {
     std::fs::write(root.join("secret.ts"), "export const x = 1;").unwrap();
 
     // Create entry file that imports outside root
-    let entry = sub.join("entry.ts");
+    let entry = sub.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako"; import { x } from "../secret"; husako.build([{ _render() { return { v: x }; } }]);"#,
@@ -377,7 +377,7 @@ fn allow_outside_root_flag() {
 
     std::fs::write(root.join("outside.ts"), "export const val = 42;").unwrap();
 
-    let entry = sub.join("entry.ts");
+    let entry = sub.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako"; import { val } from "../outside"; husako.build([{ _render() { return { v: val }; } }]);"#,
@@ -399,7 +399,7 @@ fn extension_inference() {
 
     // import "./lib" should resolve to lib.ts
     std::fs::write(root.join("lib.ts"), "export const x: number = 1;").unwrap();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako"; import { x } from "./lib"; husako.build([{ _render() { return { v: x }; } }]);"#,
@@ -603,7 +603,7 @@ fn index_inference() {
     std::fs::create_dir(&lib).unwrap();
     std::fs::write(lib.join("index.ts"), "export const x: number = 99;").unwrap();
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako"; import { x } from "./lib"; husako.build([{ _render() { return { v: x }; } }]);"#,
@@ -880,49 +880,6 @@ fn generate_spec_dir() {
     assert!(root.join("tsconfig.json").exists());
 }
 
-#[test]
-fn generate_updates_existing_tsconfig() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-
-    // Pre-create tsconfig.json with existing content
-    let existing = serde_json::json!({
-        "compilerOptions": {
-            "strict": true,
-            "target": "ES2020",
-            "paths": {
-                "mylib/*": ["./lib/*"]
-            }
-        },
-        "include": ["src/**/*"]
-    });
-    std::fs::write(
-        root.join("tsconfig.json"),
-        serde_json::to_string_pretty(&existing).unwrap(),
-    )
-    .unwrap();
-
-    husako_at(root)
-        .args(["gen", "--skip-k8s"])
-        .assert()
-        .success();
-
-    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
-
-    // Original fields preserved
-    assert_eq!(parsed["compilerOptions"]["target"], "ES2020");
-    assert!(parsed["include"].is_array());
-
-    // Original path preserved
-    assert!(parsed["compilerOptions"]["paths"]["mylib/*"].is_array());
-
-    // husako paths added
-    assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
-    assert!(parsed["compilerOptions"]["paths"]["husako/_base"].is_array());
-    assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
-}
-
 // --- Milestone 7: Schema-based Validation ---
 
 #[test]
@@ -931,7 +888,7 @@ fn schema_invalid_enum_exit_7() {
     let root = dir.path();
     write_schema_store(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -962,7 +919,7 @@ fn schema_type_mismatch_exit_7() {
     let root = dir.path();
     write_schema_store(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -992,7 +949,7 @@ fn schema_missing_required_exit_7() {
     let root = dir.path();
     write_schema_store(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -1021,7 +978,7 @@ fn schema_valid_passes() {
     let root = dir.path();
     write_schema_store(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -1063,7 +1020,7 @@ fn schema_invalid_quantity_exit_7() {
     let root = dir.path();
     write_schema_store(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -1206,7 +1163,7 @@ fn new_simple_creates_project() {
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
-    assert!(target.join("entry.ts").exists());
+    assert!(target.join("entry.husako").exists());
 }
 
 #[test]
@@ -1223,7 +1180,7 @@ fn new_project_template() {
 
     assert!(target.join(".gitignore").exists());
     assert!(target.join("husako.toml").exists());
-    assert!(target.join("env/dev.ts").exists());
+    assert!(target.join("env/dev.husako").exists());
     assert!(target.join("deployments/nginx.ts").exists());
     assert!(target.join("lib/index.ts").exists());
     assert!(target.join("lib/metadata.ts").exists());
@@ -1245,9 +1202,9 @@ fn new_multi_env_template() {
     assert!(target.join("husako.toml").exists());
     assert!(target.join("base/nginx.ts").exists());
     assert!(target.join("base/service.ts").exists());
-    assert!(target.join("dev/main.ts").exists());
-    assert!(target.join("staging/main.ts").exists());
-    assert!(target.join("release/main.ts").exists());
+    assert!(target.join("dev/main.husako").exists());
+    assert!(target.join("staging/main.husako").exists());
+    assert!(target.join("release/main.husako").exists());
 }
 
 #[test]
@@ -1281,7 +1238,7 @@ fn new_then_render_simple() {
 
     // Render
     husako_at(&target)
-        .args(["render", target.join("entry.ts").to_str().unwrap()])
+        .args(["render", target.join("entry.husako").to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicates::str::contains("apiVersion: apps/v1"))
@@ -1306,7 +1263,7 @@ fn new_then_render_project() {
 
     // Render
     husako_at(&target)
-        .args(["render", target.join("env/dev.ts").to_str().unwrap()])
+        .args(["render", target.join("env/dev.husako").to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicates::str::contains("apiVersion: apps/v1"))
@@ -1331,7 +1288,7 @@ fn new_then_render_multi_env() {
 
     // Render dev
     let dev_output = husako_at(&target)
-        .args(["render", target.join("dev/main.ts").to_str().unwrap()])
+        .args(["render", target.join("dev/main.husako").to_str().unwrap()])
         .output()
         .unwrap();
     assert!(dev_output.status.success());
@@ -1342,7 +1299,10 @@ fn new_then_render_multi_env() {
 
     // Render release
     let release_output = husako_at(&target)
-        .args(["render", target.join("release/main.ts").to_str().unwrap()])
+        .args([
+            "render",
+            target.join("release/main.husako").to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(release_output.status.success());
@@ -1359,7 +1319,7 @@ fn render_k8s_import_without_generate() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -1415,7 +1375,7 @@ fn render_with_generated_modules() {
         .success();
 
     // Now render using generated modules
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -1666,7 +1626,7 @@ fn render_with_entry_alias() {
         root.join("husako.toml"),
         r#"
 [entries]
-dev = "env/dev.ts"
+dev = "env/dev.husako"
 
 [schemas]
 kubernetes = { source = "release", version = "1.35" }
@@ -1677,7 +1637,7 @@ kubernetes = { source = "release", version = "1.35" }
     // Create the entry file
     std::fs::create_dir_all(root.join("env")).unwrap();
     std::fs::write(
-        root.join("env/dev.ts"),
+        root.join("env/dev.husako"),
         r#"
 import husako from "husako";
 husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "dev" } }; } }]);
@@ -1707,7 +1667,7 @@ fn render_alias_file_not_found() {
         root.join("husako.toml"),
         r#"
 [entries]
-dev = "env/dev.ts"
+dev = "env/dev.husako"
 "#,
     )
     .unwrap();
@@ -1717,7 +1677,7 @@ dev = "env/dev.ts"
         .args(["render", "dev"])
         .assert()
         .code(2)
-        .stderr(predicates::str::contains("env/dev.ts"))
+        .stderr(predicates::str::contains("env/dev.husako"))
         .stderr(predicates::str::contains("not found"));
 }
 
@@ -1730,8 +1690,8 @@ fn render_unknown_alias_lists_available() {
         root.join("husako.toml"),
         r#"
 [entries]
-dev = "env/dev.ts"
-staging = "env/staging.ts"
+dev = "env/dev.husako"
+staging = "env/staging.husako"
 "#,
     )
     .unwrap();
@@ -1756,13 +1716,13 @@ fn render_direct_path_still_works_with_config() {
         root.join("husako.toml"),
         r#"
 [entries]
-alias = "other.ts"
+alias = "other.husako"
 "#,
     )
     .unwrap();
 
     std::fs::write(
-        root.join("entry.ts"),
+        root.join("entry.husako"),
         r#"
 import husako from "husako";
 husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
@@ -1772,7 +1732,7 @@ husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metada
 
     // Direct path still works
     husako_at(root)
-        .args(["render", "entry.ts"])
+        .args(["render", "entry.husako"])
         .assert()
         .success()
         .stdout(predicates::str::contains("kind: Namespace"));
@@ -1785,7 +1745,7 @@ fn render_no_config_direct_path_works() {
 
     // No husako.toml — direct path must still work
     std::fs::write(
-        root.join("entry.ts"),
+        root.join("entry.husako"),
         r#"
 import husako from "husako";
 husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
@@ -1794,7 +1754,7 @@ husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metada
     .unwrap();
 
     husako_at(root)
-        .args(["render", "entry.ts"])
+        .args(["render", "entry.husako"])
         .assert()
         .success()
         .stdout(predicates::str::contains("kind: Namespace"));
@@ -1811,11 +1771,11 @@ husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metada
 fn render_output_to_yaml_file() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    std::fs::write(root.join("entry.husako"), SIMPLE_NAMESPACE_TS).unwrap();
     let out = root.join("out.yaml");
 
     husako_at(root)
-        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .args(["render", "entry.husako", "--output", out.to_str().unwrap()])
         .assert()
         .success()
         .stdout("")
@@ -1829,11 +1789,16 @@ fn render_output_to_yaml_file() {
 fn render_output_to_dir_uses_stem() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    std::fs::write(root.join("entry.husako"), SIMPLE_NAMESPACE_TS).unwrap();
     let out_dir = root.join("dist");
 
     husako_at(root)
-        .args(["render", "entry.ts", "--output", out_dir.to_str().unwrap()])
+        .args([
+            "render",
+            "entry.husako",
+            "--output",
+            out_dir.to_str().unwrap(),
+        ])
         .assert()
         .success()
         .stdout("");
@@ -1850,11 +1815,11 @@ fn render_output_alias_preserves_path() {
 
     std::fs::write(
         root.join("husako.toml"),
-        "[entries]\n\"apps/my-app\" = \"src/apps/my-app.ts\"\n",
+        "[entries]\n\"apps/my-app\" = \"src/apps/my-app.husako\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(root.join("src/apps")).unwrap();
-    std::fs::write(root.join("src/apps/my-app.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    std::fs::write(root.join("src/apps/my-app.husako"), SIMPLE_NAMESPACE_TS).unwrap();
     let out_dir = root.join("dist");
 
     husako_at(root)
@@ -1878,11 +1843,11 @@ fn render_output_alias_preserves_path() {
 fn render_output_creates_nested_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    std::fs::write(root.join("entry.husako"), SIMPLE_NAMESPACE_TS).unwrap();
     let out = root.join("a").join("b").join("c").join("out.yaml");
 
     husako_at(root)
-        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .args(["render", "entry.husako", "--output", out.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1893,12 +1858,12 @@ fn render_output_creates_nested_dirs() {
 fn render_output_overwrites_existing() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    std::fs::write(root.join("entry.ts"), SIMPLE_NAMESPACE_TS).unwrap();
+    std::fs::write(root.join("entry.husako"), SIMPLE_NAMESPACE_TS).unwrap();
     let out = root.join("out.yaml");
     std::fs::write(&out, "old content").unwrap();
 
     husako_at(root)
-        .args(["render", "entry.ts", "--output", out.to_str().unwrap()])
+        .args(["render", "entry.husako", "--output", out.to_str().unwrap()])
         .assert()
         .success();
 
@@ -1961,7 +1926,7 @@ fn new_then_render_with_alias() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("my-app");
 
-    // Scaffold project template (has [entries] dev = "env/dev.ts")
+    // Scaffold project template (has [entries] dev = "env/dev.husako")
     husako()
         .args(["new", "--template", "project", target.to_str().unwrap()])
         .assert()
@@ -1970,7 +1935,7 @@ fn new_then_render_with_alias() {
     // Write k8s modules for rendering
     write_k8s_modules(&target);
 
-    // Render using the alias "dev" instead of "env/dev.ts"
+    // Render using the alias "dev" instead of "env/dev.husako"
     husako_at(&target)
         .args(["render", "dev"])
         .assert()
@@ -2043,7 +2008,7 @@ fn plugin_render_main_module() {
 
     write_fixture_plugin(root, "testplugin");
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2073,7 +2038,7 @@ fn plugin_render_sub_module() {
 
     write_fixture_plugin(root, "testplugin");
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2101,7 +2066,7 @@ fn plugin_import_unknown_module_exit_4() {
     let root = dir.path();
 
     // No plugins installed — bare import should fail at runtime
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2126,7 +2091,7 @@ fn plugin_with_k8s_modules_together() {
     write_fixture_plugin(root, "testplugin");
     write_k8s_modules(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2252,7 +2217,7 @@ fn flux_plugin_helm_release() {
 
     install_flux_plugin(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2303,7 +2268,7 @@ fn flux_plugin_kustomization() {
 
     install_flux_plugin(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2356,7 +2321,7 @@ fn flux_plugin_source_ref_linking() {
 
     install_flux_plugin(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2397,7 +2362,7 @@ fn flux_plugin_values_plain_object() {
 
     install_flux_plugin(root);
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2433,7 +2398,7 @@ fn flux_plugin_re_exports() {
     install_flux_plugin(root);
 
     // Import GitRepository from "fluxcd" (re-exported) instead of "fluxcd/source"
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"
@@ -2519,7 +2484,7 @@ fn gen_no_config_prints_already_up_to_date() {
 fn check_valid_ts_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako";
@@ -2540,7 +2505,7 @@ husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metada
 fn check_invalid_ts_fails() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(&entry, "const x: string = 42;\n").unwrap();
 
     husako_at(root)
@@ -2553,7 +2518,7 @@ fn check_invalid_ts_fails() {
 fn check_missing_build_call_fails() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     // Valid TS but no husako.build() call → exit 7
     std::fs::write(&entry, "const x = 1;\n").unwrap();
 
@@ -3032,7 +2997,7 @@ fn test_passing_tests_exit_0() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(
-        root.join("entry.test.ts"),
+        root.join("entry.test.husako"),
         r#"import { test, describe } from "husako/test";
 describe("suite", () => {
     test("passes", () => {
@@ -3044,7 +3009,7 @@ describe("suite", () => {
     .unwrap();
 
     husako_at(root)
-        .args(["test", "entry.test.ts"])
+        .args(["test", "entry.test.husako"])
         .assert()
         .success();
 }
@@ -3054,7 +3019,7 @@ fn test_failing_tests_exit_nonzero() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(
-        root.join("entry.test.ts"),
+        root.join("entry.test.husako"),
         r#"import { test } from "husako/test";
 test("fails", () => { throw new Error("intentional failure"); });
 "#,
@@ -3062,7 +3027,7 @@ test("fails", () => { throw new Error("intentional failure"); });
     .unwrap();
 
     husako_at(root)
-        .args(["test", "entry.test.ts"])
+        .args(["test", "entry.test.husako"])
         .assert()
         .failure();
 }
@@ -3232,7 +3197,7 @@ fn gen_no_incremental_ignores_lock() {
 fn render_short_o_flag_writes_file() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(
         &entry,
         r#"import husako from "husako";
@@ -3846,7 +3811,7 @@ export function annotation(k: string, v: string): _SpecFragment;
     )
     .unwrap();
 
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(&entry, ts_content).unwrap();
     (dir, entry)
 }
@@ -3888,4 +3853,57 @@ husako.build([nginx]);
         .assert()
         .success()
         .stderr(predicates::str::contains("TypeScript types OK"));
+}
+
+/// `husako check --type-check` must work in a project that never ran `husako gen`
+/// (no pre-existing tsconfig.json). The command generates tsconfig.json on-the-fly
+/// before invoking tsc, so the check succeeds and tsconfig.json is created as a
+/// side effect.
+#[test]
+fn check_type_check_without_prior_gen() {
+    let tsc_available = std::process::Command::new("tsc")
+        .arg("--version")
+        .output()
+        .is_ok();
+    assert!(
+        tsc_available,
+        "tsc must be installed to run this test (npm install -g typescript)"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    // Set up husako SDK types — simulates what `husako gen --skip-k8s` would write,
+    // but without producing tsconfig.json.
+    let types_husako = root.join(".husako/types");
+    std::fs::create_dir_all(types_husako.join("husako")).unwrap();
+    std::fs::write(types_husako.join("husako.d.ts"), husako_sdk::HUSAKO_DTS).unwrap();
+    std::fs::write(
+        types_husako.join("husako/_base.d.ts"),
+        husako_sdk::HUSAKO_BASE_DTS,
+    )
+    .unwrap();
+
+    // Write a minimal entry file — no k8s imports, just husako
+    let entry = root.join("entry.husako");
+    std::fs::write(
+        &entry,
+        "import husako from \"husako\";\nhusako.build([]);\n",
+    )
+    .unwrap();
+
+    // Confirm tsconfig.json does NOT exist before the check
+    assert!(!root.join("tsconfig.json").exists());
+
+    husako_at(root)
+        .args(["check", "--type-check", entry.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("TypeScript types OK"));
+
+    // tsconfig.json must have been created by check --type-check
+    assert!(root.join("tsconfig.json").exists());
+    let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
+    assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
 }
