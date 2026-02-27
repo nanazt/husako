@@ -10,6 +10,7 @@ repository.workspace = true
 tokio = { workspace = true }
 husako-config = { path = "../husako-config", version = "0" }
 husako-core = { path = "../husako-core", version = "0" }
+husako-lsp = { path = "../husako-lsp", version = "0" }
 husako-openapi = { path = "../husako-openapi", version = "0" }
 husako-runtime-qjs = { path = "../husako-runtime-qjs", version = "0" }
 clap.workspace = true

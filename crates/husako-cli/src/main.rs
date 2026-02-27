@@ -217,6 +217,9 @@ enum Commands {
     /// Print version, commit hash, and build date
     Version,
 
+    /// Start the Language Server Protocol server on stdin/stdout
+    Lsp,
+
     /// Run test files
     Test {
         /// Test files to run (discovers *.test.ts and *.spec.ts if omitted)
@@ -1257,6 +1260,11 @@ async fn main() -> ExitCode {
                 env!("HUSAKO_GIT_HASH"),
                 env!("HUSAKO_BUILD_DATE"),
             );
+            ExitCode::SUCCESS
+        }
+
+        Commands::Lsp => {
+            husako_lsp::run().await;
             ExitCode::SUCCESS
         }
 
