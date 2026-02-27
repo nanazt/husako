@@ -1,48 +1,78 @@
 # Contributing to husako
 
-## Development workflow
+## Reporting issues
 
-1. **Create a branch** from `master` and push it
-2. **Open a PR** to `master` — this triggers quality gates automatically
-3. **Quality gates** (`lint` and `test`) must pass before merge
-4. **Squash merge** — the only merge strategy allowed, keeps `master` linear
-5. **Release** — trigger the "Version" workflow manually (`gh workflow run version.yml`); release-plz publishes changed crates to crates.io and creates a GitHub Release; push a `v*` tag to trigger binary distribution
+Use the issue templates on GitHub:
 
-## Building
+- **Bug report** — unexpected behavior, wrong output, CLI errors
+- **Feature request** — new commands, config options, integrations
+
+Blank issues are also allowed for questions or discussions.
+
+---
+
+## Development setup
+
+Install [Rust stable](https://rustup.rs/).
+
+---
+
+## Build
 
 ```bash
-cargo build                       # debug build
-cargo build --release             # release build (optimized for size)
+cargo build                # debug
+cargo build --release      # release (optimized for size)
 ```
 
-## Testing
+---
+
+## Before opening a PR
+
+Run these in order and fix any failures before pushing:
 
 ```bash
+# 1. Format
+cargo fmt --all
+
+# 2. Lint (all warnings are errors)
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# 3. Tests
 cargo test --workspace --all-features
 ```
 
-## Linting
+For changes touching `husako-helm`, `husako-core`, `husako-dts`, `husako-runtime-qjs`, `husako-sdk`, or `husako-cli`, also run the local E2E suite (no network required):
 
 ```bash
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test -p husako --test e2e_g
 ```
 
-## Workflows
+---
 
-Workflows are authored in TypeScript using [gaji](https://github.com/dodok8/gaji) and compiled to YAML.
+## Pull request process
+
+1. Create a branch from `master` and push it
+2. Open a PR to `master` — CI runs automatically
+3. All checks must pass before merge
+4. **Squash merge only** — keeps `master` linear
+
+---
+
+## Editing CI workflows
+
+Workflows are written in TypeScript and compiled to YAML using [gaji](https://github.com/dodok8/gaji). **Never edit `.github/workflows/*.yml` directly** — changes will be overwritten.
 
 ```bash
-gaji dev           # generate types
-gaji build         # compile workflows to .github/workflows/
+gaji dev     # generate types
+gaji build   # compile workflows/**.ts → .github/workflows/
 ```
 
-Source files live in `workflows/`, output goes to `.github/workflows/`. Do not edit the YAML files directly.
+---
 
 ## CI/CD pipeline
 
 | Workflow | Trigger | Purpose |
-| --- | --- | --- |
+|----------|---------|---------|
 | `check.yml` | PRs and pushes to `master` | Format check, clippy, tests |
 | `version.yml` | Manual (`workflow_dispatch`) + `v*` tag | release-plz publishes changed crates and creates GitHub Release |
 | `distribute.yml` | `v*` tag | Cross-platform binary builds, GitHub release assets, npm publish |

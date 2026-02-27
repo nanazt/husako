@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://nanazt.github.io/husako/
+    about: Guides, CLI reference, and examples

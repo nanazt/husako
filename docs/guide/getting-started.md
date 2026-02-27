@@ -45,34 +45,39 @@ The `entry.ts` contains a minimal working example you can run immediately.
 
 ## Generate types
 
-Types are generated from your Kubernetes cluster's OpenAPI spec (or a pre-fetched spec file).
+`husako gen` writes `.d.ts` type definitions and a `tsconfig.json` to `.husako/`. Your editor uses these for autocomplete and type checking.
 
-They give you typed builder classes for every resource kind your cluster supports.
-
-Connect to a running cluster:
-
-```
-husako gen --api-server https://localhost:6443
-```
-
-Or use a locally downloaded spec directory:
-
-```
-husako gen --spec-dir ./openapi-specs
-```
-
-Skip Kubernetes type generation (only writes `husako.d.ts` and `tsconfig.json`):
+**To get started immediately** (no cluster required):
 
 ```
 husako gen --skip-k8s
 ```
 
-This writes a `.husako/` directory with `.d.ts` type definitions and a `tsconfig.json`.
+This writes the core `husako.d.ts` — enough to start writing resources and running `husako render`.
 
-Your editor reads these automatically for autocomplete and type checking.
+**To add typed builders for Kubernetes resource kinds** (Deployment, Service, etc.):
+
+```
+husako add --release
+husako gen
+```
+
+`husako add --release` prompts you to pick a Kubernetes version and adds it to `husako.toml`. Then `husako gen` fetches the schema and generates typed builders for every resource kind.
+
+You can also provide a pre-fetched spec directory:
+
+```
+husako gen --spec-dir ./openapi-specs
+```
+
+Or connect to a running cluster's API server to fetch its exact OpenAPI spec (useful when you have custom CRDs or need the exact schema for your cluster version):
+
+```
+husako gen --api-server https://localhost:6443
+```
 
 ::: tip
-You rarely need to run `husako gen` manually. `husako add` and `husako remove` regenerate types automatically after changing your config. `husako render` regenerates types automatically if `.husako/types/` is missing.
+After adding or removing a dependency with `husako add` or `husako remove`, types are regenerated automatically. You rarely need to run `husako gen` directly.
 :::
 
 ::: tip
