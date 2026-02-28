@@ -118,10 +118,30 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
         }
     }
 
+    // Always emit _chains.d.ts — chain interface definitions for the starter API.
+    files.insert("k8s/_chains.d.ts".to_string(), emitter::emit_chains_dts());
+
+    // Always emit k8s/meta/v1 chain starters for ObjectMeta fields.
+    files.insert(
+        "k8s/meta/v1.d.ts".to_string(),
+        emitter::emit_meta_v1_starters_dts(),
+    );
+    files.insert(
+        "k8s/meta/v1.js".to_string(),
+        emitter::emit_meta_v1_starters_js(),
+    );
+
     // Emit per-group-version .d.ts and .js files
     for ((group, version), schemas) in &by_gv {
         let dts_content = emitter::emit_group_version(schemas, &common_names);
         let dts_path = format!("k8s/{group}/{version}.d.ts");
+
+        // Inject Container chain starters into k8s/core/v1.
+        let dts_content = if group == "core" && version == "v1" {
+            format!("{}\n{}", emitter::emit_core_v1_starters_dts(), dts_content)
+        } else {
+            dts_content
+        };
         files.insert(dts_path, dts_content);
 
         // Emit .js if there are resource builders (GVK) or schema builders
@@ -129,6 +149,14 @@ pub fn generate(options: &GenerateOptions) -> Result<GenerateResult, DtsError> {
             || schemas.iter().any(|s| emitter::should_generate_builder(s));
         if has_js_content {
             let js_content = emitter::emit_group_version_js(schemas);
+
+            // Inject Container chain starters into k8s/core/v1.
+            let js_content = if group == "core" && version == "v1" {
+                format!("{}\n{}", emitter::emit_core_v1_starters_js(), js_content)
+            } else {
+                js_content
+            };
+
             let js_path = format!("k8s/{group}/{version}.js");
             files.insert(js_path, js_content);
         }
@@ -197,7 +225,10 @@ mod tests {
 
         let result = generate(&options).unwrap();
 
-        // Should have _common.d.ts, apps/v1.d.ts, and apps/v1.js
+        // Should have _chains.d.ts, _common.d.ts, meta/v1, apps/v1.d.ts, apps/v1.js
+        assert!(result.files.contains_key("k8s/_chains.d.ts"));
+        assert!(result.files.contains_key("k8s/meta/v1.d.ts"));
+        assert!(result.files.contains_key("k8s/meta/v1.js"));
         assert!(result.files.contains_key("k8s/_common.d.ts"));
         assert!(result.files.contains_key("k8s/apps/v1.d.ts"));
         assert!(result.files.contains_key("k8s/apps/v1.js"));
@@ -228,6 +259,9 @@ mod tests {
         let options = GenerateOptions { specs };
 
         let result = generate(&options).unwrap();
+
+        // Snapshot _chains.d.ts
+        insta::assert_snapshot!("chains_dts", &result.files["k8s/_chains.d.ts"]);
 
         // Snapshot _common.d.ts
         insta::assert_snapshot!("common_dts", &result.files["k8s/_common.d.ts"]);

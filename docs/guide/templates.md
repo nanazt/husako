@@ -16,14 +16,14 @@ A single entry file. Good for trying things out or writing one-off scripts.
 my-app/
 ├── .gitignore
 ├── husako.toml
-└── entry.ts
+└── entry.husako
 ```
 
-`entry.ts` contains a minimal working example with a single Deployment.
+`entry.husako` contains a minimal working example with a single Deployment.
 
 ## project
 
-Separate directories for deployments, shared libraries, and environment configs. The entry point is `env/dev.ts`, which imports resources from `deployments/` and shared helpers from `lib/`.
+Separate directories for deployments, shared libraries, and environment configs. The entry point is `env/dev.husako`, which imports resources from `deployments/` and shared helpers from `lib/`.
 
 ```
 my-app/
@@ -38,7 +38,7 @@ my-app/
     └── metadata.ts
 ```
 
-`lib/metadata.ts` exports a shared metadata factory. `deployments/nginx.ts` imports from `lib/` and exports a factory function. `env/dev.ts` calls the factories and passes the result to `build()`.
+`lib/metadata.ts` exports a shared metadata factory. `deployments/nginx.ts` imports from `lib/` and exports a factory function. `env/dev.husako` calls the factories and passes the result to `build()`.
 
 Good for single-environment setups where you want to keep resource definitions separate from the entry point.
 
@@ -64,12 +64,16 @@ my-app/
 `base/nginx.ts` exports a function like:
 
 ```typescript
-export function nginxDeployment(namespace: string, replicas: number, tag: string) {
+import { Deployment } from "k8s/apps/v1";
+import { name, namespace } from "k8s/meta/v1";
+import { name, image } from "k8s/core/v1";
+
+export function nginxDeployment(ns: string, replicas: number, tag: string) {
   return Deployment()
-    .metadata(metadata().name("nginx").namespace(namespace))
+    .metadata(name("nginx").namespace(ns))
     .replicas(replicas)
     .containers([
-      Container().name("nginx").image(`nginx:${tag}`)
+      name("nginx").image(`nginx:${tag}`)
     ]);
 }
 ```
@@ -77,27 +81,27 @@ export function nginxDeployment(namespace: string, replicas: number, tag: string
 Each environment's `main.ts` calls these with environment-specific values:
 
 ```typescript
-// dev/main.ts
+// dev/main.husako
 import { nginxDeployment } from "../base/nginx.ts";
-import { build } from "husako";
+import husako from "husako";
 
-build([nginxDeployment("dev", 1, "latest")]);
+husako.build([nginxDeployment("dev", 1, "latest")]);
 ```
 
 Render a specific environment:
 
 ```
-husako render my-app/dev/main.ts
-husako render my-app/staging/main.ts
+husako render my-app/dev/main.husako
+husako render my-app/staging/main.husako
 ```
 
 Or add entry aliases to `husako.toml` so you can use short names:
 
 ```toml
 [entries]
-dev = "dev/main.ts"
-staging = "staging/main.ts"
-release = "release/main.ts"
+dev = "dev/main.husako"
+staging = "staging/main.husako"
+release = "release/main.husako"
 ```
 
 Then:

@@ -30,7 +30,10 @@ impl rquickjs::loader::Loader for HusakoFileLoader {
             .map_err(|e| Error::new_loading_message(name, e.to_string()))?;
 
         // Compile TypeScript if needed
-        let js = if matches!(path.extension().and_then(|e| e.to_str()), Some("ts")) {
+        let js = if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ts" | "husako")
+        ) {
             husako_compile_oxc::compile(&source, name)
                 .map_err(|e| Error::new_loading_message(name, e.to_string()))?
         } else {
@@ -75,6 +78,22 @@ mod tests {
         let ctx = rquickjs::Context::full(&rt).unwrap();
         ctx.with(|ctx| {
             let name = js_path.to_str().unwrap();
+            let module = loader.load(&ctx, name);
+            assert!(module.is_ok());
+        });
+    }
+
+    #[test]
+    fn load_husako_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let husako_path = dir.path().join("entry.husako");
+        std::fs::write(&husako_path, "export const x: number = 42;").unwrap();
+
+        let mut loader = HusakoFileLoader::new();
+        let rt = rquickjs::Runtime::new().unwrap();
+        let ctx = rquickjs::Context::full(&rt).unwrap();
+        ctx.with(|ctx| {
+            let name = husako_path.to_str().unwrap();
             let module = loader.load(&ctx, name);
             assert!(module.is_ok());
         });

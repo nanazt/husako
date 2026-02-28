@@ -10,8 +10,20 @@ class _Deployment extends _ResourceBuilder {
   constructor() { super("apps/v1", "Deployment"); }
   replicas(v) { return this._setSpec("replicas", v); }
   template(v) { return this._setSpec("template", v); }
-  containers(v) { return this._setDeep("template.spec.containers", v); }
-  initContainers(v) { return this._setDeep("template.spec.initContainers", v); }
+  containers(items) {
+    const resolved = items.map(function(item) {
+      if (item && item._husakoTag === "SpecFragment") return item._toContainer();
+      throw new Error("containers() items must be ContainerChain — use name(), image() from \"k8s/core/v1\".");
+    });
+    return this._setDeep("template.spec.containers", resolved);
+  }
+  initContainers(items) {
+    const resolved = items.map(function(item) {
+      if (item && item._husakoTag === "SpecFragment") return item._toContainer();
+      throw new Error("initContainers() items must be ContainerChain — use name(), image() from \"k8s/core/v1\".");
+    });
+    return this._setDeep("template.spec.initContainers", resolved);
+  }
 }
 export function Deployment() { return new _Deployment(); }
 

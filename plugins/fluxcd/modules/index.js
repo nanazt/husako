@@ -1,5 +1,4 @@
-import { _ResourceBuilder } from "husako/_base";
-import { name as _name } from "husako";
+import { _ResourceBuilder, _createSpecFragment } from "husako/_base";
 
 // Re-export source types for convenience
 export { GitRepository, HelmRepository, OCIRepository } from "fluxcd/source";
@@ -23,7 +22,7 @@ class _HelmRelease extends _ResourceBuilder {
 }
 export function HelmRelease(n) {
   const r = new _HelmRelease();
-  return n ? r.metadata(_name(n)) : r;
+  return n ? r.metadata(_createSpecFragment({ _name: n })) : r;
 }
 
 // --- Kustomization (kustomize.toolkit.fluxcd.io/v1) ---
@@ -42,5 +41,5 @@ class _Kustomization extends _ResourceBuilder {
 }
 export function Kustomization(n) {
   const r = new _Kustomization();
-  return n ? r.metadata(_name(n)) : r;
+  return n ? r.metadata(_createSpecFragment({ _name: n })) : r;
 }

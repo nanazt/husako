@@ -1,22 +1,22 @@
 import { Deployment } from "k8s/apps/v1";
-import { Container } from "k8s/core/v1";
 import { LabelSelector } from "k8s/_common";
-import { metadata, cpu, memory, requests, limits } from "husako";
+import { name, namespace, label } from "k8s/meta/v1";
+import { name as cname, cpu, memory, requests } from "k8s/core/v1";
 
-export function nginx(ns: string, replicas: number, image: string) {
+export function nginx(ns: string, replicas: number, containerImage: string) {
   return Deployment()
     .metadata(
-      metadata().name("nginx").namespace(ns).label("app", "nginx").label("env", ns)
+      name("nginx").namespace(ns).label("app", "nginx").label("env", ns),
     )
     .replicas(replicas)
     .selector(LabelSelector().matchLabels({ app: "nginx" }))
     .containers([
-      Container()
-        .name("nginx")
-        .image(image)
+      cname("nginx")
+        .image(containerImage)
         .resources(
-          requests(cpu("250m").memory("128Mi"))
-            .limits(cpu("500m").memory("256Mi"))
-        )
+          requests(cpu("250m").memory("128Mi")).limits(
+            cpu("500m").memory("256Mi"),
+          ),
+        ),
     ]);
 }

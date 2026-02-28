@@ -37,15 +37,15 @@ husako new my-app
 cd my-app
 ```
 
-This generates a starter `entry.ts`, a `husako.toml` config file, and `.gitignore`.
+This generates a starter `entry.husako`, a `husako.toml` config file, and `.gitignore`.
 
-The `entry.ts` contains a minimal working example you can run immediately.
+The `entry.husako` contains a minimal working example you can run immediately.
 
 ---
 
 ## Generate types
 
-`husako gen` writes `.d.ts` type definitions and a `tsconfig.json` to `.husako/`. Your editor uses these for autocomplete and type checking.
+`husako gen` writes `.d.ts` type definitions to `.husako/` and regenerates `tsconfig.json` at the project root. Your editor uses these for autocomplete and type checking. `tsconfig.json` is husako-managed — do not edit it manually, and add it to `.gitignore` (`husako new` does this automatically).
 
 **To get started immediately** (no cluster required):
 
@@ -70,12 +70,6 @@ You can also provide a pre-fetched spec directory:
 husako gen --spec-dir ./openapi-specs
 ```
 
-Or connect to a running cluster's API server to fetch its exact OpenAPI spec (useful when you have custom CRDs or need the exact schema for your cluster version):
-
-```
-husako gen --api-server https://localhost:6443
-```
-
 ::: tip
 After adding or removing a dependency with `husako add` or `husako remove`, types are regenerated automatically. You rarely need to run `husako gen` directly.
 :::
@@ -96,17 +90,17 @@ With types generated, import builders from `k8s/*` paths:
 
 ```typescript
 import { Deployment } from "k8s/apps/v1";
-import { Container } from "k8s/core/v1";
 import { LabelSelector } from "k8s/_common";
-import { metadata, cpu, memory, requests, limits, build } from "husako";
+import { name, namespace, label } from "k8s/meta/v1";
+import { name, image, cpu, memory, requests } from "k8s/core/v1";
+import husako from "husako";
 
 const nginx = Deployment()
-  .metadata(metadata().name("nginx").namespace("default").label("app", "nginx"))
+  .metadata(name("nginx").namespace("default").label("app", "nginx"))
   .replicas(1)
   .selector(LabelSelector().matchLabels({ app: "nginx" }))
   .containers([
-    Container()
-      .name("nginx")
+    name("nginx")
       .image("nginx:1.25")
       .resources(
         requests(cpu("250m").memory("128Mi"))
@@ -114,10 +108,10 @@ const nginx = Deployment()
       )
   ]);
 
-build([nginx]);
+husako.build([nginx]);
 ```
 
-The `build()` call at the end is required.
+The `husako.build()` call at the end is required.
 
 It collects all resources and signals husako to emit YAML.
 
@@ -128,7 +122,7 @@ See [Writing Resources](/guide/writing-resources) for the full builder API.
 ## Render
 
 ```
-husako render entry.ts
+husako render entry.husako
 ```
 
 This compiles the TypeScript, runs it, and prints multi-document YAML to stdout.
@@ -136,7 +130,7 @@ This compiles the TypeScript, runs it, and prints multi-document YAML to stdout.
 Pipe straight to kubectl:
 
 ```
-husako render entry.ts | kubectl apply -f -
+husako render entry.husako | kubectl apply -f -
 ```
 
 Use an entry alias from `husako.toml` instead of a file path:
@@ -146,19 +140,3 @@ husako render dev
 ```
 
 See [Configuration](/guide/configuration) for entry aliases and project setup.
-
----
-
-## Watch mode
-
-Pass `--watch` (or `-w`) to re-render automatically whenever a file in the project changes:
-
-```
-husako render entry.ts --watch -o manifests/
-```
-
-husako renders on startup, then watches the project directory for changes and re-renders on each save. Rapid saves are coalesced — a burst of writes triggers exactly one re-render.
-
-Press Ctrl+C to stop.
-
-Files in `.husako/`, `target/`, and `node_modules/` are ignored by the watcher.

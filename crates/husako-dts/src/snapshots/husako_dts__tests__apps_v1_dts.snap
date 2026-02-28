@@ -10,6 +10,8 @@ import { LabelSelector } from "k8s/_common";
 
 /** Deployment enables declarative updates. */
 export interface Deployment extends _ResourceBuilder {
+  /** Set metadata using a chain starter (name(), namespace(), label() from "k8s/meta/v1"). */
+  metadata(chain: import("k8s/_chains").MetadataChain): this;
   /** Set the resource specification. */
   spec(value: DeploymentSpec): this;
   replicas(value: number): this;

@@ -405,20 +405,21 @@ fn js_deployment_per_property_methods_render() {
     );
 
     // Write TS using per-property builder methods
-    let entry = root.join("deploy.ts");
+    let entry = root.join("deploy.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Deployment } from "k8s/apps/v1";
 
 const d = Deployment()
     .metadata(name("nginx"))
     .replicas(3)
     .selector({ matchLabels: { app: "nginx" } })
-    .containers([{ name: "nginx", image: "nginx:1.27" }]);
+    .containers([name("nginx").image("nginx:1.27")]);
 
-build([d]);
+husako.build([d]);
 "#,
     )
     .unwrap();
@@ -475,11 +476,12 @@ fn k8s_and_crd_generate_together() {
     );
 
     // Write TS importing from both k8s and CRD, then render
-    let entry = root.join("combined.ts");
+    let entry = root.join("combined.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Deployment } from "k8s/apps/v1";
 import { Cluster } from "k8s/postgresql.cnpg.io/v1";
 
@@ -495,7 +497,7 @@ const pg = Cluster()
     .metadata(name("my-pg"))
     .spec({ instances: 3, storage: { size: "10Gi" } });
 
-build([d, pg]);
+husako.build([d, pg]);
 "#,
     )
     .unwrap();
@@ -687,11 +689,12 @@ fn js_service_per_property_methods_render() {
     );
 
     // Write TS using Service builder methods
-    let entry = root.join("svc.ts");
+    let entry = root.join("svc.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Service } from "k8s/core/v1";
 
 const svc = Service()
@@ -700,7 +703,7 @@ const svc = Service()
     .ports([{ port: 80, targetPort: 8080 }])
     .type("ClusterIP");
 
-build([svc]);
+husako.build([svc]);
 "#,
     )
     .unwrap();
@@ -957,11 +960,12 @@ fn js_common_schema_builders_render() {
     );
 
     // Write TS that uses a _SchemaBuilder from _common
-    let entry = root.join("common_builder.ts");
+    let entry = root.join("common_builder.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Deployment } from "k8s/apps/v1";
 import { LabelSelector } from "k8s/_common";
 
@@ -969,7 +973,7 @@ const d = Deployment()
     .metadata(name("nginx"))
     .selector(LabelSelector().matchLabels({ app: "nginx" }));
 
-build([d]);
+husako.build([d]);
 "#,
     )
     .unwrap();

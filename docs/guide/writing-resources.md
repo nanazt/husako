@@ -42,41 +42,87 @@ Method names match the spec field names in camelCase.
 
 ---
 
-## metadata()
+## Metadata — chain starters from `k8s/meta/v1`
 
-`metadata()` is the entry point for metadata chains.
+Metadata is set using chain starter functions from `"k8s/meta/v1"`.
 
-It returns a `MetadataFragment` with its own chainable methods:
-
-```typescript
-import { metadata } from "husako";
-
-const meta = metadata()
-  .name("my-app")
-  .namespace("production")
-  .label("app", "my-app")
-  .label("version", "1.2.3")
-  .annotation("team", "platform");
-```
-
-Pass the fragment to any resource's `.metadata()` method:
+Each starter creates a fragment compatible with `.metadata()`:
 
 ```typescript
-const deploy = Deployment().metadata(meta);
+import { name, namespace, label, annotation } from "k8s/meta/v1";
+
+const deploy = Deployment()
+  .metadata(
+    name("my-app")
+      .namespace("production")
+      .label("app", "my-app")
+      .label("version", "1.2.3")
+      .annotation("team", "platform")
+  );
 ```
 
-The shorthand functions `name()`, `namespace()`, `label()`, and `annotation()` from `"husako"` are aliases that create a `metadata()` chain and call the corresponding method.
+The starters chain — each call returns the same fragment so you can keep adding fields:
 
-Use whichever style you prefer.
+```typescript
+name("my-app").namespace("default").label("app", "my-app")
+```
+
+Store a fragment in a variable and reuse it:
+
+```typescript
+import { name, namespace, label } from "k8s/meta/v1";
+
+const meta = name("web").namespace("production").label("app", "web");
+const prod = Deployment().metadata(meta).replicas(5);
+const staging = Deployment().metadata(meta).replicas(1);
+```
+
+---
+
+## Containers — chain starters from `k8s/core/v1`
+
+Container fields are set using chain starters from `"k8s/core/v1"`:
+
+```typescript
+import { name, image, imagePullPolicy } from "k8s/core/v1";
+
+Deployment()
+  .containers([
+    name("web")
+      .image("nginx:1.25")
+      .imagePullPolicy("Always")
+  ])
+```
+
+Pass an array of chain fragments to `.containers()`. Each fragment becomes one container.
+
+---
+
+## Duplicate imports in `.husako` files
+
+`.husako` files allow importing the same name from multiple schema modules without aliasing.
+
+Both `name` functions below are valid — the call site determines which is used:
+
+```typescript
+import { name, namespace, label } from "k8s/meta/v1";   // ObjectMeta starters
+import { name, image } from "k8s/core/v1";               // Container starters
+
+Deployment()
+  .metadata(name("nginx").namespace("default"))   // uses k8s/meta/v1 name
+  .containers([name("nginx").image("nginx:1.25")]) // uses k8s/core/v1 name
+```
+
+The husako LSP suppresses the TypeScript duplicate identifier warning for `k8s/*` imports.
 
 ---
 
 ## Resource quantities
 
-CPU and memory have dedicated fragment builders with automatic normalization:
+CPU and memory use dedicated chain starter functions with automatic normalization:
 
 ```typescript
-import { cpu, memory, requests, limits } from "husako";
+import { cpu, memory, requests } from "k8s/core/v1";
 ```
 
 ### cpu(v)
@@ -96,14 +142,12 @@ import { cpu, memory, requests, limits } from "husako";
 
 ### Building resource requirements
 
-Chain `requests()` and `limits()` together:
+Use `requests()` to wrap resource lists, and chain `.limits()` to add limits:
 
 ```typescript
-import { Container } from "k8s/core/v1";
-import { cpu, memory, requests, limits } from "husako";
+import { name, image, cpu, memory, requests } from "k8s/core/v1";
 
-Container()
-  .name("web")
+name("web")
   .image("nginx:1.25")
   .resources(
     requests(cpu(0.25).memory("128Mi"))
@@ -111,9 +155,9 @@ Container()
   )
 ```
 
-`requests(resourceList)` creates a `ResourceRequirementsFragment`.
+`requests(resourceList)` creates a `ResourceRequirementsChain`.
 
-Call `.limits(resourceList)` on it to add limits, then pass the whole thing to `.resources()`.
+Call `.limits(resourceList)` on it to add limits, then pass the result to `.resources()`.
 
 ---
 
@@ -123,14 +167,14 @@ Workload resources like `Deployment`, `StatefulSet`, `DaemonSet`, `Job`, and `Re
 
 ```typescript
 import { Deployment } from "k8s/apps/v1";
-import { Container } from "k8s/core/v1";
+import { name, image } from "k8s/core/v1";
 
 Deployment()
   .containers([
-    Container().name("app").image("myapp:latest")
+    name("app").image("myapp:latest")
   ])
   .initContainers([
-    Container().name("init").image("busybox:latest").command(["sh", "-c", "echo init"])
+    name("init").image("busybox:latest").command(["sh", "-c", "echo init"])
   ])
 ```
 
@@ -147,42 +191,43 @@ You don't need to build the full `template` → `spec` chain manually.
 Because every method returns a new instance, you can assign builders to variables and reuse them freely:
 
 ```typescript
-const webPod = PodTemplateSpec()
-  .metadata(metadata().label("tier", "web"))
-  .containers([
-    Container().name("web").image("nginx:1.25")
-  ]);
+import { Deployment } from "k8s/apps/v1";
+import { name, namespace, label } from "k8s/meta/v1";
+import { name, image } from "k8s/core/v1";
+import husako from "husako";
 
-const prod = Deployment()
-  .metadata(metadata().name("web-prod"))
-  .replicas(5)
-  .template(webPod);
+const webPod = Deployment()
+  .containers([name("web").image("nginx:1.25")]);
 
-const staging = Deployment()
-  .metadata(metadata().name("web-staging"))
-  .replicas(1)
-  .template(webPod);
+const prod = webPod
+  .metadata(name("web-prod").namespace("prod").label("env", "prod"))
+  .replicas(5);
 
-build([prod, staging]);
+const staging = webPod
+  .metadata(name("web-staging").namespace("staging").label("env", "staging"))
+  .replicas(1);
+
+husako.build([prod, staging]);
 ```
 
-`prod` and `staging` share the same pod template object.
+`prod` and `staging` share the same base builder.
 
 Modifying one never affects the other.
 
 You can also parameterize with functions:
 
 ```typescript
-function webDeployment(name: string, namespace: string, replicas: number) {
+import { name, namespace, label } from "k8s/meta/v1";
+import { name, image } from "k8s/core/v1";
+
+function webDeployment(appName: string, ns: string, replicas: number) {
   return Deployment()
-    .metadata(metadata().name(name).namespace(namespace).label("app", name))
+    .metadata(name(appName).namespace(ns).label("app", appName))
     .replicas(replicas)
-    .containers([
-      Container().name("web").image("myapp:latest")
-    ]);
+    .containers([name("web").image("myapp:latest")]);
 }
 
-build([
+husako.build([
   webDeployment("web", "production", 5),
   webDeployment("web", "staging", 1),
 ]);
@@ -192,15 +237,15 @@ build([
 
 ## The build() call
 
-Every entry file must call `build()` exactly once:
+Every entry file must call `husako.build()` exactly once:
 
 ```typescript
-import { build } from "husako";
+import husako from "husako";
 
-build([resource1, resource2, resource3]);
+husako.build([resource1, resource2, resource3]);
 ```
 
-`build()` accepts a single builder or an array of builders.
+`husako.build()` accepts a single builder or an array of builders.
 
 Each item must be a resource builder instance (it must have a `_render()` method).
 
@@ -208,8 +253,8 @@ Passing plain objects throws a `TypeError`.
 
 Rules:
 
-- Missing `build()` call → exit code 7
-- Multiple `build()` calls → exit code 7
+- Missing `husako.build()` call → exit code 7
+- Multiple `husako.build()` calls → exit code 7
 - Items without `_render()` → `TypeError`
 
 The output must also pass strict JSON validation.

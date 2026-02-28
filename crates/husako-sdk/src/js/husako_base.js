@@ -1,5 +1,5 @@
-// _ResourceBuilder and _SchemaBuilder base classes for k8s resource builders.
-// Each chainable method returns a NEW instance (copy-on-write).
+// husako/_base: base classes for k8s resource builders.
+// Used by auto-generated schema modules; not for direct import in user code.
 
 function _resolveFragments(obj) {
   if (obj === null || obj === undefined) return obj;
@@ -26,6 +26,131 @@ function _mergeDeep(target, source) {
     }
   }
   return result;
+}
+
+// --- Quantity normalization ---
+
+function normalizeCpu(v) {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") {
+    if (Number.isInteger(v)) return String(v);
+    const m = Math.round(v * 1000);
+    return m + "m";
+  }
+  return String(v);
+}
+
+function normalizeMemory(v) {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return v + "Gi";
+  return String(v);
+}
+
+// --- SpecFragment ---
+// Returned by chain starter functions (name(), image(), etc.).
+// Mutable accumulator — NOT copy-on-write.
+// Compatible with both MetadataChain and ContainerChain contexts.
+
+export function _createSpecFragment(init) {
+  const f = {
+    _husakoTag: "SpecFragment",
+    _name: undefined,
+    _namespace: undefined,
+    _labels: undefined,
+    _annotations: undefined,
+    _image: undefined,
+    _imagePullPolicy: undefined,
+    _resources: undefined,
+    _command: undefined,
+    _args: undefined,
+  };
+  if (init) {
+    for (const k in init) f[k] = init[k];
+  }
+  f.name = function(v) { f._name = v; return f; };
+  f.namespace = function(v) { f._namespace = v; return f; };
+  f.label = function(k, v) {
+    if (!f._labels) f._labels = {};
+    f._labels[k] = v;
+    return f;
+  };
+  f.annotation = function(k, v) {
+    if (!f._annotations) f._annotations = {};
+    f._annotations[k] = v;
+    return f;
+  };
+  f.image = function(v) { f._image = v; return f; };
+  f.imagePullPolicy = function(v) { f._imagePullPolicy = v; return f; };
+  f.resources = function(r) { f._resources = r; return f; };
+  f.command = function(v) { f._command = v; return f; };
+  f.args = function(v) { f._args = v; return f; };
+  f._toMetadata = function() {
+    const obj = {};
+    if (f._name !== undefined) obj.name = f._name;
+    if (f._namespace !== undefined) obj.namespace = f._namespace;
+    if (f._labels && Object.keys(f._labels).length > 0) obj.labels = Object.assign({}, f._labels);
+    if (f._annotations && Object.keys(f._annotations).length > 0) obj.annotations = Object.assign({}, f._annotations);
+    return obj;
+  };
+  f._toContainer = function() {
+    const obj = {};
+    if (f._name !== undefined) obj.name = f._name;
+    if (f._image !== undefined) obj.image = f._image;
+    if (f._imagePullPolicy !== undefined) obj.imagePullPolicy = f._imagePullPolicy;
+    if (f._resources !== undefined) obj.resources = _resolveFragments(f._resources);
+    if (f._command !== undefined) obj.command = f._command;
+    if (f._args !== undefined) obj.args = f._args;
+    return obj;
+  };
+  return f;
+}
+
+// --- ResourceChain ---
+// Returned by cpu() and memory() chain starters from k8s/core/v1.
+// Bare resource list accumulator — no requests/limits wrapper.
+// Pass to requests() to create a ResourceRequirementsChain.
+
+export function _createResourceChain(init) {
+  const r = {
+    _husakoTag: "ResourceChain",
+    _cpu: undefined,
+    _memory: undefined,
+  };
+  if (init) {
+    for (const k in init) r[k] = init[k];
+  }
+  r.cpu = function(v) { r._cpu = normalizeCpu(v); return r; };
+  r.memory = function(v) { r._memory = normalizeMemory(v); return r; };
+  r._toJSON = function() {
+    const obj = {};
+    if (r._cpu !== undefined) obj.cpu = r._cpu;
+    if (r._memory !== undefined) obj.memory = r._memory;
+    return obj;  // bare { cpu?, memory? } — no requests wrapper
+  };
+  return r;
+}
+
+// --- ResourceRequirementsChain ---
+// Returned by requests() from k8s/core/v1.
+// Carries both requests and optional limits. Mutable accumulator.
+
+export function _createResourceRequirementsChain(reqList) {
+  const r = {
+    _husakoTag: "ResourceRequirementsChain",
+    _requests: reqList,
+    _limits: undefined,
+  };
+  r.limits = function(chain) {
+    r._limits = chain && typeof chain._toJSON === "function" ? chain._toJSON() : chain;
+    return r;
+  };
+  r._toJSON = function() {
+    const obj = {};
+    if (r._requests && Object.keys(r._requests).length > 0) obj.requests = r._requests;
+    if (r._limits && Object.keys(r._limits).length > 0) obj.limits = r._limits;
+    return obj;
+  };
+  return r;
 }
 
 export class _SchemaBuilder {
@@ -75,10 +200,15 @@ export class _ResourceBuilder {
     return next;
   }
 
-  metadata(fragment) {
-    const next = this._copy();
-    next._metadata = fragment;
-    return next;
+  metadata(chain) {
+    if (chain && chain._husakoTag === "SpecFragment") {
+      const next = this._copy();
+      next._metadata = chain._toMetadata();
+      return next;
+    }
+    throw new Error(
+      "metadata() requires a MetadataChain — use name(), namespace(), label() from \"k8s/meta/v1\"."
+    );
   }
 
   spec(value) {
@@ -118,20 +248,14 @@ export class _ResourceBuilder {
     return next;
   }
 
-  resources(...fragments) {
+  resources(chain) {
+    // Kept for backward compatibility. Accepts a ResourceChain, SpecFragment, or plain object.
     const next = this._copy();
-    let req = {};
-    for (const f of fragments) {
-      if (f && f._type === "resource_requirements") {
-        if (f._requests) {
-          req.requests = f._requests._toJSON();
-        }
-        if (f._limits) {
-          req.limits = f._limits._toJSON();
-        }
-      }
+    if (chain && typeof chain._toJSON === "function") {
+      next._resources = chain._toJSON();
+    } else if (chain !== null && chain !== undefined) {
+      next._resources = chain;
     }
-    next._resources = req;
     return next;
   }
 
@@ -142,7 +266,7 @@ export class _ResourceBuilder {
     };
 
     if (this._metadata) {
-      obj.metadata = this._metadata._toJSON();
+      obj.metadata = this._metadata;
     }
 
     if (this._spec) {

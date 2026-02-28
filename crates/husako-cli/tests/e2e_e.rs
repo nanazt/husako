@@ -47,33 +47,34 @@ fn scenario_e_plugin_system_and_clean() {
     assert_file(&dir.path().join(".husako/plugins/fluxcd/modules/index.js"));
 
     std::fs::write(
-        dir.path().join("helmrelease.ts"),
-        r#"import { HelmRelease } from "fluxcd";
+        dir.path().join("helmrelease.husako"),
+        r#"import husako from "husako";
+import { HelmRelease } from "fluxcd";
 import { HelmRepository } from "fluxcd/source";
-import { metadata, build } from "husako";
+import { name, namespace } from "k8s/meta/v1";
 
 const repo = HelmRepository()
-  .metadata(metadata().name("bitnami").namespace("flux-system"))
+  .metadata(name("bitnami").namespace("flux-system"))
   .spec({ url: "https://charts.bitnami.com/bitnami", interval: "1h" });
 
 const release = HelmRelease()
-  .metadata(metadata().name("redis").namespace("default"))
+  .metadata(name("redis").namespace("default"))
   .spec({
     chart: { spec: { chart: "redis", version: "25.3.0", sourceRef: repo._sourceRef() } },
     interval: "10m",
   });
 
-build([repo, release]);
+husako.build([repo, release]);
 "#,
     )
     .unwrap();
     husako_at(dir.path())
-        .args(["check", "helmrelease.ts"])
+        .args(["check", "helmrelease.husako"])
         .assert()
         .success();
     let hr_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "helmrelease.ts"])
+            .args(["render", "helmrelease.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -122,14 +123,14 @@ build([repo, release]);
     husako_at(dir.path()).args(["gen"]).assert().success();
     assert_file(&dir.path().join(".husako/types/k8s/core/v1.d.ts"));
 
-    write_configmap(&dir.path().join("configmap.ts"));
+    write_configmap(&dir.path().join("configmap.husako"));
     husako_at(dir.path())
-        .args(["check", "configmap.ts"])
+        .args(["check", "configmap.husako"])
         .assert()
         .success();
     let cm_yaml = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "configmap.ts"])
+            .args(["render", "configmap.husako"])
             .output()
             .unwrap()
             .stdout,

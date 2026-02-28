@@ -1,4 +1,4 @@
-import * as husako from "husako";
+import husako from "husako";
 import { nginx } from "../base/nginx";
 import { nginxService } from "../base/service";
 

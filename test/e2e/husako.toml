@@ -1,6 +1,6 @@
 [entries]
-deploy = "entry.ts"
-helm = "helm-values.ts"
+deploy = "entry.husako"
+helm = "helm-values.husako"
 
 [resources]
 k8s = { source = "release", version = "1.35" }

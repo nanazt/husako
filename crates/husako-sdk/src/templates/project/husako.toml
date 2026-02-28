@@ -1,5 +1,5 @@
 [entries]
-dev = "env/dev.ts"
+dev = "env/dev.husako"
 
 [resources]
 kubernetes = { source = "release", version = "%K8S_VERSION%" }

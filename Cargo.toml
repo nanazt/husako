@@ -11,6 +11,7 @@ repository = "https://github.com/nanazt/husako"
 [workspace.dependencies]
 # Compilation
 oxc_allocator = "0.115"
+oxc_ast = "0.115"
 oxc_parser = "0.115"
 oxc_transformer = "0.115"
 oxc_codegen = "0.115"
@@ -47,7 +48,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 thiserror = "2"
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "signal", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "io-std", "sync", "signal", "time", "fs"] }
+tower-lsp = "0.20"
 
 # File watching
 notify = "6"

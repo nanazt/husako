@@ -60,15 +60,16 @@ fn e2e_render_deployment_from_real_specs() {
 
     // Write a TypeScript entry that uses the generated modules.
     // Uses .spec() since per-property methods depend on allOf $ref handling.
-    let entry = root.join("deploy.ts");
+    let entry = root.join("deploy.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name, label } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Deployment } from "k8s/apps/v1";
 
 const d = Deployment()
-    .metadata(name("nginx"), label("app", "nginx"))
+    .metadata(name("nginx").label("app", "nginx"))
     .spec({
         replicas: 3,
         selector: { matchLabels: { app: "nginx" } },
@@ -79,7 +80,7 @@ const d = Deployment()
         }
     });
 
-build([d]);
+husako.build([d]);
 "#,
     )
     .unwrap();
@@ -121,18 +122,19 @@ fn e2e_render_cnpg_cluster() {
     );
 
     // Write TypeScript entry using cnpg cluster
-    let entry = root.join("cluster.ts");
+    let entry = root.join("cluster.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Cluster } from "k8s/postgresql.cnpg.io/v1";
 
 const c = Cluster()
     .metadata(name("my-pg"))
     .spec({ instances: 3, storage: { size: "10Gi" } });
 
-build([c]);
+husako.build([c]);
 "#,
     )
     .unwrap();
@@ -168,11 +170,12 @@ fn e2e_render_cert_manager_certificate() {
             .exists()
     );
 
-    let entry = root.join("cert.ts");
+    let entry = root.join("cert.husako");
     std::fs::write(
         &entry,
         r#"
-import { build, name } from "husako";
+import husako from "husako";
+import { name } from "k8s/meta/v1";
 import { Certificate } from "k8s/cert-manager.io/v1";
 
 const cert = Certificate()
@@ -183,7 +186,7 @@ const cert = Certificate()
         dnsNames: ["example.com"]
     });
 
-build([cert]);
+husako.build([cert]);
 "#,
     )
     .unwrap();

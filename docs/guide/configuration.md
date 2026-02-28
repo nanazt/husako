@@ -6,8 +6,8 @@
 
 ```toml
 [entries]
-dev = "env/dev.ts"
-staging = "env/staging.ts"
+dev = "env/dev.husako"
+staging = "env/staging.husako"
 
 [resources]
 core = { source = "release", version = "1.32.0" }
@@ -26,13 +26,13 @@ flux = { source = "path", path = "plugins/flux" }
 
 ```toml
 [entries]
-dev = "env/dev.ts"
-staging = "env/staging.ts"
+dev = "env/dev.husako"
+staging = "env/staging.husako"
 ```
 
 Entry aliases map short names to file paths.
 
-When you run `husako render dev`, husako resolves `dev` to `env/dev.ts` before rendering.
+When you run `husako render dev`, husako resolves `dev` to `env/dev.husako` before rendering.
 
 **Resolution order:** direct file path → entry alias → error with available aliases listed.
 
@@ -98,7 +98,7 @@ Chart dependencies declare Helm chart sources for `values.schema.json` type gene
 
 `husako gen` fetches the schema and produces typed value builders under `.husako/types/helm/`.
 
-Four source types are supported:
+Five source types are supported:
 
 ### registry
 
@@ -134,6 +134,15 @@ Reads `values.schema.json` from a local path:
 ```toml
 [charts]
 local-chart = { source = "file", path = "./charts/my-chart/values.schema.json" }
+```
+
+### oci
+
+Fetches the chart from an OCI registry:
+
+```toml
+[charts]
+postgresql = { source = "oci", reference = "oci://registry-1.docker.io/bitnamicharts/postgresql", version = "16.4.0" }
 ```
 
 ---

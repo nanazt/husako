@@ -21,16 +21,16 @@ impl Drop for KillOnDrop {
 
 // ── Entry file fixtures ───────────────────────────────────────────────────────
 
-const ENTRY_V1: &str = r#"import { build } from "husako";
-build([{
+const ENTRY_V1: &str = r#"import husako from "husako";
+husako.build([{
   _render() {
     return { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "initial" } };
   }
 }]);
 "#;
 
-const ENTRY_V2: &str = r#"import { build } from "husako";
-build([{
+const ENTRY_V2: &str = r#"import husako from "husako";
+husako.build([{
   _render() {
     return { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "watch-test" } };
   }
@@ -69,12 +69,12 @@ fn watch_rerenders_on_file_change() {
 
     // Minimal project — no k8s types needed.
     std::fs::write(root.join("husako.toml"), "[entries]\n").unwrap();
-    let entry = root.join("entry.ts");
+    let entry = root.join("entry.husako");
     std::fs::write(&entry, ENTRY_V1).unwrap();
 
     let out_yaml = root.join("out.yaml");
     let child = std::process::Command::new(env!("CARGO_BIN_EXE_husako"))
-        .args(["render", "entry.ts", "--watch", "-o", "out.yaml"])
+        .args(["render", "entry.husako", "--watch", "-o", "out.yaml"])
         .current_dir(root)
         .spawn()
         .expect("failed to spawn husako render --watch");

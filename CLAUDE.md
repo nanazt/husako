@@ -130,8 +130,15 @@ crates/
 ├── husako-bench/          # Criterion benchmarks (compile/execute/render/generate/emit) + report binary
 │   ├── benches/
 │   └── src/               # bench_fixtures_dir(), fixture constants, report binary
-└── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
-    └── src/lib.rs
+├── husako-sdk/            # Builtin JS sources + base .d.ts + project templates
+│   └── src/lib.rs
+└── husako-lsp/            # LSP server (tower-lsp, JSON-RPC over stdio) for .husako files
+    └── src/
+        ├── lib.rs              # Server setup, tower-lsp handlers, run_lsp_server()
+        ├── analysis.rs         # Context detection, chain analysis, build-call scanning
+        ├── completion.rs       # Context-sensitive completions + quantity value completions
+        ├── diagnostics.rs      # 7 diagnostic rules (required fields, quantities, image formats, etc.)
+        └── workspace.rs        # Workspace state: husako.toml + _chains.meta.json loading
 ```
 
 Boundary rules:
@@ -200,7 +207,7 @@ cargo test -p husako-core test_name
 - `.husako/` directory (cache + generated types) must be in `.gitignore` -- it is auto-managed and should never be committed or edited manually
 - **`husako.toml`** at the repo root may accumulate local dev test entries (charts, resources). Run `git diff husako.toml` before staging to avoid committing unrelated test config.
 - The binary name is `husako` (set in `husako-cli/Cargo.toml` as `package.name`), not the repo name
-- `tsconfig.json` is parsed with JSONC support (comments + trailing commas) via `strip_jsonc()` in `husako-core`, so existing tsconfig files from `tsc --init` or IDE tooling are handled correctly
+- `tsconfig.json` is a husako-managed artifact — gitignored, always overwritten by `husako gen` and by husako-lsp on workspace open. Never edit it manually. `strip_jsonc()` in `husako-core` remains for reading tsconfig in `husako debug`.
 - **`tokio::process::Command` + `Stdio::piped()` + `.status()`**: Tokio drops the stderr pipe read-end before waiting, causing SIGPIPE in the child process (`ExitStatus::code()` = None → reported as "exit -1"). Always use `.output().await` when stderr is piped — it drains stdout/stderr asynchronously. See `plugin.rs` and `husako-helm/src/git.rs` for the correct pattern.
 - **QuickJS (`husako-runtime-qjs`) is not async-native**: `rquickjs::AsyncRuntime` + `parallel` feature panics in `event-listener` under tokio's multi-thread runtime; `PromiseFuture` is `!Send`. Use `tokio::task::spawn_blocking` to wrap synchronous QuickJS execution — this is the correct tokio pattern for CPU-bound single-threaded work.
 - **CLI output to stderr**: All user-facing CLI output (`husako list`, `husako info`, `husako debug`, `husako outdated`, etc.) uses `eprintln!()` → stderr. Only YAML data output from `husako render` goes to stdout. Integration tests must use `.stderr()` assertions, not `.stdout()`.
@@ -210,13 +217,13 @@ cargo test -p husako-core test_name
 
 - Always respond in English and write documents in English.
 - Before writing docs, see <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing> and avoid these patterns.
-- User-facing docs live in `.worktrees/docs-site/docs/` (VitePress site). Update them when user-visible behavior changes.
+- User-facing docs live in `docs/` (VitePress site). Update them when user-visible behavior changes.
 
 ## Configuration (`husako.toml`)
 
 Project-level configuration file created by `husako new`. Supports:
 
-- **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.ts"`)
+- **Entry aliases**: `[entries]` maps short names to file paths (`dev = "env/dev.husako"`)
 - **Resource dependencies**: `[resources]` declares k8s schema sources with 3 types: `release`, `git`, `file` (aliased from legacy `[schemas]`)
 - **Chart dependencies**: `[charts]` declares Helm chart sources with 5 types: `registry`, `artifacthub`, `git`, `file`, `oci`
 - **Plugins**: `[plugins]` declares plugin sources with 2 types: `git` (URL), `path` (local directory)
@@ -233,6 +240,7 @@ The `Generate` command priority chain for k8s types: `--skip-k8s` → `--no-incr
 - PRs require 1 approving review and all CI checks to pass
 - Branches must be up to date with `master` before merging
 - **`bench-results`** is a CI-managed branch — do not delete it. The `bench.yml` workflow automatically commits benchmark reports (`latest/bench-summary.md`, `latest/bench-report.md`) to this branch on every push to `master` and on `v*` tags (also saves under `releases/<version>/`).
+- Do not use git worktrees for day-to-day development. Work directly in the project root.
 
 ## CI/CD
 
@@ -261,12 +269,14 @@ Key files: `release-plz.toml`, `gaji.config.ts`, `npm/` (package structure), `sc
 Read `.claude/*.md` before making changes to related areas:
 
 - `.claude/dsl-spec.md` — Builder DSL rules
+- `.claude/lsp-spec.md` — husako LSP server behavior (context detection, completions, 7 diagnostic rules, editor integration)
 - `.claude/cli-design.md` — CLI visual design system
 - `.claude/architecture.md` — Deep implementation details (schema classification, CRD conversion, validation engine, codegen, caching, plugins)
 - `.claude/plugin-spec.md` — Plugin system specification (manifest format, module resolution, helper authoring)
 - `.claude/testing.md` — Testing standards: unit/integration/E2E patterns, assertion helpers, source kind coverage table, CLI flag notes for tests
 - `.claude/release-guide.md` — Release checklist including bench results and performance summary in release notes
 - `.claude/coding-guidelines.md` — Common clippy failures and fixes, async optimization patterns (`drop_in_background`, `spawn_blocking`)
+- `.claude/docs-guidelines.md` — Documentation writing style and conventions
 - `.claude/lock-file.md` — `husako.lock` struct, entry variants, skip decision logic, djb2 hashing, load/save behavior
 - `.claude/quantity-grammar.md` — Kubernetes quantity grammar, valid/invalid examples, fallback heuristic
 - `.claude/validation-engine.md` — Two validation paths, what IS/IS NOT validated, error format, strict JSON contract

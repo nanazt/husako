@@ -4,7 +4,7 @@ This page is the complete reference for the husako builder DSL.
 
 ## Builder hierarchy
 
-Three types of builders exist, each with different responsibilities:
+Two types of builders exist:
 
 ### _ResourceBuilder
 
@@ -12,82 +12,57 @@ Top-level Kubernetes resources — schemas that carry `apiVersion` and `kind` (i
 
 | Method | Description |
 |--------|-------------|
-| `.metadata(fragment)` | Sets metadata. Accepts MetadataFragment or plain object. |
+| `.metadata(chain)` | Sets metadata. Accepts a `MetadataChain` or `SpecFragment`. |
+| `.containers(items)` | Sets containers. Accepts a `ContainerChain[]` or `SpecFragment[]`. |
 | `.spec(value)` | Replaces the full spec object. Clears per-property parts. |
 | `.set(key, value)` | Sets an arbitrary top-level field outside spec. |
-| `.resources(...fragments)` | Sets container resource requirements. |
+| `.resources(r)` | Sets container resource requirements. Accepts a `ResourceRequirementsChain`. |
 
 Per-spec-property methods (`.replicas()`, `.selector()`, `.template()`, etc.) are generated from the OpenAPI spec.
 
 Each calls an internal `_setSpec()` and returns a new instance.
 
-Deep-path shortcuts (`.containers()`, `.initContainers()`) are generated for resources that have a `template` property.
-
-They call an internal `_setDeep()` and reach into `spec.template.spec`.
+Deep-path shortcuts (`.containers()`, `.initContainers()`) reach into `spec.template.spec`.
 
 **Examples:** `Deployment`, `Service`, `Namespace`, `StatefulSet`, `DaemonSet`, `ConfigMap`
 
-### _SchemaBuilder
+### Chain starters and SpecFragment
 
-Intermediate types with complex nested properties but no `apiVersion`/`kind`.
+Chain starter functions are exported from schema modules (`"k8s/meta/v1"`, `"k8s/core/v1"`, etc.).
 
-Generated for schemas that have at least one property referencing another schema.
+Each starter creates a `SpecFragment` that records field values. Fragments chain — each call returns the same fragment so you can keep adding fields:
 
-| Method | Description |
-|--------|-------------|
-| `_set(key, value)` | Sets one property. Returns a new instance. |
-| `_toJSON()` | Resolves all nested fragments and returns a plain object. |
+```typescript
+import { name, namespace, label } from "k8s/meta/v1";   // ObjectMeta starters
+import { name, image, imagePullPolicy } from "k8s/core/v1"; // Container starters
 
-Per-property methods (`.name()`, `.image()`, `.ports()`, etc.) are generated and call `_set()` internally.
+// MetadataChain context — passed to .metadata()
+name("nginx").namespace("default").label("app", "nginx")
 
-**Examples:** `Container`, `PodSpec`, `PodTemplateSpec`, `DeploymentSpec`
+// ContainerChain context — passed to .containers()
+name("nginx").image("nginx:1.25").imagePullPolicy("Always")
+```
 
-### Fragment builders
-
-Hand-crafted builders in the `"husako"` module for common cross-resource concerns.
-
-| Fragment | Factory functions | Methods |
-|----------|-------------------|---------|
-| MetadataFragment | `metadata()` | `.name(v)`, `.namespace(v)`, `.label(k, v)`, `.annotation(k, v)` |
-| ResourceListFragment | `cpu(v)`, `memory(v)` | `.cpu(v)`, `.memory(v)` |
-| ResourceRequirementsFragment | `requests(rl)`, `limits(rl)` | `.requests(rl)`, `.limits(rl)` |
+`SpecFragment` is compatible with both `.metadata()` and `.containers()` — the call site determines how the fragment is consumed.
 
 ---
 
 ## Copy-on-write
 
-Every chainable method returns a **new** builder instance.
+Every chainable method on `_ResourceBuilder` returns a **new** builder instance.
 
-The original is never mutated.
+The original is never mutated:
 
 ```typescript
-const base = Deployment().metadata(metadata().name("base")).replicas(1);
+const base = Deployment()
+  .metadata(name("base").namespace("default"))
+  .replicas(1);
+
 const prod = base.replicas(3);   // base still has replicas=1
 const dev  = base.replicas(1);   // independent from prod
 ```
 
-This makes builders safe to use as templates and share across multiple resource definitions.
-
----
-
-## Merge semantics
-
-`merge(items)` merges an array of same-typed fragments.
-
-| Fragment type | Scalar fields | Map fields |
-|--------------|---------------|------------|
-| MetadataFragment | `name`, `namespace`: last non-null wins | `labels`, `annotations`: deep-merge by key (later entries override earlier ones) |
-| ResourceListFragment | `cpu`, `memory`: last non-null wins | — |
-| Other types | Returns last item in array | — |
-
-Arrays are **replaced**, not concatenated.
-
-```typescript
-const base = metadata().name("svc").label("app", "web");
-const env  = metadata().label("env", "prod");
-merge([base, env]);
-// → { name: "svc", labels: { app: "web", env: "prod" } }
-```
+Chain fragments (`SpecFragment`) mutate in place — they are ephemeral builder objects consumed once by `.metadata()` or `.containers()`.
 
 ---
 
@@ -98,7 +73,7 @@ When `_render()` builds the `spec` field, it checks three sources in order:
 | Priority | Source | Set by | Behavior |
 |----------|--------|--------|----------|
 | 1 | `_spec` | `.spec(obj)` | Full replacement. Per-property parts are ignored. |
-| 2 | `_specParts` | Per-property methods, `.containers()`, etc. | Accumulated per property. Merged with `_resources` if present. |
+| 2 | `_specParts` | Per-property methods, `.containers()`, etc. | Accumulated per property. |
 | 3 | `_resources` | `.resources()` | Creates `template.spec.containers[0].resources`. |
 
 Calling `.spec(obj)` clears any per-property parts.
@@ -107,25 +82,34 @@ Calling per-property methods clears any previously set `.spec()`.
 
 ---
 
-## Fragment builders in detail
+## Chain starters in detail
 
-### MetadataFragment
+### Metadata — `k8s/meta/v1`
 
 ```typescript
-import { metadata } from "husako";
+import { name, namespace, label, annotation } from "k8s/meta/v1";
 
-metadata()
-  .name("my-resource")
+name("my-resource")
   .namespace("production")
   .label("app", "my-resource")
   .label("version", "1.2.3")
   .annotation("team", "platform")
 ```
 
-### Quantity fragments
+### Containers — `k8s/core/v1`
 
 ```typescript
-import { cpu, memory, requests, limits } from "husako";
+import { name, image, imagePullPolicy } from "k8s/core/v1";
+
+name("web")
+  .image("nginx:1.25")
+  .imagePullPolicy("Always")
+```
+
+### Quantity starters — `k8s/core/v1`
+
+```typescript
+import { cpu, memory, requests } from "k8s/core/v1";
 
 // CPU quantity
 cpu("500m")   // pass-through string
@@ -160,9 +144,9 @@ Full quantity normalization table:
 
 ---
 
-## build() strict JSON contract
+## husako.build() strict JSON contract
 
-`build()` validates every rendered resource against a strict JSON contract before emitting YAML.
+`husako.build()` validates every rendered resource against a strict JSON contract before emitting YAML.
 
 **Banned values in output:**
 
@@ -181,7 +165,7 @@ Full quantity normalization table:
 
 If any banned value appears in the rendered output, husako exits with code 7 and reports the JSON path of the offending value.
 
-**build() rules:**
+**husako.build() rules:**
 
 - Must be called exactly once per entry file. Zero or multiple calls → exit 7.
 - Accepts a single builder or an array of builders.
@@ -198,10 +182,33 @@ export interface Deployment extends _ResourceBuilder {
   replicas(value: number): this;
   selector(value: LabelSelector | LabelSelectorSpec): this;
   template(value: PodTemplateSpec | PodTemplateSpecSpec): this;
-  containers(value: (Container | ContainerSpec)[]): this;
-  initContainers(value: (Container | ContainerSpec)[]): this;
+  containers(value: ContainerChain[]): this;
+  initContainers(value: ContainerChain[]): this;
 }
 export function Deployment(): Deployment;
 ```
 
-The factory function and interface share the same name, so `Deployment()` returns a typed `Deployment` instance.
+Chain interfaces in `_chains.d.ts`:
+
+```typescript
+export interface MetadataChain {
+  name(v: string): MetadataChain;
+  namespace(v: string): MetadataChain;
+  label(k: string, v: string): MetadataChain;
+  annotation(k: string, v: string): MetadataChain;
+}
+
+export interface ContainerChain {
+  name(v: string): ContainerChain;
+  image(v: string): ContainerChain;
+  imagePullPolicy(v: "Always" | "IfNotPresent" | "Never"): ContainerChain;
+  resources(r: ResourceRequirementsChain): ContainerChain;
+}
+
+// SpecFragment extends both — compatible with .metadata() and .containers()
+export interface SpecFragment extends MetadataChain, ContainerChain {
+  name(v: string): SpecFragment;
+  namespace(v: string): SpecFragment;
+  image(v: string): SpecFragment;
+}
+```

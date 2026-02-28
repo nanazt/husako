@@ -132,10 +132,10 @@ Call `._render()` on a builder to get the plain JSON object, then assert on its 
 ```typescript
 import { test, expect } from "husako/test";
 import { Deployment } from "k8s/apps/v1";
-import { name, label } from "husako";
+import { name } from "k8s/meta/v1";
 
 test("Deployment has correct metadata", () => {
-  const doc = new Deployment()
+  const doc = Deployment()
     .metadata(name("web").label("app", "web"))
     ._render();
 

@@ -504,13 +504,14 @@ fn write_file(path: &std::path::Path, content: &str) -> Result<(), HusakoError> 
         .map_err(|e| HusakoError::GenerateIo(format!("write {}: {e}", path.display())))
 }
 
-fn write_tsconfig(
-    project_root: &std::path::Path,
+/// Build the canonical tsconfig.json content for a husako project.
+///
+/// Pure in-memory builder — no I/O. Exposed as `pub` so the CLI and LSP
+/// can generate tsconfig.json independently without running `husako gen`.
+pub fn build_tsconfig_content(
     config: Option<&husako_config::HusakoConfig>,
     plugin_paths: &std::collections::HashMap<String, String>,
-) -> Result<(), HusakoError> {
-    let tsconfig_path = project_root.join("tsconfig.json");
-
+) -> serde_json::Value {
     let mut paths = serde_json::json!({
         "husako": [".husako/types/husako.d.ts"],
         "husako/_base": [".husako/types/husako/_base.d.ts"],
@@ -536,55 +537,29 @@ fn write_tsconfig(
             .insert(specifier.clone(), serde_json::json!([dts_path]));
     }
 
-    let husako_paths = paths;
+    new_tsconfig(paths)
+}
 
-    let config = if tsconfig_path.exists() {
-        let content = std::fs::read_to_string(&tsconfig_path).map_err(|e| {
-            HusakoError::GenerateIo(format!("read {}: {e}", tsconfig_path.display()))
-        })?;
+/// Scan installed plugins and return tsconfig.json path mappings.
+///
+/// Reads `.husako/plugins/<name>/plugin.toml` for each installed plugin
+/// without re-running plugin installation.
+pub fn scan_installed_plugin_paths(
+    project_root: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    let plugins = plugin::list_plugins(project_root);
+    plugin::plugin_tsconfig_paths(&plugins)
+}
 
-        let stripped = strip_jsonc(&content);
-        match serde_json::from_str::<serde_json::Value>(&stripped) {
-            Ok(mut root) => {
-                // Merge paths into existing compilerOptions
-                let compiler_options = root
-                    .as_object_mut()
-                    .and_then(|obj| {
-                        if !obj.contains_key("compilerOptions") {
-                            obj.insert("compilerOptions".to_string(), serde_json::json!({}));
-                        }
-                        obj.get_mut("compilerOptions")
-                    })
-                    .and_then(|co| co.as_object_mut());
-
-                if let Some(co) = compiler_options {
-                    co.entry("baseUrl")
-                        .or_insert_with(|| serde_json::json!("."));
-
-                    let paths = co.entry("paths").or_insert_with(|| serde_json::json!({}));
-                    if let Some(paths_obj) = paths.as_object_mut()
-                        && let Some(husako_obj) = husako_paths.as_object()
-                    {
-                        for (k, v) in husako_obj {
-                            paths_obj.insert(k.clone(), v.clone());
-                        }
-                    }
-                }
-
-                root
-            }
-            Err(_) => {
-                eprintln!("warning: could not parse existing tsconfig.json, creating new one");
-                new_tsconfig(husako_paths)
-            }
-        }
-    } else {
-        new_tsconfig(husako_paths)
-    };
-
-    let formatted = serde_json::to_string_pretty(&config)
+fn write_tsconfig(
+    project_root: &std::path::Path,
+    config: Option<&husako_config::HusakoConfig>,
+    plugin_paths: &std::collections::HashMap<String, String>,
+) -> Result<(), HusakoError> {
+    let tsconfig_path = project_root.join("tsconfig.json");
+    let content = build_tsconfig_content(config, plugin_paths);
+    let formatted = serde_json::to_string_pretty(&content)
         .map_err(|e| HusakoError::GenerateIo(format!("serialize tsconfig.json: {e}")))?;
-
     std::fs::write(&tsconfig_path, formatted + "\n")
         .map_err(|e| HusakoError::GenerateIo(format!("write {}: {e}", tsconfig_path.display())))
 }
@@ -663,11 +638,11 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
 
     match options.template {
         TemplateName::Simple => {
-            write_file(&dir.join("entry.ts"), husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
+            write_file(&dir.join("entry.husako"), husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
         }
         TemplateName::Project => {
             write_file(
-                &dir.join("env/dev.ts"),
+                &dir.join("env/dev.husako"),
                 husako_sdk::TEMPLATE_PROJECT_ENV_DEV,
             )?;
             write_file(
@@ -693,15 +668,15 @@ pub fn scaffold(options: &ScaffoldOptions) -> Result<(), HusakoError> {
                 husako_sdk::TEMPLATE_MULTI_ENV_BASE_SERVICE,
             )?;
             write_file(
-                &dir.join("dev/main.ts"),
+                &dir.join("dev/main.husako"),
                 husako_sdk::TEMPLATE_MULTI_ENV_DEV_MAIN,
             )?;
             write_file(
-                &dir.join("staging/main.ts"),
+                &dir.join("staging/main.husako"),
                 husako_sdk::TEMPLATE_MULTI_ENV_STAGING_MAIN,
             )?;
             write_file(
-                &dir.join("release/main.ts"),
+                &dir.join("release/main.husako"),
                 husako_sdk::TEMPLATE_MULTI_ENV_RELEASE_MAIN,
             )?;
         }
@@ -730,20 +705,24 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
         ));
     }
 
-    // Write .gitignore: skip if exists, append .husako/ line if missing
+    // Write .gitignore: create from template if absent, otherwise append any
+    // missing husako-managed entries.
     let gitignore_path = dir.join(".gitignore");
     if gitignore_path.exists() {
         let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-        if !content.lines().any(|l| l.trim() == ".husako/") {
-            let mut appended = content;
-            if !appended.ends_with('\n') && !appended.is_empty() {
+        let mut appended = content;
+        for entry in [".husako/", "tsconfig.json"] {
+            if !appended.lines().any(|l| l.trim() == entry) {
+                if !appended.ends_with('\n') && !appended.is_empty() {
+                    appended.push('\n');
+                }
+                appended.push_str(entry);
                 appended.push('\n');
             }
-            appended.push_str(".husako/\n");
-            std::fs::write(&gitignore_path, appended).map_err(|e| {
-                HusakoError::GenerateIo(format!("write {}: {e}", gitignore_path.display()))
-            })?;
         }
+        std::fs::write(&gitignore_path, appended).map_err(|e| {
+            HusakoError::GenerateIo(format!("write {}: {e}", gitignore_path.display()))
+        })?;
     } else {
         write_file(&gitignore_path, husako_sdk::TEMPLATE_GITIGNORE)?;
     }
@@ -758,14 +737,14 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
 
     match options.template {
         TemplateName::Simple => {
-            let entry_path = dir.join("entry.ts");
+            let entry_path = dir.join("entry.husako");
             if !entry_path.exists() {
                 write_file(&entry_path, husako_sdk::TEMPLATE_SIMPLE_ENTRY)?;
             }
         }
         TemplateName::Project => {
             let files = [
-                ("env/dev.ts", husako_sdk::TEMPLATE_PROJECT_ENV_DEV),
+                ("env/dev.husako", husako_sdk::TEMPLATE_PROJECT_ENV_DEV),
                 (
                     "deployments/nginx.ts",
                     husako_sdk::TEMPLATE_PROJECT_DEPLOY_NGINX,
@@ -787,13 +766,13 @@ pub fn init(options: &InitOptions) -> Result<(), HusakoError> {
                     "base/service.ts",
                     husako_sdk::TEMPLATE_MULTI_ENV_BASE_SERVICE,
                 ),
-                ("dev/main.ts", husako_sdk::TEMPLATE_MULTI_ENV_DEV_MAIN),
+                ("dev/main.husako", husako_sdk::TEMPLATE_MULTI_ENV_DEV_MAIN),
                 (
-                    "staging/main.ts",
+                    "staging/main.husako",
                     husako_sdk::TEMPLATE_MULTI_ENV_STAGING_MAIN,
                 ),
                 (
-                    "release/main.ts",
+                    "release/main.husako",
                     husako_sdk::TEMPLATE_MULTI_ENV_RELEASE_MAIN,
                 ),
             ];
@@ -2110,8 +2089,8 @@ mod tests {
     #[tokio::test]
     async fn end_to_end_render() {
         let ts = r#"
-            import { build } from "husako";
-            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+            import husako from "husako";
+            husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let yaml = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
             .await
@@ -2132,7 +2111,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_build_propagates() {
-        let ts = r#"import { build } from "husako"; const x = 1;"#;
+        let ts = r#"import husako from "husako"; const x = husako;"#;
         let err = render(ts, "test.ts", &test_options(), &progress::SilentProgress)
             .await
             .unwrap_err();
@@ -2175,24 +2154,14 @@ mod tests {
     }
 
     #[test]
-    fn generate_updates_existing_tsconfig() {
+    fn write_tsconfig_overwrites_existing() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
 
-        // Pre-create tsconfig.json with existing content
-        let existing = serde_json::json!({
-            "compilerOptions": {
-                "strict": true,
-                "target": "ES2020",
-                "paths": {
-                    "mylib/*": ["./lib/*"]
-                }
-            },
-            "include": ["src/**/*"]
-        });
+        // Pre-write a custom tsconfig with user content that should NOT survive
         std::fs::write(
             root.join("tsconfig.json"),
-            serde_json::to_string_pretty(&existing).unwrap(),
+            r#"{"compilerOptions":{"target":"ES2020","paths":{"mylib/*":["./lib/*"]}},"include":["src/**/*"]}"#,
         )
         .unwrap();
 
@@ -2212,16 +2181,14 @@ mod tests {
         let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
 
-        // Original fields preserved
-        assert_eq!(parsed["compilerOptions"]["target"], "ES2020");
-        assert!(parsed["include"].is_array());
-
-        // Original path preserved
-        assert!(parsed["compilerOptions"]["paths"]["mylib/*"].is_array());
-
-        // husako paths added
+        // husako canonical paths present
         assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
         assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
+
+        // Old user content gone — tsconfig is fully overwritten
+        assert!(parsed["compilerOptions"]["target"].is_null());
+        assert!(parsed["include"].is_null());
+        assert!(parsed["compilerOptions"]["paths"]["mylib/*"].is_null());
     }
 
     #[test]
@@ -2262,7 +2229,7 @@ mod tests {
 
         assert!(dir.join(".gitignore").exists());
         assert!(dir.join("husako.toml").exists());
-        assert!(dir.join("entry.ts").exists());
+        assert!(dir.join("entry.husako").exists());
     }
 
     #[test]
@@ -2312,7 +2279,7 @@ mod tests {
 
         assert!(dir.join(".gitignore").exists());
         assert!(dir.join("husako.toml").exists());
-        assert!(dir.join("env/dev.ts").exists());
+        assert!(dir.join("env/dev.husako").exists());
         assert!(dir.join("deployments/nginx.ts").exists());
         assert!(dir.join("lib/index.ts").exists());
         assert!(dir.join("lib/metadata.ts").exists());
@@ -2334,9 +2301,9 @@ mod tests {
         assert!(dir.join("husako.toml").exists());
         assert!(dir.join("base/nginx.ts").exists());
         assert!(dir.join("base/service.ts").exists());
-        assert!(dir.join("dev/main.ts").exists());
-        assert!(dir.join("staging/main.ts").exists());
-        assert!(dir.join("release/main.ts").exists());
+        assert!(dir.join("dev/main.husako").exists());
+        assert!(dir.join("staging/main.husako").exists());
+        assert!(dir.join("release/main.husako").exists());
     }
 
     #[test]
@@ -2369,7 +2336,7 @@ mod tests {
         };
         scaffold(&opts).unwrap();
 
-        assert!(dir.join("entry.ts").exists());
+        assert!(dir.join("entry.husako").exists());
     }
 
     #[test]
@@ -2532,49 +2499,6 @@ mod tests {
         assert!(parsed["compilerOptions"]["module"].is_null());
     }
 
-    #[test]
-    fn generate_updates_jsonc_tsconfig() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().to_path_buf();
-
-        // Pre-create tsconfig.json with JSONC features (comments + trailing comma)
-        std::fs::write(
-            root.join("tsconfig.json"),
-            r#"{
-  "compilerOptions": {
-    // TypeScript options
-    "strict": true,
-    "target": "ES2022",
-  }
-}"#,
-        )
-        .unwrap();
-
-        let opts = GenerateOptions {
-            project_root: root.clone(),
-            openapi: None,
-            skip_k8s: true,
-            config: None,
-            husako_version: String::new(),
-            no_incremental: true,
-        };
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(generate(&opts, &progress::SilentProgress))
-            .unwrap();
-
-        let tsconfig = std::fs::read_to_string(root.join("tsconfig.json")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&tsconfig).unwrap();
-
-        // Original fields preserved
-        assert_eq!(parsed["compilerOptions"]["target"], "ES2022");
-        assert_eq!(parsed["compilerOptions"]["strict"], true);
-
-        // husako paths added
-        assert!(parsed["compilerOptions"]["paths"]["husako"].is_array());
-        assert!(parsed["compilerOptions"]["paths"]["k8s/*"].is_array());
-    }
-
     // --- M16 tests: init, clean, list ---
 
     #[test]
@@ -2589,7 +2513,7 @@ mod tests {
         init(&opts).unwrap();
 
         assert!(tmp.path().join("husako.toml").exists());
-        assert!(tmp.path().join("entry.ts").exists());
+        assert!(tmp.path().join("entry.husako").exists());
         assert!(tmp.path().join(".gitignore").exists());
     }
 
@@ -2605,7 +2529,7 @@ mod tests {
         init(&opts).unwrap();
 
         assert!(tmp.path().join("husako.toml").exists());
-        assert!(tmp.path().join("env/dev.ts").exists());
+        assert!(tmp.path().join("env/dev.husako").exists());
     }
 
     #[test]
@@ -2653,12 +2577,13 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(content.contains("node_modules/"));
         assert!(content.contains(".husako/"));
+        assert!(content.contains("tsconfig.json"));
     }
 
     #[test]
     fn init_skips_gitignore_if_husako_present() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join(".gitignore"), ".husako/\n").unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), ".husako/\ntsconfig.json\n").unwrap();
 
         let opts = InitOptions {
             directory: tmp.path().to_path_buf(),
@@ -2668,8 +2593,9 @@ mod tests {
         init(&opts).unwrap();
 
         let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
-        // Should not have duplicate .husako/ lines
+        // Should not have duplicate entries
         assert_eq!(content.matches(".husako/").count(), 1);
+        assert_eq!(content.matches("tsconfig.json").count(), 1);
     }
 
     #[test]
@@ -3037,8 +2963,8 @@ mod tests {
     #[tokio::test]
     async fn validate_valid_ts() {
         let ts = r#"
-            import { build } from "husako";
-            build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
+            import husako from "husako";
+            husako.build([{ _render() { return { apiVersion: "v1", kind: "Namespace", metadata: { name: "test" } }; } }]);
         "#;
         let options = test_options();
         let result = validate_file(ts, "test.ts", &options).await.unwrap();
@@ -3056,7 +2982,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_runtime_error() {
-        let ts = r#"import { build } from "husako"; const x = 1;"#;
+        let ts = r#"import husako from "husako"; const x = husako;"#;
         let err = validate_file(ts, "test.ts", &test_options())
             .await
             .unwrap_err();

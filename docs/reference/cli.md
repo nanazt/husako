@@ -12,13 +12,13 @@ husako new <directory> [options]
 |------|---------|-------------|
 | `-t, --template` | `simple` | Template name: `simple`, `project`, or `multi-env` |
 
-Creates `husako.toml`, `entry.ts` (or template files), and `.gitignore` in the specified directory.
+Creates `husako.toml`, `entry.husako` (or template files), and `.gitignore` in the specified directory.
 
 ---
 
 ## husako gen
 
-Generate type definitions and `tsconfig.json` from Kubernetes schemas and Helm charts.
+Generate type definitions from Kubernetes schemas and Helm charts.
 
 Alias: `gen`.
 
@@ -28,9 +28,8 @@ husako gen [options]
 
 | Flag | Description |
 |------|-------------|
-| `--api-server <url>` | Kubernetes API server URL |
 | `--spec-dir <path>` | Local directory with pre-fetched OpenAPI spec files |
-| `--skip-k8s` | Only write `husako.d.ts` and `tsconfig.json`, skip Kubernetes types |
+| `--skip-k8s` | Only write `husako.d.ts`, skip Kubernetes types |
 | `--no-incremental` | Regenerate all types, ignoring `husako.lock`. Use when a git plugin's remote changed or a tag was moved upstream. |
 
 Priority chain for k8s schema source: `--skip-k8s` → `--no-incremental` (bypass lock) → lock-file skip check → CLI flags → `husako.toml [resources]` → skip.
@@ -39,7 +38,9 @@ Chart types from `[charts]` are always generated when configured.
 
 Plugins from `[plugins]` are installed first.
 
-Output goes to `.husako/` (auto-managed, gitignored).
+Generated types go to `.husako/` (auto-managed, gitignored).
+
+`tsconfig.json` is also written to the project root on every run. It is a husako-managed artifact — always regenerated from `husako.toml` and installed plugins, never edited manually. Add `tsconfig.json` to `.gitignore` (projects created by `husako new` or `husako init` do this automatically).
 
 ---
 
@@ -59,7 +60,6 @@ The file argument is resolved as: direct path → entry alias from `husako.toml`
 | `--allow-outside-root` | Allow imports outside the project root |
 | `--timeout-ms <ms>` | Execution timeout in milliseconds |
 | `--max-heap-mb <mb>` | Maximum heap memory in megabytes |
-| `-w, --watch` | Re-render automatically when source files change. Press Ctrl+C to stop. |
 | `-v, --verbose` | Print diagnostic traces to stderr |
 
 ---
@@ -318,6 +318,28 @@ See [Writing Tests](/guide/testing) for full examples and the assertion API refe
 
 ---
 
+## husako lsp
+
+Start the Language Server Protocol server on stdin/stdout.
+
+```
+husako lsp
+```
+
+This starts the husako LSP server that communicates with editors over JSON-RPC on stdin/stdout.
+
+The server provides IDE intelligence for `.husako` files:
+
+- Context-sensitive code completion (chain methods filtered by call-site context)
+- Kubernetes quantity value completions (`cpu()` / `memory()` arguments)
+- 7 diagnostic rules (missing required fields, invalid quantities, invalid image formats, and more)
+
+The server is started automatically by editor extensions — you do not typically run this command directly.
+
+See [LSP Setup](/reference/lsp) for editor integration instructions.
+
+---
+
 ## husako version
 
 Print the version, commit hash, and build date.
@@ -351,7 +373,7 @@ The commit hash has a `-dirty` suffix if the working tree had uncommitted change
 | 0 | Success |
 | 1 | Unexpected failure |
 | 2 | Invalid args/config |
-| 3 | Compile failure (oxc) |
+| 3 | Compile failure (oxc) or TypeScript type error (`husako check --type-check`) |
 | 4 | Runtime failure (QuickJS / module loading) |
 | 5 | Type generation failure |
 | 6 | OpenAPI fetch/cache failure |

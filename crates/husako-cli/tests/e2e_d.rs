@@ -12,19 +12,19 @@ fn scenario_d_version_management() {
         dir.path(),
         "[resources]\nk8s = { source = \"release\", version = \"1.30\" }",
     );
-    write_configmap(&dir.path().join("configmap.ts"));
+    write_configmap(&dir.path().join("configmap.husako"));
 
     husako_at(dir.path()).args(["gen"]).assert().success();
 
     // k8s 1.30 types present
     assert_file(&dir.path().join(".husako/types/k8s/core/v1.d.ts"));
     husako_at(dir.path())
-        .args(["check", "configmap.ts"])
+        .args(["check", "configmap.husako"])
         .assert()
         .success();
     let cm_before = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "configmap.ts"])
+            .args(["render", "configmap.husako"])
             .output()
             .unwrap()
             .stdout,
@@ -66,12 +66,12 @@ fn scenario_d_version_management() {
 
     // validate + render still work after update
     husako_at(dir.path())
-        .args(["check", "configmap.ts"])
+        .args(["check", "configmap.husako"])
         .assert()
         .success();
     let cm_after = String::from_utf8_lossy(
         &husako_at(dir.path())
-            .args(["render", "configmap.ts"])
+            .args(["render", "configmap.husako"])
             .output()
             .unwrap()
             .stdout,
