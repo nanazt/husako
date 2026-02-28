@@ -9,3 +9,8 @@ repository = "https://github.com/nanazt/husako"
 [language_servers.husako-lsp]
 name = "husako Language Server"
 language = "husako"
+
+[language_servers.typescript-language-server]
+name = "TypeScript Language Server"
+language = "husako"
+language_ids = { husako = "typescript" }

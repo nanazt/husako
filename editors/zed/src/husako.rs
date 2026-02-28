@@ -9,14 +9,22 @@ impl zed::Extension for HusakoExtension {
 
     fn language_server_command(
         &mut self,
-        _language_server_id: &LanguageServerId,
+        language_server_id: &LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        Ok(zed::Command {
-            command: "husako".into(),
-            args: vec!["lsp".into()],
-            env: Default::default(),
-        })
+        match language_server_id.as_ref() {
+            "husako-lsp" => Ok(zed::Command {
+                command: "husako".into(),
+                args: vec!["lsp".into()],
+                env: Default::default(),
+            }),
+            "typescript-language-server" => Ok(zed::Command {
+                command: "typescript-language-server".into(),
+                args: vec!["--stdio".into()],
+                env: Default::default(),
+            }),
+            id => Err(format!("unknown language server: {id}")),
+        }
     }
 }
 

@@ -12,6 +12,10 @@ Language support and IDE intelligence for `.husako` files in Zed.
 ## Requirements
 
 - `husako` binary on your `PATH` — the extension starts `husako lsp` as a subprocess
+- `typescript-language-server` on your `PATH` — provides full TypeScript support (type checking, completions, go-to-definition):
+  ```
+  npm install -g typescript-language-server typescript
+  ```
 
 ## Installation
 
@@ -35,9 +39,26 @@ cargo build --release --target wasm32-wasip1
 
 ## How it works
 
-The extension registers `.husako` as a language and starts `husako lsp` as a secondary
-language server when a `.husako` file is opened. Zed handles the TypeScript syntax
-highlighting; husako-lsp adds completions and diagnostics on top.
+The extension registers `.husako` as a language and starts two language servers in parallel:
+
+- **`typescript-language-server`** — handles type checking, completions, hover docs, and
+  go-to-definition. Husako files are sent with `languageId: "typescript"` so the server
+  treats them as TypeScript.
+- **`husako-lsp`** (`husako lsp`) — adds husako-specific chain completions and diagnostic
+  rules on top.
+
+By default `husako-lsp` is listed first. To make TypeScript LSP primary (recommended for
+go-to-definition and Find References), add to your Zed `settings.json`:
+
+```json
+{
+  "languages": {
+    "husako": {
+      "language_servers": ["typescript-language-server", "husako-lsp", "..."]
+    }
+  }
+}
+```
 
 ## Running husako gen
 
